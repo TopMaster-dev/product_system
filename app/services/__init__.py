@@ -1,7 +1,20 @@
-"""Service layer — use cases and business logic.
+"""Service layer — use cases and business logic."""
 
-Concrete services land in Sprint 1:
-- InventoryService: event-sourced inventory mutations
-- OrderIngestService: order ingestion pipeline (channel-agnostic)
-- MappingService: SKU mapping resolution & alerts
-"""
+from app.services.exceptions import (
+    InventoryInsufficientError,
+    MappingNotFoundError,
+    MasterSkuNotFoundError,
+    ServiceError,
+)
+from app.services.inventory import EventSource, InventoryService
+from app.services.mapping import MappingService
+
+__all__ = [
+    "EventSource",
+    "InventoryInsufficientError",
+    "InventoryService",
+    "MappingNotFoundError",
+    "MappingService",
+    "MasterSkuNotFoundError",
+    "ServiceError",
+]
