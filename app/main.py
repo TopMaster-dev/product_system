@@ -9,7 +9,10 @@ from fastapi import FastAPI
 
 from app.api import router as api_router
 from app.config import get_settings
+from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
+from app.queue import InMemoryTaskQueue, get_task_queue
+from app.services.handlers import register_handlers
 
 
 @asynccontextmanager
@@ -17,6 +20,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.app_log_level)
     log = get_logger(__name__)
+    queue = get_task_queue()
+    if isinstance(queue, InMemoryTaskQueue):
+        register_handlers(queue, async_session_factory)
     log.info("app.startup", env=settings.app_env, queue=settings.task_queue_backend)
     yield
     log.info("app.shutdown")
