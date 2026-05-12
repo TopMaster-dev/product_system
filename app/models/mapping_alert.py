@@ -26,6 +26,7 @@ class MappingAlert(Base, TimestampMixin):
             "channel_sku",
             "marketplace_id",
             name="uq_mapping_alert_target",
+            postgresql_nulls_not_distinct=True,
         ),
     )
 

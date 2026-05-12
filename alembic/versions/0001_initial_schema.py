@@ -52,7 +52,13 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.UniqueConstraint("channel", "channel_sku", "marketplace_id", name="uq_channel_sku_mapping"),
+        sa.UniqueConstraint(
+            "channel",
+            "channel_sku",
+            "marketplace_id",
+            name="uq_channel_sku_mapping",
+            postgresql_nulls_not_distinct=True,
+        ),
     )
     op.create_index("ix_channel_sku_mappings_master_sku_id", "channel_sku_mappings", ["master_sku_id"])
     op.create_index("ix_channel_sku_mappings_channel", "channel_sku_mappings", ["channel"])
@@ -172,7 +178,11 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.UniqueConstraint(
-            "channel", "channel_sku", "marketplace_id", name="uq_mapping_alert_target"
+            "channel",
+            "channel_sku",
+            "marketplace_id",
+            name="uq_mapping_alert_target",
+            postgresql_nulls_not_distinct=True,
         ),
     )
     op.create_index("ix_mapping_alerts_channel", "mapping_alerts", ["channel"])

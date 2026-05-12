@@ -174,6 +174,8 @@ class MappingService:
             )
             order.status = OrderStatusEnum.CONFIRMED
             replayed += 1
+        if replayed:
+            await self._session.flush()
         return replayed
 
 

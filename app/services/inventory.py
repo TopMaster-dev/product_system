@@ -126,6 +126,7 @@ class InventoryService:
         await self._session.flush()
         snapshot.on_hand_qty = projected
         snapshot.last_event_id = event.id
+        await self._session.flush()
         return event
 
     async def get_current_stock(self, master_sku_id: int) -> int:
@@ -175,6 +176,7 @@ class InventoryService:
 
         snapshot.on_hand_qty += quantity_delta
         snapshot.last_event_id = event.id
+        await self._session.flush()
         return event
 
     async def _lock_or_create_snapshot(self, master_sku_id: int) -> InventorySnapshot:

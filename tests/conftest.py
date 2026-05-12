@@ -1,4 +1,12 @@
-"""Shared pytest fixtures."""
+"""Shared pytest fixtures.
+
+Notes on async fixture scoping:
+- pytest-asyncio runs each test function in its own event loop. asyncpg
+  connections are bound to the loop they were created in, so a
+  session-scoped async engine breaks with "attached to a different loop".
+- We therefore use a session-scoped SYNC fixture to set up / tear down the
+  schema once, and a per-test ASYNC engine that lives inside the test's loop.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +16,10 @@ from collections.abc import AsyncIterator, Iterator
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
@@ -40,27 +51,46 @@ def test_database_url() -> str:
     return os.getenv("TEST_DATABASE_URL", TEST_DB_URL_DEFAULT)
 
 
+def _to_sync_url(async_url: str) -> str:
+    return async_url.replace("+asyncpg", "+psycopg2")
+
+
 @pytest.fixture(scope="session")
-async def _test_engine(test_database_url: str):
-    """Spin up an engine for the test DB; skip session if Postgres is unreachable."""
-    engine = create_async_engine(test_database_url, pool_pre_ping=True, future=True)
+def _test_database(test_database_url: str) -> Iterator[str]:
+    """Create / drop the schema once per session via a SYNC engine.
+
+    Returns the async URL for downstream async engine fixtures.
+    """
+    sync_url = _to_sync_url(test_database_url)
+    engine = create_engine(sync_url, future=True)
     try:
-        async with engine.connect() as conn:
-            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
-    except Exception as exc:  # pragma: no cover - environmental
-        await engine.dispose()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except (OperationalError, SQLAlchemyError) as exc:  # pragma: no cover - env
+        engine.dispose()
         pytest.skip(f"Postgres test DB unavailable: {exc}")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
+
+    with engine.begin() as conn:
+        Base.metadata.drop_all(conn)
+        Base.metadata.create_all(conn)
+    yield test_database_url
+    with engine.begin() as conn:
+        Base.metadata.drop_all(conn)
+    engine.dispose()
 
 
 @pytest.fixture
-async def db_session(_test_engine) -> AsyncIterator[AsyncSession]:
+async def _test_engine(_test_database: str) -> AsyncIterator[AsyncEngine]:
+    """Per-test async engine bound to the current event loop."""
+    engine = create_async_engine(_test_database, future=True)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(_test_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     """Yield a session inside a transaction that always rolls back."""
     factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
     async with _test_engine.connect() as conn:

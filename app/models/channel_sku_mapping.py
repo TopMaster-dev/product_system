@@ -16,6 +16,7 @@ class ChannelSkuMapping(Base, TimestampMixin):
             "channel_sku",
             "marketplace_id",
             name="uq_channel_sku_mapping",
+            postgresql_nulls_not_distinct=True,
         ),
     )
 

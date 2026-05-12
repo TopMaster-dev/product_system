@@ -88,6 +88,9 @@ async def shopify_webhook(
     normalized = ShopifyAdapter.normalize_webhook_order(payload)
 
     # Insert WebhookLog; on duplicate (redelivery) we ack without re-enqueueing.
+    # The INSERT must commit BEFORE we enqueue, otherwise the handler — which
+    # runs in its own session/transaction — cannot see the row to update its
+    # status to PROCESSED.
     webhook_row = WebhookLog(
         channel="shopify",
         webhook_id=webhook_id,
@@ -100,15 +103,17 @@ async def shopify_webhook(
         async with session.begin():
             session.add(webhook_row)
             await session.flush()
-            await queue.enqueue(
-                Task(
-                    name=PROCESS_SHOPIFY_WEBHOOK,
-                    payload=build_shopify_webhook_payload(
-                        webhook_log_id=webhook_row.id, normalized=normalized
-                    ),
-                )
-            )
+            webhook_log_id = webhook_row.id
     except IntegrityError:
         log.info("shopify.webhook.duplicate", webhook_id=webhook_id, topic=topic)
+        return Response(status_code=status.HTTP_200_OK)
 
+    await queue.enqueue(
+        Task(
+            name=PROCESS_SHOPIFY_WEBHOOK,
+            payload=build_shopify_webhook_payload(
+                webhook_log_id=webhook_log_id, normalized=normalized
+            ),
+        )
+    )
     return Response(status_code=status.HTTP_200_OK)

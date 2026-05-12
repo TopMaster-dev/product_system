@@ -1,7 +1,7 @@
 """Integration tests — POST /webhooks/shopify end-to-end.
 
-Drives the FastAPI app with TestClient, swapping the DB session and task
-queue dependencies for ones bound to the test database.
+Uses httpx ASGITransport so the FastAPI app runs in the same event loop as
+the test, avoiding asyncpg "different loop" errors that TestClient triggers.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import json
 from collections.abc import AsyncIterator
 
 import pytest
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -66,11 +66,11 @@ def _webhook_body(order_id: str, sku: str, quantity: int = 1, *, cancelled: bool
 
 
 @pytest.fixture
-def webhook_client(_test_engine):
-    """TestClient with DB + queue dependencies pinned to the test engine."""
+async def webhook_client(_test_engine) -> AsyncIterator[AsyncClient]:
+    """AsyncClient with DB + queue dependencies pinned to the test engine."""
     factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
 
-    async def _override_session() -> AsyncIterator:
+    async def _override_session():
         async with factory() as session:
             yield session
 
@@ -89,8 +89,9 @@ def webhook_client(_test_engine):
 
     app.dependency_overrides[ep_get_settings] = lambda: test_settings
 
-    with TestClient(app) as c:
-        yield c
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
 
     app.dependency_overrides.clear()
     reset_task_queue()
@@ -123,7 +124,7 @@ async def test_valid_webhook_ingests_order_and_decrements(webhook_client, _test_
         ShopifyAdapter.HEADER_TOPIC: "orders/create",
         "Content-Type": "application/json",
     }
-    response = webhook_client.post("/webhooks/shopify", content=body, headers=headers)
+    response = await webhook_client.post("/webhooks/shopify", content=body, headers=headers)
     assert response.status_code == 200
 
     async with factory() as session:
@@ -152,7 +153,7 @@ async def test_invalid_hmac_returns_401_and_logs_rejection(webhook_client, _test
         ShopifyAdapter.HEADER_WEBHOOK_ID: "wh-2",
         ShopifyAdapter.HEADER_TOPIC: "orders/create",
     }
-    response = webhook_client.post("/webhooks/shopify", content=body, headers=headers)
+    response = await webhook_client.post("/webhooks/shopify", content=body, headers=headers)
     assert response.status_code == 401
 
     async with factory() as session:
@@ -183,8 +184,8 @@ async def test_duplicate_webhook_id_is_acked_without_double_processing(
         ShopifyAdapter.HEADER_TOPIC: "orders/create",
         "Content-Type": "application/json",
     }
-    r1 = webhook_client.post("/webhooks/shopify", content=body, headers=headers)
-    r2 = webhook_client.post("/webhooks/shopify", content=body, headers=headers)
+    r1 = await webhook_client.post("/webhooks/shopify", content=body, headers=headers)
+    r2 = await webhook_client.post("/webhooks/shopify", content=body, headers=headers)
     assert r1.status_code == 200
     assert r2.status_code == 200
 
