@@ -81,8 +81,17 @@ def _test_database(test_database_url: str) -> Iterator[str]:
 
 @pytest.fixture
 async def _test_engine(_test_database: str) -> AsyncIterator[AsyncEngine]:
-    """Per-test async engine bound to the current event loop."""
+    """Per-test async engine bound to the current event loop.
+
+    Truncates all tables before yielding so tests that commit (webhook /
+    admin UI) cannot leak state into tests that don't use the rollback
+    fixture.
+    """
     engine = create_async_engine(_test_database, future=True)
+    async with engine.begin() as conn:
+        # Reverse order to respect foreign keys.
+        table_names = ", ".join(t.name for t in reversed(Base.metadata.sorted_tables))
+        await conn.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
     try:
         yield engine
     finally:

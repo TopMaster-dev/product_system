@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Admin &mdash; Home{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-4">ダッシュボード</h1>
+
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+  <a href="/admin/inventory" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
+    <div class="text-xs uppercase text-slate-500">マスターSKU</div>
+    <div class="text-3xl font-bold">{{ stats.master_skus }}</div>
+  </a>
+  <a href="/admin/mappings" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
+    <div class="text-xs uppercase text-slate-500">マッピング</div>
+    <div class="text-3xl font-bold">{{ stats.mappings }}</div>
+  </a>
+  <a href="/admin/alerts" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
+    <div class="text-xs uppercase text-slate-500">未解決アラート</div>
+    <div class="text-3xl font-bold {% if stats.open_alerts %}text-red-600{% endif %}">
+      {{ stats.open_alerts }}
+    </div>
+  </a>
+  <a href="/admin/events" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
+    <div class="text-xs uppercase text-slate-500">本日の在庫イベント</div>
+    <div class="text-3xl font-bold">{{ stats.events_today }}</div>
+  </a>
+</div>
+
+<section class="bg-white shadow rounded-lg p-5">
+  <h2 class="text-lg font-semibold mb-3">運用ヒント</h2>
+  <ul class="list-disc list-inside text-sm text-slate-700 space-y-1">
+    <li>未マッピングSKUは <a class="text-blue-700 underline" href="/admin/alerts">マッピングアラート</a> から解決してください。</li>
+    <li>解決時に保留中の注文が自動で再処理され、在庫イベントが発行されます。</li>
+    <li>手動の在庫増減は <a class="text-blue-700 underline" href="/admin/adjust">手動調整</a> から実施してください（理由と操作者がイベントログに記録されます）。</li>
+  </ul>
+</section>
+{% endblock %}

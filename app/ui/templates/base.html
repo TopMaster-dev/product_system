@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Product System{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <header class="bg-[#1F3A68] text-white">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/admin/" class="text-lg font-semibold tracking-wide">Product System &mdash; Admin</a>
+      <nav class="flex gap-4 text-sm">
+        <a class="hover:underline" href="/admin/inventory">在庫一覧</a>
+        <a class="hover:underline" href="/admin/mappings">SKUマッピング</a>
+        <a class="hover:underline" href="/admin/alerts">マッピングアラート</a>
+        <a class="hover:underline" href="/admin/adjust">手動調整</a>
+        <a class="hover:underline" href="/admin/events">イベントログ</a>
+      </nav>
+      <div class="text-xs opacity-80">operator: {{ operator }}</div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6">
+    {% if flash %}
+      <div class="mb-4 rounded border-l-4 px-4 py-3
+                  {% if flash.kind == 'error' %}border-red-500 bg-red-50 text-red-800
+                  {% else %}border-emerald-500 bg-emerald-50 text-emerald-800{% endif %}">
+        {{ flash.message }}
+      </div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="max-w-7xl mx-auto px-6 py-4 text-xs text-slate-500">
+    Phase 1-A &middot; v{{ version }}
+  </footer>
+</body>
+</html>

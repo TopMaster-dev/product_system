@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}在庫一覧{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-semibold">在庫一覧</h1>
+  <a href="/admin/adjust" class="inline-flex items-center rounded bg-[#1F3A68] text-white text-sm px-3 py-2">
+    + 手動調整
+  </a>
+</div>
+
+<form method="get" class="bg-white shadow rounded p-4 mb-4 flex flex-wrap gap-3 items-end">
+  <div class="flex-1 min-w-[200px]">
+    <label class="block text-xs font-medium text-slate-600 mb-1">SKUコード / 商品名</label>
+    <input name="q" value="{{ q or '' }}" placeholder="部分一致"
+           class="w-full border rounded px-3 py-1.5 text-sm" />
+  </div>
+  <div>
+    <label class="block text-xs font-medium text-slate-600 mb-1">表示</label>
+    <select name="filter" class="border rounded px-3 py-1.5 text-sm">
+      <option value="all" {% if filter_mode == 'all' %}selected{% endif %}>すべて</option>
+      <option value="low" {% if filter_mode == 'low' %}selected{% endif %}>低在庫（&lt; 10）</option>
+      <option value="negative" {% if filter_mode == 'negative' %}selected{% endif %}>欠品/オーバーセル</option>
+    </select>
+  </div>
+  <button type="submit" class="rounded bg-[#1F3A68] text-white text-sm px-4 py-1.5">検索</button>
+</form>
+
+<div class="bg-white shadow rounded overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-100 text-slate-600 uppercase text-xs">
+      <tr>
+        <th class="px-4 py-2 text-left">SKUコード</th>
+        <th class="px-4 py-2 text-left">商品名</th>
+        <th class="px-4 py-2 text-left">JAN</th>
+        <th class="px-4 py-2 text-right">在庫数</th>
+        <th class="px-4 py-2 text-left">最終更新</th>
+        <th class="px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for row in rows %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-2 font-mono">{{ row.sku_code }}</td>
+          <td class="px-4 py-2">{{ row.name }}</td>
+          <td class="px-4 py-2 font-mono text-xs text-slate-500">{{ row.jan_code or '' }}</td>
+          <td class="px-4 py-2 text-right font-semibold
+                     {% if row.on_hand_qty < 0 %}text-red-600
+                     {% elif row.on_hand_qty < 10 %}text-amber-600{% endif %}">
+            {{ row.on_hand_qty }}
+          </td>
+          <td class="px-4 py-2 text-xs text-slate-500">
+            {% if row.updated_at %}{{ row.updated_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+          </td>
+          <td class="px-4 py-2 text-right">
+            <a class="text-blue-700 text-xs hover:underline" href="/admin/events?master_sku_id={{ row.id }}">履歴</a>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">該当する在庫はありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pagination.total > 0 %}
+  <div class="mt-3 flex items-center justify-between text-sm text-slate-600">
+    <div>{{ pagination.offset + 1 }} - {{ pagination.offset + rows|length }} / {{ pagination.total }} 件</div>
+    <div class="space-x-2">
+      {% if pagination.has_prev %}
+        <a href="?{{ pagination.qs_prev }}" class="px-3 py-1 border rounded">‹ 前へ</a>
+      {% endif %}
+      {% if pagination.has_next %}
+        <a href="?{{ pagination.qs_next }}" class="px-3 py-1 border rounded">次へ ›</a>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

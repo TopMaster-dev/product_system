@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}SKUマッピング{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-semibold">SKUマッピング</h1>
+  <div class="flex gap-2">
+    <a href="/admin/mappings/export.csv" class="inline-flex items-center rounded border border-slate-300 text-sm px-3 py-2">
+      CSVエクスポート
+    </a>
+    <a href="/admin/mappings/new" class="inline-flex items-center rounded bg-[#1F3A68] text-white text-sm px-3 py-2">
+      + 新規追加
+    </a>
+  </div>
+</div>
+
+<form method="get" class="bg-white shadow rounded p-4 mb-4 flex flex-wrap gap-3 items-end">
+  <div class="flex-1 min-w-[200px]">
+    <label class="block text-xs font-medium text-slate-600 mb-1">マスターSKU / チャネルSKU</label>
+    <input name="q" value="{{ q or '' }}" class="w-full border rounded px-3 py-1.5 text-sm" />
+  </div>
+  <div>
+    <label class="block text-xs font-medium text-slate-600 mb-1">チャネル</label>
+    <select name="channel" class="border rounded px-3 py-1.5 text-sm">
+      <option value="">すべて</option>
+      {% for c in channels %}
+        <option value="{{ c }}" {% if c == channel_filter %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit" class="rounded bg-[#1F3A68] text-white text-sm px-4 py-1.5">検索</button>
+</form>
+
+<section class="bg-white shadow rounded p-4 mb-6">
+  <form method="post" enctype="multipart/form-data" action="/admin/mappings/import" class="flex flex-wrap items-end gap-3">
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1">CSVインポート (master_sku_code, channel, channel_sku, channel_product_id)</label>
+      <input type="file" name="file" accept=".csv" required class="text-sm" />
+    </div>
+    <button type="submit" class="rounded border border-slate-300 text-sm px-4 py-1.5">アップロード</button>
+  </form>
+</section>
+
+<div class="bg-white shadow rounded overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-100 text-slate-600 uppercase text-xs">
+      <tr>
+        <th class="px-4 py-2 text-left">マスターSKU</th>
+        <th class="px-4 py-2 text-left">チャネル</th>
+        <th class="px-4 py-2 text-left">チャネルSKU</th>
+        <th class="px-4 py-2 text-left">商品ID</th>
+        <th class="px-4 py-2 text-left">状態</th>
+        <th class="px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for row in rows %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-2 font-mono">{{ row.master_sku_code }}<br>
+            <span class="text-xs text-slate-500">{{ row.master_sku_name }}</span></td>
+          <td class="px-4 py-2">{{ row.channel }}</td>
+          <td class="px-4 py-2 font-mono">{{ row.channel_sku }}</td>
+          <td class="px-4 py-2 font-mono text-xs text-slate-500">{{ row.channel_product_id or '' }}</td>
+          <td class="px-4 py-2">
+            {% if row.is_active %}
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">active</span>
+            {% else %}
+              <span class="text-xs px-2 py-0.5 rounded bg-slate-200 text-slate-600">inactive</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2 text-right">
+            <form method="post" action="/admin/mappings/{{ row.id }}/delete" class="inline"
+                  onsubmit="return confirm('削除しますか？')">
+              <button class="text-red-600 hover:underline text-xs">削除</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">マッピングがありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

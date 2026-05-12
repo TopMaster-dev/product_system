@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}マッピングアラート{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-4">マッピングアラート</h1>
+<p class="text-sm text-slate-600 mb-4">
+  未マッピングのチャネルSKUが届いたとき、ここに保留中として記録されます。マスターSKUを選んで <b>解決</b> ボタンを押すと、保留中の注文が自動的に再処理されます。
+</p>
+
+<div class="bg-white shadow rounded overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-100 text-slate-600 uppercase text-xs">
+      <tr>
+        <th class="px-4 py-2 text-left">初回検知</th>
+        <th class="px-4 py-2 text-left">チャネル</th>
+        <th class="px-4 py-2 text-left">チャネルSKU</th>
+        <th class="px-4 py-2 text-right">発生回数</th>
+        <th class="px-4 py-2 text-left">状態</th>
+        <th class="px-4 py-2">解決</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for a in alerts %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-2 text-xs">{{ a.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
+          <td class="px-4 py-2">{{ a.channel }}</td>
+          <td class="px-4 py-2 font-mono">{{ a.channel_sku }}</td>
+          <td class="px-4 py-2 text-right">{{ a.occurrence_count }}</td>
+          <td class="px-4 py-2">
+            {% if a.status == 'open' %}
+              <span class="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">open</span>
+            {% else %}
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">{{ a.status }}</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2">
+            {% if a.status == 'open' %}
+            <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="flex gap-2 items-center">
+              <select name="master_sku_id" required class="border rounded px-2 py-1 text-xs">
+                <option value="">マスターSKU選択</option>
+                {% for s in master_skus %}
+                  <option value="{{ s.id }}">{{ s.sku_code }} - {{ s.name }}</option>
+                {% endfor %}
+              </select>
+              <button class="rounded bg-[#1F3A68] text-white text-xs px-3 py-1">解決</button>
+            </form>
+            {% else %}
+              <span class="text-xs text-slate-500">解決済</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">アラートはありません。</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

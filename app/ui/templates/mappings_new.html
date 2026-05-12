@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}新規マッピング{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-4">新規マッピング</h1>
+
+<form method="post" action="/admin/mappings/new" class="bg-white shadow rounded p-5 max-w-2xl space-y-4">
+  <div>
+    <label class="block text-sm font-medium text-slate-700 mb-1">マスターSKU</label>
+    <select name="master_sku_id" required class="w-full border rounded px-3 py-2 text-sm">
+      <option value="">選択してください</option>
+      {% for s in master_skus %}
+        <option value="{{ s.id }}">{{ s.sku_code }} &mdash; {{ s.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="grid grid-cols-2 gap-3">
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">チャネル</label>
+      <select name="channel" required class="w-full border rounded px-3 py-2 text-sm">
+        <option value="rakuten">rakuten</option>
+        <option value="shopify">shopify</option>
+        <option value="amazon">amazon</option>
+        <option value="wholesale">wholesale</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">マーケットプレイス (任意, Amazon用)</label>
+      <input name="marketplace_id" class="w-full border rounded px-3 py-2 text-sm" placeholder="JP / US / ..." />
+    </div>
+  </div>
+  <div class="grid grid-cols-2 gap-3">
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">チャネルSKU</label>
+      <input name="channel_sku" required class="w-full border rounded px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">チャネル商品ID (任意)</label>
+      <input name="channel_product_id" class="w-full border rounded px-3 py-2 text-sm" />
+    </div>
+  </div>
+  <div class="flex justify-end gap-2 pt-2">
+    <a href="/admin/mappings" class="text-sm px-4 py-2">キャンセル</a>
+    <button class="rounded bg-[#1F3A68] text-white text-sm px-4 py-2">登録</button>
+  </div>
+</form>
+{% endblock %}
