@@ -1,0 +1,7 @@
+[
+  { "name": "master_sku_id", "type": "INTEGER", "mode": "REQUIRED" },
+  { "name": "on_hand_qty", "type": "INTEGER", "mode": "REQUIRED" },
+  { "name": "last_event_id", "type": "INTEGER", "mode": "NULLABLE" },
+  { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" },
+  { "name": "updated_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
+]

@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     gcp_region: str = "asia-northeast1"
     bigquery_dataset: str = ""
 
+    # Cloud Tasks (only used when task_queue_backend == "cloud_tasks")
+    cloud_tasks_queue: str = ""
+    cloud_tasks_target_url: str = ""
+    cloud_tasks_invoker_sa: str = ""
+
     # Admin UI
     admin_username: str = "admin"
     admin_password: str = "change_me_in_production"  # noqa: S105

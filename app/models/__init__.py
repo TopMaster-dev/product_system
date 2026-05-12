@@ -10,6 +10,7 @@ Tables:
 """
 
 from app.models.base import Base, TimestampMixin
+from app.models.bigquery_export_run import BigQueryExportRun
 from app.models.channel_sku_mapping import ChannelSkuMapping
 from app.models.enums import (
     ChannelEnum,
@@ -27,6 +28,7 @@ from app.models.webhook_log import WebhookLog
 
 __all__ = [
     "Base",
+    "BigQueryExportRun",
     "ChannelEnum",
     "ChannelSkuMapping",
     "FulfillmentTypeEnum",

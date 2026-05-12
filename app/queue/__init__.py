@@ -31,6 +31,17 @@ def get_task_queue() -> TaskQueue:
     if settings.task_queue_backend == "in_memory":
         _queue = InMemoryTaskQueue()
         return _queue
+    if settings.task_queue_backend == "cloud_tasks":
+        from app.queue.cloud_tasks import CloudTasksTaskQueue
+
+        _queue = CloudTasksTaskQueue(
+            project_id=settings.gcp_project_id,
+            location=settings.gcp_region,
+            queue_name=settings.cloud_tasks_queue,
+            target_url=settings.cloud_tasks_target_url,
+            service_account_email=settings.cloud_tasks_invoker_sa or None,
+        )
+        return _queue
     raise NotImplementedError(
         f"Task queue backend {settings.task_queue_backend!r} not yet implemented",
     )

@@ -1,0 +1,13 @@
+[
+  { "name": "id", "type": "INTEGER", "mode": "REQUIRED" },
+  { "name": "master_sku_id", "type": "INTEGER", "mode": "REQUIRED" },
+  { "name": "event_type", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "quantity_delta", "type": "INTEGER", "mode": "REQUIRED" },
+  { "name": "source_channel", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "source_order_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "source_line_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "reason", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "operator", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "occurred_at", "type": "TIMESTAMP", "mode": "REQUIRED" },
+  { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
+]
