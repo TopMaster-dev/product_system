@@ -1,2 +1,58 @@
-.claude
-docs
+# Claude / IDE
+.claude/
+.vscode/
+.idea/
+*.swp
+
+# Docs working files (keep source scripts, ignore generated artifacts)
+docs/*.docx
+docs/*.pdf
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+**/credentials*.json
+**/service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs / local data
+*.log
+logs/
+*.db
+*.sqlite3
+/data/
+/tmp/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl

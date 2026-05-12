@@ -1,0 +1,132 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "product-system"
+version = "0.1.0"
+description = "Rakuten x Shopify inventory, demand forecasting and auto-ordering system (Phase 1-A)"
+requires-python = ">=3.11"
+readme = "README.md"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.12",
+
+    # Database
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "psycopg2-binary>=2.9",  # for Alembic sync ops
+    "alembic>=1.13",
+
+    # Config / validation
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+
+    # HTTP client (channel adapters)
+    "httpx>=0.27",
+
+    # Observability
+    "structlog>=24.4",
+
+    # Utilities
+    "python-dateutil>=2.9",
+    "tenacity>=9.0",  # retry/backoff
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.27",
+    "pre-commit>=4.0",
+    "types-python-dateutil",
+]
+gcp = [
+    "google-cloud-tasks>=2.16",
+    "google-cloud-secret-manager>=2.21",
+    "google-cloud-bigquery>=3.27",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+# ---------- Ruff ----------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ASYNC",
+    "S",   # bandit (security)
+    "SIM", # simplify
+    "RUF",
+]
+ignore = [
+    "S101",  # assert in tests
+    "B008",  # FastAPI Depends in defaults is idiomatic
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+"alembic/**" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------- mypy ----------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+exclude = ["alembic/versions/", "tests/"]
+
+[[tool.mypy.overrides]]
+module = ["structlog.*"]
+ignore_missing_imports = true
+
+# ---------- pytest ----------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+]
+markers = [
+    "integration: tests requiring external services (DB, API)",
+    "unit: pure unit tests",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py", "alembic/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
