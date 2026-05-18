@@ -7,6 +7,7 @@
 # Docs working files (keep source scripts, ignore generated artifacts)
 docs/*.docx
 docs/*.pdf
+docs/*.csv
 
 # Environment / secrets
 .env
@@ -55,4 +56,8 @@ logs/
 *.tfstate
 *.tfstate.*
 .terraform/
-.terraform.lock.hcl
+infra/terraform/terraform.tfvars
+!infra/terraform/.terraform.lock.hcl
+
+# Local toolchains (terraform binary etc.)
+.local/

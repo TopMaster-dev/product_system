@@ -2,42 +2,170 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#0F172A" />
   <title>{% block title %}Product System{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%234F46E5'%3E%3Cpath d='M3 7l9-4 9 4-9 4-9-4zm0 5l9 4 9-4M3 17l9 4 9-4'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50:  '#EEF2FF',
+              100: '#E0E7FF',
+              500: '#6366F1',
+              600: '#4F46E5',
+              700: '#4338CA',
+              800: '#3730A3',
+              900: '#312E81',
+              950: '#1E1B4B',
+            },
+            ink: {
+              50:  '#F8FAFC',
+              100: '#F1F5F9',
+              200: '#E2E8F0',
+              300: '#CBD5E1',
+              400: '#94A3B8',
+              500: '#64748B',
+              600: '#475569',
+              700: '#334155',
+              800: '#1E293B',
+              900: '#0F172A',
+            },
+          },
+          boxShadow: {
+            card: '0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.08)',
+            'card-hover': '0 4px 6px rgba(15,23,42,0.05), 0 10px 15px rgba(15,23,42,0.10)',
+          },
+        },
+      },
+    };
+  </script>
   <style>
-    [hidden] { display: none !important; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .font-mono, code, pre { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    [x-cloak] { display: none !important; }
+    /* Hide scrollbar on mobile table scroll containers */
+    .scroll-area::-webkit-scrollbar { height: 6px; }
+    .scroll-area::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 min-h-screen">
-  <header class="bg-[#1F3A68] text-white">
-    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-      <a href="/admin/" class="text-lg font-semibold tracking-wide">Product System &mdash; Admin</a>
-      <nav class="flex gap-4 text-sm">
-        <a class="hover:underline" href="/admin/inventory">在庫一覧</a>
-        <a class="hover:underline" href="/admin/mappings">SKUマッピング</a>
-        <a class="hover:underline" href="/admin/alerts">マッピングアラート</a>
-        <a class="hover:underline" href="/admin/adjust">手動調整</a>
-        <a class="hover:underline" href="/admin/events">イベントログ</a>
+<body class="bg-ink-50 text-ink-900 min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="bg-ink-900 text-white sticky top-0 z-30 shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+      <a href="/admin/" class="flex items-center gap-2 font-semibold tracking-tight">
+        <svg class="w-7 h-7 text-brand-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7l9-4 9 4-9 4-9-4z"/>
+          <path d="M3 12l9 4 9-4"/>
+          <path d="M3 17l9 4 9-4"/>
+        </svg>
+        <span class="text-base sm:text-lg">Product System</span>
+      </a>
+
+      <nav class="hidden md:flex items-center gap-1 text-sm">
+        {% set nav_items = [
+          ('/admin/inventory', '在庫一覧'),
+          ('/admin/mappings', 'マッピング'),
+          ('/admin/alerts', 'アラート'),
+          ('/admin/adjust', '手動調整'),
+          ('/admin/events', 'イベントログ'),
+        ] %}
+        {% for href, label in nav_items %}
+          <a href="{{ href }}"
+             class="px-3 py-1.5 rounded-md hover:bg-white/10 transition">
+            {{ label }}
+          </a>
+        {% endfor %}
       </nav>
-      <div class="text-xs opacity-80">operator: {{ operator }}</div>
+
+      <div class="flex items-center gap-2">
+        <span class="hidden sm:inline-flex items-center gap-1.5 text-xs text-ink-300 bg-white/5 px-2.5 py-1 rounded-full">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          {{ operator }}
+        </span>
+        <button id="navToggle" type="button"
+                class="md:hidden p-2 rounded-md hover:bg-white/10 transition"
+                aria-label="メニューを開く">
+          <svg id="iconOpen" class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <svg id="iconClose" class="w-6 h-6 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
     </div>
+
+    <!-- Mobile menu -->
+    <nav id="mobileNav" class="md:hidden hidden border-t border-white/10">
+      <div class="px-2 py-2 space-y-1">
+        {% for href, label in nav_items %}
+          <a href="{{ href }}"
+             class="flex items-center justify-between px-3 py-2.5 rounded-md text-sm hover:bg-white/10 transition">
+            {{ label }}
+            <svg class="w-4 h-4 text-ink-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </a>
+        {% endfor %}
+        <div class="px-3 py-2 text-xs text-ink-400 border-t border-white/10 mt-2">
+          operator: <span class="text-ink-200">{{ operator }}</span>
+        </div>
+      </div>
+    </nav>
   </header>
 
-  <main class="max-w-7xl mx-auto px-6 py-6">
+  <!-- Main content -->
+  <main class="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-5 sm:py-8">
     {% if flash %}
-      <div class="mb-4 rounded border-l-4 px-4 py-3
-                  {% if flash.kind == 'error' %}border-red-500 bg-red-50 text-red-800
-                  {% else %}border-emerald-500 bg-emerald-50 text-emerald-800{% endif %}">
-        {{ flash.message }}
+      <div class="mb-5 rounded-lg border px-4 py-3 text-sm shadow-card flex items-start gap-3
+                  {% if flash.kind == 'error' %}
+                  border-red-200 bg-red-50 text-red-900
+                  {% else %}
+                  border-emerald-200 bg-emerald-50 text-emerald-900
+                  {% endif %}">
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5
+                    {% if flash.kind == 'error' %}text-red-600{% else %}text-emerald-600{% endif %}"
+             viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          {% if flash.kind == 'error' %}
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+          {% else %}
+            <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/>
+          {% endif %}
+        </svg>
+        <div class="flex-1">{{ flash.message }}</div>
       </div>
     {% endif %}
 
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="max-w-7xl mx-auto px-6 py-4 text-xs text-slate-500">
-    Phase 1-A &middot; v{{ version }}
+  <!-- Footer -->
+  <footer class="border-t border-ink-200 bg-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 text-xs text-ink-500 flex items-center justify-between">
+      <div>Phase 1-A · v{{ version }}</div>
+      <div class="hidden sm:block">Product System Admin</div>
+    </div>
   </footer>
+
+  <script>
+    (function () {
+      const btn = document.getElementById('navToggle');
+      const nav = document.getElementById('mobileNav');
+      const open = document.getElementById('iconOpen');
+      const close = document.getElementById('iconClose');
+      btn?.addEventListener('click', () => {
+        const isOpen = nav.classList.toggle('hidden') === false;
+        open.classList.toggle('hidden', isOpen);
+        close.classList.toggle('hidden', !isOpen);
+      });
+    })();
+  </script>
 </body>
 </html>

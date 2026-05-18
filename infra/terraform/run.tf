@@ -22,6 +22,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = "postgresql+asyncpg://postgres:${var.db_password}@/${google_sql_database.app.name}?host=/cloudsql/${google_sql_database_instance.main.connection_name}"
       }
       env {
+        name  = "DATABASE_URL_SYNC"
+        value = "postgresql+psycopg2://postgres:${var.db_password}@/${google_sql_database.app.name}?host=/cloudsql/${google_sql_database_instance.main.connection_name}"
+      }
+      env {
         name  = "TASK_QUEUE_BACKEND"
         value = "cloud_tasks"
       }
@@ -45,6 +49,11 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "CLOUD_TASKS_INVOKER_SA"
         value = google_service_account.app.email
       }
+
+      volume_mounts {
+        name       = "cloudsql"
+        mount_path = "/cloudsql"
+      }
     }
 
     volumes {
@@ -64,4 +73,11 @@ resource "google_cloud_run_v2_service_iam_member" "self_invoker" {
   location = google_cloud_run_v2_service.app.location
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.app.email}"
+}
+
+# Allow the app SA to use Cloud SQL via the proxy.
+resource "google_project_iam_member" "app_cloudsql_client" {
+  project = var.project_id
+  role    = "roles/cloudsql.client"
+  member  = "serviceAccount:${google_service_account.app.email}"
 }

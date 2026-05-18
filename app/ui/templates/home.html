@@ -1,35 +1,111 @@
 {% extends "base.html" %}
-{% block title %}Admin &mdash; Home{% endblock %}
+{% block title %}ダッシュボード · Product System{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-4">ダッシュボード</h1>
 
-<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-  <a href="/admin/inventory" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
-    <div class="text-xs uppercase text-slate-500">マスターSKU</div>
-    <div class="text-3xl font-bold">{{ stats.master_skus }}</div>
+<div class="mb-6">
+  <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">ダッシュボード</h1>
+  <p class="text-sm text-ink-500 mt-1">在庫・マッピング・イベントのリアルタイム概況</p>
+</div>
+
+<!-- Stat cards -->
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+  <a href="/admin/inventory"
+     class="group rounded-xl bg-white shadow-card hover:shadow-card-hover p-4 sm:p-5 transition border border-ink-200/60">
+    <div class="flex items-center justify-between mb-2">
+      <div class="text-xs uppercase tracking-wide text-ink-500 font-medium">マスターSKU</div>
+      <div class="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-7l-2-3H4a2 2 0 00-2 2v13a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg>
+      </div>
+    </div>
+    <div class="text-2xl sm:text-3xl font-bold tracking-tight">{{ stats.master_skus }}</div>
   </a>
-  <a href="/admin/mappings" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
-    <div class="text-xs uppercase text-slate-500">マッピング</div>
-    <div class="text-3xl font-bold">{{ stats.mappings }}</div>
+
+  <a href="/admin/mappings"
+     class="group rounded-xl bg-white shadow-card hover:shadow-card-hover p-4 sm:p-5 transition border border-ink-200/60">
+    <div class="flex items-center justify-between mb-2">
+      <div class="text-xs uppercase tracking-wide text-ink-500 font-medium">マッピング</div>
+      <div class="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+      </div>
+    </div>
+    <div class="text-2xl sm:text-3xl font-bold tracking-tight">{{ stats.mappings }}</div>
   </a>
-  <a href="/admin/alerts" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
-    <div class="text-xs uppercase text-slate-500">未解決アラート</div>
-    <div class="text-3xl font-bold {% if stats.open_alerts %}text-red-600{% endif %}">
+
+  <a href="/admin/alerts"
+     class="group rounded-xl bg-white shadow-card hover:shadow-card-hover p-4 sm:p-5 transition border
+            {% if stats.open_alerts %}border-red-200 ring-1 ring-red-100{% else %}border-ink-200/60{% endif %}">
+    <div class="flex items-center justify-between mb-2">
+      <div class="text-xs uppercase tracking-wide text-ink-500 font-medium">未解決アラート</div>
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center
+                  {% if stats.open_alerts %}bg-red-50 text-red-600{% else %}bg-ink-100 text-ink-500{% endif %}">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+    </div>
+    <div class="text-2xl sm:text-3xl font-bold tracking-tight
+                {% if stats.open_alerts %}text-red-600{% endif %}">
       {{ stats.open_alerts }}
     </div>
   </a>
-  <a href="/admin/events" class="block rounded-lg bg-white shadow p-5 hover:shadow-md transition">
-    <div class="text-xs uppercase text-slate-500">本日の在庫イベント</div>
-    <div class="text-3xl font-bold">{{ stats.events_today }}</div>
+
+  <a href="/admin/events"
+     class="group rounded-xl bg-white shadow-card hover:shadow-card-hover p-4 sm:p-5 transition border border-ink-200/60">
+    <div class="flex items-center justify-between mb-2">
+      <div class="text-xs uppercase tracking-wide text-ink-500 font-medium">24h イベント</div>
+      <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </div>
+    </div>
+    <div class="text-2xl sm:text-3xl font-bold tracking-tight">{{ stats.events_today }}</div>
   </a>
 </div>
 
-<section class="bg-white shadow rounded-lg p-5">
-  <h2 class="text-lg font-semibold mb-3">運用ヒント</h2>
-  <ul class="list-disc list-inside text-sm text-slate-700 space-y-1">
-    <li>未マッピングSKUは <a class="text-blue-700 underline" href="/admin/alerts">マッピングアラート</a> から解決してください。</li>
-    <li>解決時に保留中の注文が自動で再処理され、在庫イベントが発行されます。</li>
-    <li>手動の在庫増減は <a class="text-blue-700 underline" href="/admin/adjust">手動調整</a> から実施してください（理由と操作者がイベントログに記録されます）。</li>
+<!-- Quick actions -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mb-6">
+  <a href="/admin/adjust"
+     class="rounded-xl bg-gradient-to-br from-brand-600 to-brand-700 text-white p-5 hover:from-brand-700 hover:to-brand-800 transition shadow-card hover:shadow-card-hover">
+    <div class="flex items-center gap-3 mb-2">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span class="font-semibold">手動調整</span>
+    </div>
+    <p class="text-sm text-brand-50/90">在庫の手動増減（理由・操作者を記録）</p>
+  </a>
+  <a href="/admin/mappings/new"
+     class="rounded-xl bg-white border border-ink-200 p-5 hover:border-brand-300 hover:shadow-card transition">
+    <div class="flex items-center gap-3 mb-2">
+      <svg class="w-5 h-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+      <span class="font-semibold">マッピング追加</span>
+    </div>
+    <p class="text-sm text-ink-500">新規 SKU マッピングを登録</p>
+  </a>
+  <a href="/admin/events"
+     class="rounded-xl bg-white border border-ink-200 p-5 hover:border-brand-300 hover:shadow-card transition">
+    <div class="flex items-center gap-3 mb-2">
+      <svg class="w-5 h-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      <span class="font-semibold">イベントログ</span>
+    </div>
+    <p class="text-sm text-ink-500">SKU・期間・種別で履歴を検索</p>
+  </a>
+</div>
+
+<!-- Hints -->
+<section class="rounded-xl bg-white shadow-card border border-ink-200/60 p-5 sm:p-6">
+  <h2 class="text-base font-semibold mb-3 flex items-center gap-2">
+    <svg class="w-5 h-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    運用のヒント
+  </h2>
+  <ul class="space-y-2 text-sm text-ink-600">
+    <li class="flex items-start gap-2">
+      <span class="text-brand-500 mt-1">·</span>
+      <span>未マッピング SKU は <a class="text-brand-600 hover:underline font-medium" href="/admin/alerts">マッピングアラート</a> から解決してください。</span>
+    </li>
+    <li class="flex items-start gap-2">
+      <span class="text-brand-500 mt-1">·</span>
+      <span>解決時に保留中の注文が自動で再処理され、在庫イベントが発行されます。</span>
+    </li>
+    <li class="flex items-start gap-2">
+      <span class="text-brand-500 mt-1">·</span>
+      <span>手動の在庫増減は <a class="text-brand-600 hover:underline font-medium" href="/admin/adjust">手動調整</a> から実施してください（理由と操作者が記録されます）。</span>
+    </li>
   </ul>
 </section>
 {% endblock %}

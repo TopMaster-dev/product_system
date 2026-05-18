@@ -1,38 +1,59 @@
 {% extends "base.html" %}
-{% block title %}手動調整{% endblock %}
+{% block title %}手動調整 · Product System{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-4">手動在庫調整</h1>
 
-<form method="post" action="/admin/adjust" class="bg-white shadow rounded p-5 max-w-2xl space-y-4">
+<div class="mb-5">
+  <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">手動在庫調整</h1>
+  <p class="text-sm text-ink-500 mt-1">理由と操作者を記録した上で在庫数を増減します</p>
+</div>
+
+<form method="post" action="/admin/adjust"
+      class="bg-white rounded-xl shadow-card border border-ink-200/60 p-5 sm:p-6 max-w-2xl space-y-5">
+
   <div>
-    <label class="block text-sm font-medium text-slate-700 mb-1">マスターSKU</label>
-    <select name="master_sku_id" required class="w-full border rounded px-3 py-2 text-sm">
-      <option value="">選択してください</option>
+    <label class="block text-sm font-medium text-ink-700 mb-1.5">マスター SKU <span class="text-red-500">*</span></label>
+    <select name="master_sku_id" required
+            class="w-full px-3 py-2.5 border border-ink-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
+      <option value="">— 選択してください —</option>
       {% for s in master_skus %}
         <option value="{{ s.id }}" {% if preselect == s.id %}selected{% endif %}>
-          {{ s.sku_code }} &mdash; {{ s.name }} (現在: {{ s.on_hand_qty }})
+          {{ s.sku_code }} — {{ s.name }} (現在: {{ s.on_hand_qty }})
         </option>
       {% endfor %}
     </select>
   </div>
-  <div class="grid grid-cols-2 gap-3">
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
     <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">調整数 (正/負)</label>
-      <input name="quantity_delta" type="number" required class="w-full border rounded px-3 py-2 text-sm" />
-      <div class="text-xs text-slate-500 mt-1">+5 で増加、-3 で減少</div>
+      <label class="block text-sm font-medium text-ink-700 mb-1.5">調整数 <span class="text-red-500">*</span></label>
+      <input name="quantity_delta" type="number" required placeholder="例: +5 or -3"
+             class="w-full px-3 py-2.5 border border-ink-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
+      <div class="text-xs text-ink-500 mt-1.5 flex items-center gap-1">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        正の数で増加、負の数で減少
+      </div>
     </div>
     <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">理由</label>
-      <input name="reason" required maxlength="255" class="w-full border rounded px-3 py-2 text-sm"
-             placeholder="棚卸 / 破損 / 検品差異 など" />
+      <label class="block text-sm font-medium text-ink-700 mb-1.5">理由 <span class="text-red-500">*</span></label>
+      <input name="reason" required maxlength="255" placeholder="棚卸 / 破損 / 検品差異 など"
+             class="w-full px-3 py-2.5 border border-ink-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
     </div>
   </div>
-  <div class="rounded bg-slate-100 px-3 py-2 text-xs text-slate-600">
-    操作者: <span class="font-mono">{{ operator }}</span> として記録されます。
+
+  <div class="rounded-lg bg-ink-50 border border-ink-200/60 px-4 py-3 text-xs text-ink-600 flex items-center gap-2">
+    <svg class="w-4 h-4 text-ink-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    操作者は <span class="font-mono font-semibold text-ink-900 ml-1">{{ operator }}</span> として記録されます。
   </div>
-  <div class="flex justify-end gap-2 pt-2">
-    <a href="/admin/inventory" class="text-sm px-4 py-2">キャンセル</a>
-    <button class="rounded bg-[#1F3A68] text-white text-sm px-4 py-2">調整を適用</button>
+
+  <div class="flex flex-col sm:flex-row sm:justify-end gap-2 pt-3 border-t border-ink-100">
+    <a href="/admin/inventory"
+       class="inline-flex items-center justify-center rounded-lg border border-ink-300 bg-white text-ink-700 text-sm font-medium px-5 py-2.5 hover:bg-ink-50 transition">
+      キャンセル
+    </a>
+    <button class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-5 py-2.5 shadow-card transition">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      調整を適用
+    </button>
   </div>
 </form>
 {% endblock %}

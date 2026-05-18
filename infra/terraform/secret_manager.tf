@@ -1,48 +1,28 @@
 # Secret slots — populate values OUT OF BAND (gcloud secrets versions add).
 # Rotation: replace the secret version; the running Run revision restarts.
 
-resource "google_secret_manager_secret" "rakuten_service_secret" {
-  secret_id = "rakuten-service-secret"
+locals {
+  app_secrets = toset([
+    "rakuten-service-secret",
+    "rakuten-license-key",
+    "shopify-access-token",
+    "shopify-webhook-secret",
+  ])
+}
+
+resource "google_secret_manager_secret" "app_secrets" {
+  for_each  = local.app_secrets
+  secret_id = each.value
   replication {
     auto {}
   }
   depends_on = [google_project_service.required]
 }
 
-resource "google_secret_manager_secret" "rakuten_license_key" {
-  secret_id = "rakuten-license-key"
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret" "shopify_access_token" {
-  secret_id = "shopify-access-token"
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret" "shopify_webhook_secret" {
-  secret_id = "shopify-webhook-secret"
-  replication {
-    auto {}
-  }
-}
-
-# Grant Cloud Run service account access.
-locals {
-  secret_ids = [
-    google_secret_manager_secret.rakuten_service_secret.id,
-    google_secret_manager_secret.rakuten_license_key.id,
-    google_secret_manager_secret.shopify_access_token.id,
-    google_secret_manager_secret.shopify_webhook_secret.id,
-  ]
-}
-
+# Grant Cloud Run service account access to read each secret value.
 resource "google_secret_manager_secret_iam_member" "app_access" {
-  for_each  = toset(local.secret_ids)
-  secret_id = each.value
+  for_each  = local.app_secrets
+  secret_id = google_secret_manager_secret.app_secrets[each.value].id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.app.email}"
 }

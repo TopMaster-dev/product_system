@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars (it's gitignored).
+project_id       = "inventory-496204"
+region           = "asia-northeast1"
+service_image    = "gcr.io/inventory-496204/product-system:bootstrap"
+bigquery_dataset = "product_system"
+db_password      = "REPLACE_WITH_A_STRONG_PASSWORD"
