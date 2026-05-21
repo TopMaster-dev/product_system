@@ -10,8 +10,9 @@ variable "region" {
 }
 
 variable "service_image" {
-  description = "Fully qualified container image for the main service."
+  description = "Fully qualified container image for the main service. Default is the public hello placeholder so the initial terraform apply can finish before we have a real image to deploy."
   type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
 
 variable "bigquery_dataset" {

@@ -1,6 +1,10 @@
 # Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars (it's gitignored).
 project_id       = "inventory-496204"
 region           = "asia-northeast1"
-service_image    = "gcr.io/inventory-496204/product-system:bootstrap"
 bigquery_dataset = "product_system"
 db_password      = "REPLACE_WITH_A_STRONG_PASSWORD"
+
+# Leave service_image unset on first apply — the default placeholder
+# (us-docker.pkg.dev/cloudrun/container/hello) lets Terraform finish.
+# After we build the real image, redeploy via `gcloud run deploy ...`.
+# service_image = "asia-northeast1-docker.pkg.dev/inventory-496204/product-system/app:v0.1.0"

@@ -7,6 +7,10 @@ resource "google_cloud_run_v2_service" "app" {
   name     = "product-system"
   location = var.region
 
+  # Allow terraform to recreate the service if the image / config changes
+  # incompatibly. Cloud Run is stateless so destroy+create is safe.
+  deletion_protection = false
+
   template {
     service_account = google_service_account.app.email
 
@@ -67,17 +71,23 @@ resource "google_cloud_run_v2_service" "app" {
   depends_on = [google_project_service.required]
 }
 
-# Bind invoker permission for the scheduler / Cloud Tasks service accounts.
-resource "google_cloud_run_v2_service_iam_member" "self_invoker" {
-  name     = google_cloud_run_v2_service.app.name
-  location = google_cloud_run_v2_service.app.location
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.app.email}"
-}
+# NOTE: Cloud Run service IAM binding is performed by a project OWNER
+# (the client) manually via:
+#
+#   gcloud run services add-iam-policy-binding product-system \
+#       --project=inventory-496204 \
+#       --region=asia-northeast1 \
+#       --member=serviceAccount:product-system-app@inventory-496204.iam.gserviceaccount.com \
+#       --role=roles/run.invoker
+#
+# This grants the app SA permission to invoke its own Cloud Run service —
+# required so Cloud Scheduler can trigger the polling / BQ export jobs.
 
-# Allow the app SA to use Cloud SQL via the proxy.
-resource "google_project_iam_member" "app_cloudsql_client" {
-  project = var.project_id
-  role    = "roles/cloudsql.client"
-  member  = "serviceAccount:${google_service_account.app.email}"
-}
+# NOTE: Project-level IAM binding for roles/cloudsql.client is performed
+# by a project OWNER (the client) manually via:
+#
+#   gcloud projects add-iam-policy-binding inventory-496204 \
+#       --member=serviceAccount:product-system-app@inventory-496204.iam.gserviceaccount.com \
+#       --role=roles/cloudsql.client
+#
+# The developer's Editor role lacks resourcemanager.projects.setIamPolicy.
