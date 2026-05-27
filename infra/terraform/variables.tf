@@ -31,3 +31,25 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+
+variable "shopify_shop_domain" {
+  description = "Shopify admin domain (e.g. xxxxx.myshopify.com)."
+  type        = string
+}
+
+variable "rakuten_shop_url" {
+  description = "Rakuten storefront URL (e.g. https://www.rakuten.co.jp/yourshop/)."
+  type        = string
+}
+
+variable "admin_username" {
+  description = "Basic Auth username for the admin UI."
+  type        = string
+  default     = "admin"
+}
+
+variable "admin_password" {
+  description = "Basic Auth password for the admin UI."
+  type        = string
+  sensitive   = true
+}

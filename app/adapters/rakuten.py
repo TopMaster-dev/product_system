@@ -12,7 +12,7 @@ Authentication is ESA (Encrypted Service Auth):
 from __future__ import annotations
 
 import base64
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -35,9 +35,13 @@ from app.logging import get_logger
 
 log = get_logger(__name__)
 
-_BASE_URL = "https://api.rms.rakuten.co.jp/es/2.0/purchaseItem"
-_SEARCH_PATH = "/searchOrderItem/"
+JST = timezone(timedelta(hours=9))
+
+_BASE_URL = "https://api.rms.rakuten.co.jp/es/2.0/order"
+_SEARCH_PATH = "/searchOrder/"
 _GET_PATH = "/getOrder/"
+# RakutenPay Order API response schema version. v7 is current as of 2024+.
+_RAKUTEN_PAY_VERSION = 7
 
 # Rakuten status code -> normalized status (subset; expanded as needed).
 _STATUS_MAP: dict[int, NormalizedStatus] = {
@@ -68,8 +72,11 @@ class RakutenAdapter(ChannelAdapter):
     ) -> None:
         if not service_secret or not license_key:
             raise ValueError("service_secret and license_key are required")
-        self._service_secret = service_secret
-        self._license_key = license_key
+        # Strip whitespace defensively — Secret Manager values copied from
+        # Windows sources can carry trailing \r, which corrupts the base64
+        # auth token and triggers ES04-01 Bad Request on every call.
+        self._service_secret = service_secret.strip()
+        self._license_key = license_key.strip()
         self._shop_url = shop_url
         self._base_url = base_url
         self._client = client
@@ -140,6 +147,13 @@ class RakutenAdapter(ChannelAdapter):
             json=body,
             headers=self._auth_header(),
         )
+        if resp.status_code >= 400:
+            log.error(
+                "rakuten.api_error",
+                status=resp.status_code,
+                path=path,
+                body_preview=resp.text[:500],
+            )
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         return data
@@ -149,19 +163,33 @@ class RakutenAdapter(ChannelAdapter):
         since: datetime,
         until: datetime | None,
     ) -> list[str]:
+        # RakutenPay Order API searchOrder. dateType 1=注文日, 4=注文確定日, etc.
+        # We use 1 (注文日) — every order has one, and incremental ingest catches
+        # everything updated since the last poll regardless of fulfilment state.
+        # All timestamps MUST be in JST per Rakuten spec.
+        end = until or datetime.now(tz=UTC)
+        # PaginationRequestModel and orderProgressList are REQUIRED by Rakuten
+        # — omitting either returns ES04-01 Bad Request. requestRecordsAmount
+        # default is 30; we use 1000 (the max) to minimize pagination passes.
         body: dict[str, Any] = {
-            "orderProgressList": list(_STATUS_MAP.keys()),
-            "dateType": 4,  # 更新日時
-            "startDatetime": since.isoformat(),
+            "dateType": 1,
+            "startDatetime": _fmt_jst(since),
+            "endDatetime": _fmt_jst(end),
+            "orderProgressList": [100, 200, 300, 400, 500, 600, 700, 800, 900],
+            "PaginationRequestModel": {
+                "requestRecordsAmount": 1000,
+                "requestPage": 1,
+            },
         }
-        if until is not None:
-            body["endDatetime"] = until.isoformat()
         data = await self._post(_SEARCH_PATH, body)
         numbers = data.get("orderNumberList") or []
         return [str(n) for n in numbers]
 
     async def _get_orders(self, order_numbers: list[str]) -> list[dict[str, Any]]:
-        data = await self._post(_GET_PATH, {"orderNumberList": order_numbers})
+        data = await self._post(
+            _GET_PATH,
+            {"orderNumberList": order_numbers, "version": _RAKUTEN_PAY_VERSION},
+        )
         return list(data.get("OrderModelList") or [])
 
     @staticmethod
@@ -195,3 +223,10 @@ class RakutenAdapter(ChannelAdapter):
 
 def _batched(seq: list[str], size: int) -> list[list[str]]:
     return [seq[i : i + size] for i in range(0, len(seq), size)]
+
+
+def _fmt_jst(dt: datetime) -> str:
+    """Format a datetime in Rakuten's expected `YYYY-MM-DDTHH:MM:SS+0900` shape."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(JST).strftime("%Y-%m-%dT%H:%M:%S+0900")
