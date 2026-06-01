@@ -61,3 +61,4 @@ infra/terraform/terraform.tfvars
 
 # Local toolchains (terraform binary etc.)
 .local/
+**.csv

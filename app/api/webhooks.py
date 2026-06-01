@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
@@ -65,18 +66,24 @@ async def shopify_webhook(
 
     if not hmac_valid:
         log.warning("shopify.webhook.hmac_invalid", webhook_id=webhook_id, topic=topic)
-        # Best-effort audit trail — record the rejection.
-        async with session.begin():
-            session.add(
-                WebhookLog(
-                    channel="shopify",
-                    webhook_id=webhook_id or "missing",
-                    topic=topic or "unknown",
-                    hmac_valid=False,
-                    payload=None,
-                    status=WebhookStatusEnum.REJECTED,
+        # Best-effort audit trail — record the rejection. Swallow IntegrityError
+        # so the 401 response still goes back: a missing webhook_id collides with
+        # any prior placeholder row under the (channel, webhook_id) UNIQUE.
+        try:
+            async with session.begin():
+                session.add(
+                    WebhookLog(
+                        channel="shopify",
+                        webhook_id=webhook_id or f"missing-{uuid4()}",
+                        topic=topic or "unknown",
+                        hmac_valid=False,
+                        payload=None,
+                        status=WebhookStatusEnum.REJECTED,
+                    )
                 )
-            )
+        except IntegrityError:
+            log.info("shopify.webhook.rejection_audit_duplicate",
+                     webhook_id=webhook_id, topic=topic)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid HMAC")
 
     try:
