@@ -66,6 +66,10 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "CLOUD_TASKS_INVOKER_SA"
         value = google_service_account.app.email
       }
+      env {
+        name  = "CLOUD_TASKS_TARGET_URL"
+        value = "https://product-system-4691219310.asia-northeast1.run.app/internal/jobs/tasks/run"
+      }
 
       # ---- Shopify ----
       env {

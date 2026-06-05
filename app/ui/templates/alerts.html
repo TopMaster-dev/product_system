@@ -3,71 +3,82 @@
 {% block content %}
 
 <div class="mb-5">
-  <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">マッピングアラート</h1>
-  <p class="text-sm text-ink-500 mt-1">未マッピング SKU の検知一覧。マスター SKU を選んで解決すると保留中の注文が自動再処理されます</p>
+  <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">マッピングアラート</h1>
+  <p class="text-sm text-ink-500 mt-1 max-w-2xl">未マッピング SKU の検知一覧。マスター SKU を選んで解決すると保留中の注文が自動再処理されます</p>
 </div>
 
-<!-- Desktop table -->
-<div class="hidden md:block bg-white rounded-xl shadow-card border border-ink-200/60 overflow-hidden">
+{% macro channel_badge(channel) -%}
+  <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded ring-1
+               {% if channel == 'shopify' %}bg-emerald-50 text-emerald-700 ring-emerald-200
+               {% elif channel == 'rakuten' %}bg-rose-50 text-rose-700 ring-rose-200
+               {% elif channel == 'amazon' %}bg-amber-50 text-amber-700 ring-amber-200
+               {% else %}bg-sky-50 text-sky-700 ring-sky-200{% endif %}">
+    {{ channel }}
+  </span>
+{%- endmacro %}
+
+<!-- Desktop / tablet table -->
+<div class="hidden md:block bg-white rounded-xl border border-ink-200 overflow-hidden">
   <div class="scroll-area overflow-x-auto">
-    <table class="w-full text-sm">
-      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide">
+    <table class="data-table w-full text-sm" style="min-width: 720px;">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
         <tr>
-          <th class="px-5 py-3 text-left font-medium">初回検知</th>
-          <th class="px-5 py-3 text-left font-medium">チャネル</th>
-          <th class="px-5 py-3 text-left font-medium">チャネル SKU</th>
-          <th class="px-5 py-3 text-right font-medium">発生回数</th>
-          <th class="px-5 py-3 text-left font-medium">状態</th>
-          <th class="px-5 py-3 text-left font-medium">解決</th>
+          <th class="px-4 py-3 text-left font-semibold whitespace-nowrap">初回検知</th>
+          <th class="px-4 py-3 text-left font-semibold">チャネル</th>
+          <th class="px-4 py-3 text-left font-semibold">チャネル SKU</th>
+          <th class="px-4 py-3 text-right font-semibold whitespace-nowrap">発生回数</th>
+          <th class="px-4 py-3 text-left font-semibold">状態</th>
+          <th class="px-4 py-3 text-left font-semibold" style="width: 280px;">解決</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for a in alerts %}
-          <tr class="hover:bg-ink-50/60 transition">
-            <td class="px-5 py-3 text-xs font-mono text-ink-600">{{ a.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td class="px-5 py-3">
-              <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded
-                           {% if a.channel == 'shopify' %}bg-emerald-50 text-emerald-700
-                           {% elif a.channel == 'rakuten' %}bg-rose-50 text-rose-700
-                           {% elif a.channel == 'amazon' %}bg-amber-50 text-amber-700
-                           {% else %}bg-sky-50 text-sky-700{% endif %}">
-                {{ a.channel }}
-              </span>
-            </td>
-            <td class="px-5 py-3 font-mono text-xs">{{ a.channel_sku }}</td>
-            <td class="px-5 py-3 text-right tabular-nums font-medium">{{ a.occurrence_count }}</td>
-            <td class="px-5 py-3">
+          <tr class="hover:bg-ink-50/60 transition {% if a.status == 'open' %}bg-red-50/20{% endif %}">
+            <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ a.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="px-4 py-3">{{ channel_badge(a.channel) }}</td>
+            <td class="px-4 py-3 font-mono text-xs">{{ a.channel_sku }}</td>
+            <td class="px-4 py-3 text-right tabular-nums font-medium text-ink-800">{{ a.occurrence_count }}</td>
+            <td class="px-4 py-3">
               {% if a.status == 'open' %}
-                <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-red-50 text-red-700">
-                  <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> open
+                <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200">
+                  <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> 未解決
                 </span>
               {% else %}
-                <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {{ a.status }}
+                <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 解決済
                 </span>
               {% endif %}
             </td>
-            <td class="px-5 py-3">
+            <td class="px-4 py-3" style="width: 280px;">
               {% if a.status == 'open' %}
-                <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="flex gap-2 items-center">
+                <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="flex gap-1.5 items-center">
                   <select name="master_sku_id" required
-                          class="border border-ink-300 rounded-md px-2 py-1 text-xs bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+                          class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
+                          style="max-width: 200px;">
                     <option value="">— SKU 選択 —</option>
                     {% for s in master_skus %}
-                      <option value="{{ s.id }}">{{ s.sku_code }} — {{ s.name }}</option>
+                      <option value="{{ s.id }}">{{ s.sku_code }}</option>
                     {% endfor %}
                   </select>
-                  <button class="rounded-md bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium px-3 py-1 transition">
+                  <button class="flex-shrink-0 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium px-3 py-1.5 transition">
                     解決
                   </button>
                 </form>
               {% else %}
-                <span class="text-xs text-ink-400">解決済</span>
+                <span class="text-xs text-ink-400">—</span>
               {% endif %}
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="6" class="px-5 py-12 text-center text-ink-400">アラートはありません。</td></tr>
+          <tr>
+            <td colspan="6" class="px-4 py-16 text-center">
+              <div class="flex flex-col items-center gap-2 text-ink-500">
+                <svg class="w-10 h-10 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+                <div class="text-sm font-medium text-ink-700">すべてのアラートが解決されています</div>
+                <div class="text-xs">新しい未マッピング SKU が検知されると、ここに表示されます</div>
+              </div>
+            </td>
+          </tr>
         {% endfor %}
       </tbody>
     </table>
@@ -77,50 +88,46 @@
 <!-- Mobile cards -->
 <div class="md:hidden space-y-2">
   {% for a in alerts %}
-    <div class="bg-white rounded-xl shadow-card border border-ink-200/60 p-4
+    <div class="bg-white rounded-xl border border-ink-200 p-4
                 {% if a.status == 'open' %}border-l-4 border-l-red-500{% endif %}">
-      <div class="flex items-start justify-between gap-2 mb-2">
-        <div>
-          <div class="text-xs text-ink-500 font-mono">{{ a.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</div>
-          <div class="flex items-center gap-2 mt-1">
-            <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded
-                         {% if a.channel == 'shopify' %}bg-emerald-50 text-emerald-700
-                         {% elif a.channel == 'rakuten' %}bg-rose-50 text-rose-700
-                         {% else %}bg-sky-50 text-sky-700{% endif %}">
-              {{ a.channel }}
-            </span>
-            <span class="font-mono text-sm">{{ a.channel_sku }}</span>
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div class="min-w-0">
+          <div class="text-xs text-ink-500 font-mono mb-1">{{ a.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</div>
+          <div class="flex items-center gap-2 flex-wrap">
+            {{ channel_badge(a.channel) }}
+            <span class="font-mono text-sm font-medium truncate">{{ a.channel_sku }}</span>
           </div>
         </div>
-        <div class="text-right">
+        <div class="text-right flex flex-col items-end gap-1 flex-shrink-0">
           {% if a.status == 'open' %}
-            <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-red-50 text-red-700">
-              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> open
+            <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> 未解決
             </span>
           {% else %}
-            <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">{{ a.status }}</span>
+            <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">解決済</span>
           {% endif %}
-          <div class="text-xs text-ink-500 mt-1">{{ a.occurrence_count }} 回</div>
+          <div class="text-xs text-ink-500 font-mono">{{ a.occurrence_count }} 回</div>
         </div>
       </div>
       {% if a.status == 'open' %}
         <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="space-y-2 pt-3 border-t border-ink-100">
           <select name="master_sku_id" required
-                  class="w-full border border-ink-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none">
+                  class="w-full border border-ink-300 rounded-md px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
             <option value="">— マスター SKU を選択 —</option>
             {% for s in master_skus %}
               <option value="{{ s.id }}">{{ s.sku_code }} — {{ s.name }}</option>
             {% endfor %}
           </select>
-          <button class="w-full rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium py-2.5 transition">
+          <button class="w-full rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium py-2 transition">
             解決して再処理
           </button>
         </form>
       {% endif %}
     </div>
   {% else %}
-    <div class="bg-white rounded-xl shadow-card border border-ink-200/60 p-8 text-center text-ink-400">
-      アラートはありません。
+    <div class="bg-white rounded-xl border border-ink-200 p-8 text-center">
+      <svg class="w-10 h-10 text-emerald-500 mx-auto mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+      <div class="text-sm font-medium text-ink-700">すべてのアラートが解決されています</div>
     </div>
   {% endfor %}
 </div>

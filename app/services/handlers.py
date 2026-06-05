@@ -27,13 +27,30 @@ PROCESS_SHOPIFY_WEBHOOK = "process_shopify_webhook"
 
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
 
+# Process-global registry so the HTTP task-runner endpoint can dispatch
+# Cloud Tasks deliveries without sharing a TaskQueue instance.
+_HANDLERS: dict[str, Handler] = {}
+
 
 def register_handlers(
-    queue: InMemoryTaskQueue,
+    queue: InMemoryTaskQueue | None,
     session_factory: async_sessionmaker[Any],
 ) -> None:
-    """Wire the in-memory queue with concrete async handlers."""
-    queue.register(PROCESS_SHOPIFY_WEBHOOK, _make_shopify_webhook_handler(session_factory))
+    """Wire handlers into the global registry. For the in-memory queue we
+    also call `queue.register` so synchronous in-process dispatch works
+    (used in tests and local dev)."""
+    handler = _make_shopify_webhook_handler(session_factory)
+    _HANDLERS[PROCESS_SHOPIFY_WEBHOOK] = handler
+    if queue is not None:
+        queue.register(PROCESS_SHOPIFY_WEBHOOK, handler)
+
+
+async def dispatch(name: str, payload: dict[str, Any]) -> None:
+    """Run the registered handler for `name`. Raises if none registered."""
+    handler = _HANDLERS.get(name)
+    if handler is None:
+        raise KeyError(f"no handler registered for task {name!r}")
+    await handler(payload)
 
 
 def _make_shopify_webhook_handler(
@@ -66,7 +83,7 @@ def _make_shopify_webhook_handler(
     return handler
 
 
-__all__ = ["PROCESS_SHOPIFY_WEBHOOK", "register_handlers"]
+__all__ = ["PROCESS_SHOPIFY_WEBHOOK", "dispatch", "register_handlers"]
 
 
 # Convenience: shape of the payload enqueued from the webhook endpoint.

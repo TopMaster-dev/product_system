@@ -66,6 +66,22 @@ query Orders($first: Int!, $query: String!, $cursor: String) {
 """
 
 
+def _strip_gid(value: str | None) -> str:
+    """Normalize Shopify GraphQL global IDs to the numeric suffix.
+
+    Webhook payloads carry numeric IDs ("6772971667500"); GraphQL responses
+    carry `gid://shopify/<Type>/<num>`. Storing both formats verbatim breaks
+    the (channel, channel_order_id) UNIQUE that's supposed to make the
+    Webhook+Polling redundancy idempotent. We canonicalize on the numeric form.
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    if "/" in s:
+        return s.rsplit("/", 1)[-1]
+    return s
+
+
 def _map_status(node: dict[str, Any]) -> NormalizedStatus:
     if node.get("cancelledAt"):
         return "cancelled"
@@ -250,9 +266,9 @@ class ShopifyAdapter(ChannelAdapter):
             money = (ln.get("originalUnitPriceSet") or {}).get("shopMoney") or {}
             items.append(
                 NormalizedOrderLine(
-                    line_id=ln["id"],
+                    line_id=_strip_gid(ln["id"]),
                     channel_sku=ln.get("sku") or "",
-                    channel_product_id=(ln.get("variant") or {}).get("id"),
+                    channel_product_id=_strip_gid((ln.get("variant") or {}).get("id")),
                     quantity=int(ln["quantity"]),
                     unit_price=Decimal(str(money.get("amount", "0"))),
                     currency=money.get("currencyCode", "JPY"),
@@ -261,7 +277,7 @@ class ShopifyAdapter(ChannelAdapter):
         ordered_at = datetime.fromisoformat(node["createdAt"].replace("Z", "+00:00"))
         return NormalizedOrder(
             channel="shopify",
-            channel_order_id=node["id"],
+            channel_order_id=_strip_gid(node["id"]),
             status=_map_status(node),
             ordered_at=ordered_at,
             items=items,

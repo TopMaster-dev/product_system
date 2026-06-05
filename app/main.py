@@ -21,8 +21,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.app_log_level)
     log = get_logger(__name__)
     queue = get_task_queue()
-    if isinstance(queue, InMemoryTaskQueue):
-        register_handlers(queue, async_session_factory)
+    register_handlers(
+        queue if isinstance(queue, InMemoryTaskQueue) else None,
+        async_session_factory,
+    )
     log.info("app.startup", env=settings.app_env, queue=settings.task_queue_backend)
     yield
     log.info("app.shutdown")

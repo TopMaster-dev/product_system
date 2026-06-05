@@ -4,17 +4,17 @@
 
 <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-5">
   <div>
-    <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">SKUマッピング</h1>
+    <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">SKUマッピング</h1>
     <p class="text-sm text-ink-500 mt-1">マスター SKU と各チャネル SKU の対応表</p>
   </div>
   <div class="flex flex-wrap gap-2">
     <a href="/admin/mappings/export.csv"
-       class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-ink-300 bg-white hover:bg-ink-50 text-ink-700 text-sm font-medium px-4 py-2.5 transition">
+       class="inline-flex items-center justify-center gap-1.5 rounded-md border border-ink-300 bg-white hover:bg-ink-50 text-ink-700 text-sm font-medium px-3 py-2 transition">
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      CSV エクスポート
+      エクスポート
     </a>
     <a href="/admin/mappings/new"
-       class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2.5 shadow-card transition">
+       class="inline-flex items-center justify-center gap-1.5 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-3 py-2 transition">
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       新規追加
     </a>
@@ -23,85 +23,88 @@
 
 <!-- Filter -->
 <form method="get"
-      class="bg-white rounded-xl shadow-card border border-ink-200/60 p-4 sm:p-5 mb-4
+      class="bg-white rounded-xl border border-ink-200 p-3 sm:p-4 mb-4
              flex flex-col sm:flex-row sm:items-end gap-3">
   <div class="flex-1">
     <label class="block text-xs font-medium text-ink-600 mb-1.5">マスター SKU / チャネル SKU</label>
     <input name="q" value="{{ q or '' }}" placeholder="部分一致で検索"
-           class="w-full px-3 py-2 border border-ink-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
+           class="w-full px-3 py-2 border border-ink-300 rounded-md text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition bg-white" />
   </div>
   <div class="sm:w-44">
     <label class="block text-xs font-medium text-ink-600 mb-1.5">チャネル</label>
-    <select name="channel" class="w-full px-3 py-2 border border-ink-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
+    <select name="channel" class="w-full px-3 py-2 border border-ink-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
       <option value="">すべて</option>
       {% for c in channels %}
         <option value="{{ c }}" {% if c == channel_filter %}selected{% endif %}>{{ c }}</option>
       {% endfor %}
     </select>
   </div>
-  <button type="submit" class="rounded-lg bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2.5 transition">検索</button>
+  <button type="submit" class="rounded-md bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2 transition whitespace-nowrap">検索</button>
 </form>
 
 <!-- CSV Import -->
-<details class="bg-white rounded-xl shadow-card border border-ink-200/60 mb-5">
-  <summary class="cursor-pointer px-5 py-3 text-sm font-medium text-ink-700 hover:bg-ink-50 transition rounded-xl flex items-center gap-2">
+<details class="bg-white rounded-xl border border-ink-200 mb-4 group">
+  <summary class="cursor-pointer px-4 py-3 text-sm font-medium text-ink-700 hover:bg-ink-50/60 rounded-xl flex items-center gap-2.5 transition">
     <svg class="w-4 h-4 text-ink-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-    CSV インポート
-    <span class="text-xs text-ink-500 font-normal">— ヘッダ: master_sku_code, channel, channel_sku, channel_product_id</span>
+    <div class="flex-1">CSV インポート</div>
+    <span class="hidden sm:inline text-xs text-ink-500 font-normal">ヘッダ: <code class="font-mono">master_sku_code, channel, channel_sku, channel_product_id</code></span>
+    <svg class="w-4 h-4 text-ink-400 group-open:rotate-180 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
   </summary>
   <form method="post" enctype="multipart/form-data" action="/admin/mappings/import"
-        class="px-5 pb-5 pt-2 flex flex-col sm:flex-row items-stretch sm:items-end gap-3 border-t border-ink-200/60">
+        class="px-4 pb-4 pt-2 flex flex-col sm:flex-row items-stretch sm:items-end gap-3 border-t border-ink-100">
     <input type="file" name="file" accept=".csv" required
-           class="text-sm flex-1 px-3 py-2 border border-ink-300 rounded-lg" />
+           class="text-sm flex-1 px-3 py-2 border border-ink-300 rounded-md bg-white file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-brand-50 file:text-brand-700 hover:file:bg-brand-100 file:cursor-pointer cursor-pointer" />
     <button type="submit"
-            class="rounded-lg bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2.5 transition">
+            class="inline-flex items-center justify-center gap-1.5 rounded-md bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2 transition">
       アップロード
     </button>
   </form>
 </details>
 
-<!-- Desktop table -->
-<div class="hidden md:block bg-white rounded-xl shadow-card border border-ink-200/60 overflow-hidden">
+{% macro channel_badge(channel) -%}
+  <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded ring-1
+               {% if channel == 'shopify' %}bg-emerald-50 text-emerald-700 ring-emerald-200
+               {% elif channel == 'rakuten' %}bg-rose-50 text-rose-700 ring-rose-200
+               {% elif channel == 'amazon' %}bg-amber-50 text-amber-700 ring-amber-200
+               {% else %}bg-sky-50 text-sky-700 ring-sky-200{% endif %}">
+    {{ channel }}
+  </span>
+{%- endmacro %}
+
+<!-- Desktop / tablet table -->
+<div class="hidden md:block bg-white rounded-xl border border-ink-200 overflow-hidden">
   <div class="scroll-area overflow-x-auto">
-    <table class="w-full text-sm">
-      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
         <tr>
-          <th class="px-5 py-3 text-left font-medium">マスター SKU</th>
-          <th class="px-5 py-3 text-left font-medium">チャネル</th>
-          <th class="px-5 py-3 text-left font-medium">チャネル SKU</th>
-          <th class="px-5 py-3 text-left font-medium">商品ID</th>
-          <th class="px-5 py-3 text-left font-medium">状態</th>
-          <th class="px-5 py-3 text-right font-medium"></th>
+          <th class="px-4 py-3 text-left font-semibold">マスター SKU</th>
+          <th class="px-4 py-3 text-left font-semibold">チャネル</th>
+          <th class="px-4 py-3 text-left font-semibold">チャネル SKU</th>
+          <th class="px-4 py-3 text-left font-semibold">商品ID</th>
+          <th class="px-4 py-3 text-left font-semibold">状態</th>
+          <th class="px-4 py-3 text-right font-semibold"></th>
         </tr>
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for row in rows %}
           <tr class="hover:bg-ink-50/60 transition">
-            <td class="px-5 py-3">
-              <div class="font-mono text-xs text-ink-800">{{ row.master_sku_code }}</div>
-              <div class="text-xs text-ink-500">{{ row.master_sku_name }}</div>
+            <td class="px-4 py-3">
+              <div class="font-mono text-xs font-medium text-ink-800">{{ row.master_sku_code }}</div>
+              <div class="text-xs text-ink-500 mt-0.5 truncate max-w-xs">{{ row.master_sku_name }}</div>
             </td>
-            <td class="px-5 py-3">
-              <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded
-                           {% if row.channel == 'shopify' %}bg-emerald-50 text-emerald-700
-                           {% elif row.channel == 'rakuten' %}bg-rose-50 text-rose-700
-                           {% elif row.channel == 'amazon' %}bg-amber-50 text-amber-700
-                           {% else %}bg-sky-50 text-sky-700{% endif %}">
-                {{ row.channel }}
-              </span>
-            </td>
-            <td class="px-5 py-3 font-mono text-xs">{{ row.channel_sku }}</td>
-            <td class="px-5 py-3 font-mono text-xs text-ink-500">{{ row.channel_product_id or '—' }}</td>
-            <td class="px-5 py-3">
+            <td class="px-4 py-3">{{ channel_badge(row.channel) }}</td>
+            <td class="px-4 py-3 font-mono text-xs">{{ row.channel_sku }}</td>
+            <td class="px-4 py-3 font-mono text-xs text-ink-500">{{ row.channel_product_id or '—' }}</td>
+            <td class="px-4 py-3">
               {% if row.is_active %}
-                <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> active
                 </span>
               {% else %}
-                <span class="text-xs px-2 py-0.5 rounded bg-ink-100 text-ink-500">inactive</span>
+                <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded bg-ink-100 text-ink-500 ring-1 ring-ink-200">inactive</span>
               {% endif %}
             </td>
-            <td class="px-5 py-3 text-right">
+            <td class="px-4 py-3 text-right">
               <form method="post" action="/admin/mappings/{{ row.id }}/delete" class="inline"
                     onsubmit="return confirm('このマッピングを削除しますか?')">
                 <button class="text-red-600 hover:bg-red-50 text-xs font-medium px-2 py-1 rounded transition">削除</button>
@@ -109,7 +112,15 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="6" class="px-5 py-12 text-center text-ink-400">マッピングがありません。</td></tr>
+          <tr>
+            <td colspan="6" class="px-4 py-16 text-center">
+              <div class="flex flex-col items-center gap-2 text-ink-500">
+                <svg class="w-10 h-10 text-ink-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+                <div class="text-sm">マッピングがありません</div>
+                <a href="/admin/mappings/new" class="text-xs text-brand-600 hover:underline font-medium">新規追加 →</a>
+              </div>
+            </td>
+          </tr>
         {% endfor %}
       </tbody>
     </table>
@@ -119,31 +130,31 @@
 <!-- Mobile cards -->
 <div class="md:hidden space-y-2">
   {% for row in rows %}
-    <div class="bg-white rounded-xl shadow-card border border-ink-200/60 p-4">
-      <div class="flex items-start justify-between gap-2 mb-2">
-        <div>
-          <div class="font-mono text-xs text-ink-500">{{ row.master_sku_code }}</div>
-          <div class="text-sm text-ink-800">{{ row.master_sku_name }}</div>
+    <div class="bg-white rounded-xl border border-ink-200 p-4">
+      <div class="flex items-start justify-between gap-3 mb-2">
+        <div class="min-w-0">
+          <div class="font-mono text-xs font-medium text-ink-500">{{ row.master_sku_code }}</div>
+          <div class="text-sm text-ink-800 mt-0.5">{{ row.master_sku_name }}</div>
         </div>
-        <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded
-                     {% if row.channel == 'shopify' %}bg-emerald-50 text-emerald-700
-                     {% elif row.channel == 'rakuten' %}bg-rose-50 text-rose-700
-                     {% elif row.channel == 'amazon' %}bg-amber-50 text-amber-700
-                     {% else %}bg-sky-50 text-sky-700{% endif %}">
-          {{ row.channel }}
-        </span>
+        {{ channel_badge(row.channel) }}
       </div>
-      <div class="grid grid-cols-2 gap-2 text-xs">
-        <div><div class="text-ink-400">channel SKU</div><div class="font-mono">{{ row.channel_sku }}</div></div>
-        <div><div class="text-ink-400">商品ID</div><div class="font-mono text-ink-600">{{ row.channel_product_id or '—' }}</div></div>
+      <div class="grid grid-cols-2 gap-3 text-xs mb-3">
+        <div>
+          <div class="text-ink-400 mb-0.5">channel SKU</div>
+          <div class="font-mono font-medium text-ink-800">{{ row.channel_sku }}</div>
+        </div>
+        <div>
+          <div class="text-ink-400 mb-0.5">商品ID</div>
+          <div class="font-mono text-ink-600 truncate">{{ row.channel_product_id or '—' }}</div>
+        </div>
       </div>
-      <div class="flex items-center justify-between mt-3 pt-3 border-t border-ink-100">
+      <div class="flex items-center justify-between pt-2 border-t border-ink-100">
         {% if row.is_active %}
-          <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">
+          <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> active
           </span>
         {% else %}
-          <span class="text-xs px-2 py-0.5 rounded bg-ink-100 text-ink-500">inactive</span>
+          <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded bg-ink-100 text-ink-500 ring-1 ring-ink-200">inactive</span>
         {% endif %}
         <form method="post" action="/admin/mappings/{{ row.id }}/delete"
               onsubmit="return confirm('このマッピングを削除しますか?')">
@@ -152,8 +163,10 @@
       </div>
     </div>
   {% else %}
-    <div class="bg-white rounded-xl shadow-card border border-ink-200/60 p-8 text-center text-ink-400">
-      マッピングがありません。
+    <div class="bg-white rounded-xl border border-ink-200 p-8 text-center">
+      <svg class="w-10 h-10 text-ink-300 mx-auto mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+      <div class="text-sm text-ink-500 mb-2">マッピングがありません</div>
+      <a href="/admin/mappings/new" class="text-xs text-brand-600 hover:underline font-medium">新規追加 →</a>
     </div>
   {% endfor %}
 </div>
