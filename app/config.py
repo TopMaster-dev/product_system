@@ -10,6 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AppEnv = Literal["local", "dev", "staging", "prod"]
 TaskQueueBackend = Literal["in_memory", "cloud_tasks"]
+# Phase 1-B: which Rakuten RMS endpoint we use for pushing inventory.
+# Decision pending in kickoff meeting; default to the more targeted endpoint.
+RakutenInventoryApi = Literal["updateInventory", "updateItem"]
 
 
 class Settings(BaseSettings):
@@ -57,6 +60,23 @@ class Settings(BaseSettings):
     # Admin UI
     admin_username: str = "admin"
     admin_password: str = "change_me_in_production"  # noqa: S105
+
+    # Phase 1-B: inventory push & reconcile
+    # Default Shopify Location ID for push_inventory. Empty = auto-discover the
+    # shop's single primary location at startup. Set explicitly only when the
+    # shop has multiple locations.
+    shopify_location_id: str = ""
+    rakuten_inventory_api: RakutenInventoryApi = "updateInventory"
+
+    # Slack notifications. Levels: critical / error / info. Empty URL disables
+    # notifications (used in local dev and tests).
+    slack_webhook_url: str = ""
+    slack_notify_min_level: Literal["critical", "error", "info"] = "error"
+
+    # Best-seller definition for the inventory list view. Top-N percent by
+    # order_consumed count over the trailing window.
+    best_seller_window_days: int = 30
+    best_seller_top_percent: int = 20
 
     @property
     def is_production(self) -> bool:
