@@ -46,3 +46,27 @@ class FulfillmentTypeEnum(StrEnum):
     SELF = "self"
     FBA = "fba"
     MFN = "mfn"
+
+
+class SyncAttemptTypeEnum(StrEnum):
+    PUSH_INVENTORY = "push_inventory"
+    RECONCILE = "reconcile"
+
+
+class SyncAttemptStatusEnum(StrEnum):
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ReconcileRunStatusEnum(StrEnum):
+    RUNNING = "running"
+    PENDING_APPROVAL = "pending_approval"
+    APPLIED = "applied"
+    CANCELLED = "cancelled"
+
+
+class ReconcileDiffDecisionEnum(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    SKIPPED = "skipped"

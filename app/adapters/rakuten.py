@@ -43,6 +43,16 @@ _GET_PATH = "/getOrder/"
 # RakutenPay Order API response schema version. v7 is current as of 2024+.
 _RAKUTEN_PAY_VERSION = 7
 
+# Inventory API (Phase 1-B F1.5). Per client decision D-1 we use the
+# dedicated `updateInventory` endpoint rather than `updateItem`.
+_INVENTORY_BASE_URL = "https://api.rms.rakuten.co.jp/es/2.0/inventory"
+_INVENTORY_UPDATE_PATH = "/updateInventory/"
+# inventoryType 1 = 通常在庫 (normal stock); we don't manage 予約在庫 in Phase 1-B.
+_INVENTORY_TYPE_NORMAL = 1
+# inventoryOperation 1 = SET (override). We never want INCREMENT/DECREMENT here
+# because the central DB carries the authoritative count.
+_INVENTORY_OP_SET = 1
+
 # Rakuten status code -> normalized status (subset; expanded as needed).
 _STATUS_MAP: dict[int, NormalizedStatus] = {
     100: "pending",  # 注文確認待ち
@@ -83,6 +93,8 @@ class RakutenAdapter(ChannelAdapter):
         self._owns_client = client is None
         # Rakuten RMS API: 1 req/s sustained is conservative; bursts up to 5.
         self._rate_limiter = rate_limiter or TokenBucket(rate=1, capacity=5)
+        # Phase 1-B inventory writes go to a different RMS base URL.
+        self._inventory_base_url = _INVENTORY_BASE_URL
 
     async def __aenter__(self) -> RakutenAdapter:
         if self._client is None:
@@ -113,8 +125,57 @@ class RakutenAdapter(ChannelAdapter):
                 out.append(self._to_normalized(raw))
         return out
 
-    async def push_inventory(self, sku: str, quantity: int) -> None:
-        raise NotImplementedError("RakutenAdapter.push_inventory is Phase 1-B")
+    async def push_inventory(self, sku: str, quantity: int) -> dict[str, Any]:
+        """Set the inventory level for `sku` on Rakuten RMS.
+
+        `sku` is the Rakuten 商品管理番号 (`manageNumber`). Quantity is the
+        absolute target; we use operation 1 (SET) so the central DB stays
+        authoritative regardless of any value RMS currently shows.
+
+        Returns the parsed Rakuten response on success. Raises if the API
+        reports a non-success errorCode or returns a non-2xx HTTP status —
+        the InventoryPushService will translate the raise into a sync_attempt
+        row with status='failed'.
+        """
+        if quantity < 0:
+            raise ValueError("Rakuten rejects negative inventory; "
+                             "callers must clamp at 0 before push")
+        body: dict[str, Any] = {
+            "inventoryUpdateRequestRakutenItem": [
+                {
+                    "manageNumber": sku,
+                    "inventoryType": _INVENTORY_TYPE_NORMAL,
+                    "inventoryOperation": _INVENTORY_OP_SET,
+                    "inventory": int(quantity),
+                }
+            ]
+        }
+        data = await self._post_url(
+            self._inventory_base_url + _INVENTORY_UPDATE_PATH,
+            body,
+        )
+        # Rakuten reports per-item errors inside the response even with HTTP 200;
+        # check the result code so a logical failure does not look like success.
+        self._raise_on_rakuten_error(data, sku)
+        return data
+
+    @staticmethod
+    def _raise_on_rakuten_error(data: dict[str, Any], sku: str) -> None:
+        results = data.get("Results") or {}
+        if isinstance(results, dict) and results.get("errorCode"):
+            raise RuntimeError(
+                f"Rakuten inventory update rejected for sku={sku}: "
+                f"{results.get('errorCode')} {results.get('message', '')}".strip()
+            )
+        # Per-item array form (some endpoints): each item carries its own status
+        items = data.get("inventoryUpdateResponseItem") or []
+        for it in items:
+            it_code = (it or {}).get("errorCode")
+            if it_code and it_code != "0":
+                raise RuntimeError(
+                    f"Rakuten inventory update rejected for sku={sku}: "
+                    f"{it_code} {it.get('message', '')}".strip()
+                )
 
     def verify_webhook(self, headers: dict[str, str], body: bytes) -> bool:
         # Rakuten does not deliver webhooks for orders; polling is authoritative.
@@ -131,19 +192,24 @@ class RakutenAdapter(ChannelAdapter):
             "Content-Type": "application/json; charset=utf-8",
         }
 
+    async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST to the Order API base (kept stable for existing callers)."""
+        return await self._post_url(self._base_url + path, body)
+
     @retry(
         retry=retry_if_exception_type((httpx.HTTPError,)),
         wait=wait_exponential(multiplier=1, min=1, max=30),
         stop=stop_after_attempt(5),
         reraise=True,
     )
-    async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def _post_url(self, url: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST to an absolute URL with the same auth, rate limit, and retry."""
         await self._rate_limiter.acquire()
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=30.0)
             self._owns_client = True
         resp = await self._client.post(
-            self._base_url + path,
+            url,
             json=body,
             headers=self._auth_header(),
         )
@@ -151,7 +217,7 @@ class RakutenAdapter(ChannelAdapter):
             log.error(
                 "rakuten.api_error",
                 status=resp.status_code,
-                path=path,
+                url=url,
                 body_preview=resp.text[:500],
             )
         resp.raise_for_status()
