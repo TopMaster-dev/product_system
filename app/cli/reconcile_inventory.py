@@ -32,11 +32,18 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import InventorySnapshot, MasterSku
 from app.services.reconcile import DiffInput, ReconcileService
+
+# A factory that produces async sessions. Defaults to the production
+# async_session_factory; tests override with a factory bound to the test
+# engine so the same connection sees both fixture-seeded data and the
+# CLI's reads/writes.
+SessionFactory = async_sessionmaker[AsyncSession]
 
 log = get_logger(__name__)
 ENC = "cp932"
@@ -79,11 +86,14 @@ def aggregate_csv_by_product(path: Path) -> dict[str, int]:
 
 async def collect_diffs(
     csv_aggregates: dict[str, int],
+    session: AsyncSession,
 ) -> tuple[list[DiffInput], dict[str, int]]:
-    """Compare CROSS MALL aggregates against current snapshots.
+    """Compare CROSS MALL aggregates against current snapshots using the
+    given session.
 
     Returns the list of DiffInputs to pass to ReconcileService, plus a
-    summary dict for logging.
+    summary dict for logging. Caller owns the session lifecycle (so tests
+    can share the fixture-managed transactional session with the CLI).
     """
     summary = {
         "csv_unique_codes": len(csv_aggregates),
@@ -93,47 +103,47 @@ async def collect_diffs(
     }
     diffs: list[DiffInput] = []
 
-    async with async_session_factory() as session:
-        # Pull all master_skus that match csv codes; then their snapshots.
-        codes = list(csv_aggregates.keys())
-        if not codes:
-            return diffs, summary
+    # Pull all master_skus that match csv codes; then their snapshots.
+    codes = list(csv_aggregates.keys())
+    if not codes:
+        return diffs, summary
 
-        masters_result = await session.execute(
-            select(MasterSku.id, MasterSku.sku_code).where(MasterSku.sku_code.in_(codes))
+    masters_result = await session.execute(
+        select(MasterSku.id, MasterSku.sku_code).where(MasterSku.sku_code.in_(codes))
+    )
+    code_to_master_id: dict[str, int] = {code: mid for mid, code in masters_result.all()}
+    summary["matched_sku_count"] = len(code_to_master_id)
+    summary["csv_codes_not_in_master"] = len(csv_aggregates) - len(code_to_master_id)
+
+    if code_to_master_id:
+        snapshots_result = await session.execute(
+            select(
+                InventorySnapshot.master_sku_id,
+                InventorySnapshot.on_hand_qty,
+            ).where(InventorySnapshot.master_sku_id.in_(list(code_to_master_id.values())))
         )
-        code_to_master_id: dict[str, int] = {code: mid for mid, code in masters_result.all()}
-        summary["matched_sku_count"] = len(code_to_master_id)
-        summary["csv_codes_not_in_master"] = len(csv_aggregates) - len(code_to_master_id)
+        snapshot_rows = snapshots_result.all()
+        # Typed dict-comp keeps mypy happy where dict(Result.all()) has a
+        # Row vs tuple incompatibility.
+        id_to_current: dict[int, int] = {mid: q for mid, q in snapshot_rows}  # noqa: C416
+    else:
+        id_to_current = {}
 
-        if code_to_master_id:
-            snapshots_result = await session.execute(
-                select(
-                    InventorySnapshot.master_sku_id,
-                    InventorySnapshot.on_hand_qty,
-                ).where(InventorySnapshot.master_sku_id.in_(list(code_to_master_id.values())))
+    for code, target_qty in csv_aggregates.items():
+        master_id = code_to_master_id.get(code)
+        if master_id is None:
+            continue
+        current_qty = id_to_current.get(master_id, 0)
+        if current_qty == target_qty:
+            continue
+        diffs.append(
+            DiffInput(
+                master_sku_id=master_id,
+                current_qty=current_qty,
+                target_qty=target_qty,
             )
-            # Typed dict-comp keeps mypy happy where dict(Result.all()) has a
-            # Row vs tuple incompatibility.
-            id_to_current: dict[int, int] = {mid: q for mid, q in snapshots_result.all()}  # noqa: C416
-        else:
-            id_to_current = {}
-
-        for code, target_qty in csv_aggregates.items():
-            master_id = code_to_master_id.get(code)
-            if master_id is None:
-                continue
-            current_qty = id_to_current.get(master_id, 0)
-            if current_qty == target_qty:
-                continue
-            diffs.append(
-                DiffInput(
-                    master_sku_id=master_id,
-                    current_qty=current_qty,
-                    target_qty=target_qty,
-                )
-            )
-        summary["actual_diffs"] = len(diffs)
+        )
+    summary["actual_diffs"] = len(diffs)
     return diffs, summary
 
 
@@ -146,7 +156,12 @@ async def run(
     *,
     triggered_by: str = "cloud_scheduler",
     dry_run: bool = False,
+    session_factory: SessionFactory | None = None,
 ) -> int:
+    """Top-level CLI entry. `session_factory` defaults to the production
+    `async_session_factory`; tests pass in a factory bound to the test
+    engine so the fixture-seeded data is visible to the CLI."""
+    factory = session_factory or async_session_factory
     log.info("reconcile.cli.start", csv=str(csv_path), triggered_by=triggered_by, dry_run=dry_run)
     # Sync stat is acceptable here; we run as a one-shot CLI and Path.exists()
     # returns immediately. Switching to anyio.Path would only add a dependency.
@@ -157,14 +172,15 @@ async def run(
     csv_aggregates = aggregate_csv_by_product(csv_path)
     log.info("reconcile.cli.csv_loaded", row_count=len(csv_aggregates))
 
-    diffs, summary = await collect_diffs(csv_aggregates)
+    async with factory() as read_session:
+        diffs, summary = await collect_diffs(csv_aggregates, read_session)
     log.info("reconcile.cli.summary", **summary)
 
     if dry_run:
         log.info("reconcile.cli.dry_run", proposed_diff_count=len(diffs))
         return 0
 
-    async with async_session_factory() as session, session.begin():
+    async with factory() as session, session.begin():
         svc = ReconcileService(session)
         run_row = await svc.start_run(
             source="cross_mall_csv",
