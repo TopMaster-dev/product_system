@@ -24,7 +24,10 @@ class GoogleBigQueryClient:
 
     def __init__(self, *, project_id: str, dataset: str) -> None:
         try:
-            from google.cloud import bigquery  # type: ignore[import-untyped]
+            # Different mypy versions emit different codes here
+            # (import-untyped on 2.1+, import-not-found on 1.13 to 1.14),
+            # so the un-coded ignore suppresses both consistently.
+            from google.cloud import bigquery  # type: ignore
         except ImportError as exc:  # pragma: no cover - extras-gated
             raise RuntimeError(
                 "google-cloud-bigquery is not installed; install the [gcp] extra"

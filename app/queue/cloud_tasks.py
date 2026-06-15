@@ -34,7 +34,10 @@ class CloudTasksTaskQueue:
         service_account_email: str | None = None,
     ) -> None:
         try:
-            from google.cloud import tasks_v2  # type: ignore[import-untyped]
+            # Different mypy versions emit different codes here
+            # (import-untyped on 2.1+, import-not-found on 1.13 to 1.14),
+            # so the un-coded ignore suppresses both consistently.
+            from google.cloud import tasks_v2  # type: ignore
         except ImportError as exc:  # pragma: no cover - extras-gated
             raise RuntimeError(
                 "google-cloud-tasks is not installed; install the [gcp] extra"
