@@ -138,8 +138,9 @@ class RakutenAdapter(ChannelAdapter):
         row with status='failed'.
         """
         if quantity < 0:
-            raise ValueError("Rakuten rejects negative inventory; "
-                             "callers must clamp at 0 before push")
+            raise ValueError(
+                "Rakuten rejects negative inventory; callers must clamp at 0 before push"
+            )
         body: dict[str, Any] = {
             "inventoryUpdateRequestRakutenItem": [
                 {

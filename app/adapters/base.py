@@ -66,11 +66,18 @@ class ChannelAdapter(ABC):
         """Fetch orders updated within the given window."""
 
     @abstractmethod
-    async def push_inventory(self, sku: str, quantity: int) -> None:
+    async def push_inventory(
+        self,
+        sku: str,
+        quantity: int,
+    ) -> dict[str, Any] | None:
         """Push inventory level to the channel.
 
-        Not used in Phase 1-A. Implementations may raise NotImplementedError
-        until Phase 1-B.
+        Implementations should return the channel API response as a dict on
+        success (so the caller can persist it in `sync_attempts.response_payload`)
+        or `None` if the channel does not provide a structured response.
+        Phase 1-A stubs were ``None``-returning; Phase 1-B implementations
+        (Rakuten F1.5, Shopify F1.6) return the full response payload.
         """
 
     @abstractmethod

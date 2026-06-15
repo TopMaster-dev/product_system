@@ -38,7 +38,7 @@ from app.models import ChannelSkuMapping, MappingAlert, MasterSku
 
 log = get_logger(__name__)
 ENC = "cp932"
-NAME_TOKEN_RE = re.compile(r"[#＃]([A-Za-z]+\d+[a-z]?)")
+NAME_TOKEN_RE = re.compile(r"[#＃]([A-Za-z]+\d+[a-z]?)")  # noqa: RUF001 — full-width sign in regex is intentional
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[list[str]]]:
@@ -110,12 +110,13 @@ def build_mappings(
         if variant_sku in seen_shopify:
             continue
         seen_shopify.add(variant_sku)
-        shopify.append({"channel_sku": variant_sku, "master_code": master_code,
-                        "strategy": "shopify:exact"})
+        shopify.append(
+            {"channel_sku": variant_sku, "master_code": master_code, "strategy": "shopify:exact"}
+        )
 
     # ---------- rakuten mappings ----------
     rk_header, rk_rows = _read_csv(rakuten_path)
-    rk_mgmt_idx = rk_header.index("商品管理番号（商品URL）")
+    rk_mgmt_idx = rk_header.index("商品管理番号（商品URL）")  # noqa: RUF001 — full-width parens are in the CROSS MALL header literally
     rk_sku_mgmt_idx = rk_header.index("SKU管理番号")
     rk_sys_sku_idx = rk_header.index("システム連携用SKU番号")
     rk_name_idx = rk_header.index("商品名")
@@ -164,8 +165,9 @@ def build_mappings(
             return stripped + "c", "E:strip0+c"
         name = rk_names.get(mgmt, "")
         if name:
-            hits = {m.group(1) for m in NAME_TOKEN_RE.finditer(name)
-                    if m.group(1) in valid_master_codes}
+            hits = {
+                m.group(1) for m in NAME_TOKEN_RE.finditer(name) if m.group(1) in valid_master_codes
+            }
             if len(hits) == 1:
                 return hits.pop(), "F:name#token"
         return None, "no_match"
@@ -185,16 +187,30 @@ def build_mappings(
     # but supports custom additions).
     for (channel, channel_sku), master_code in manual.items():
         if master_code not in valid_master_codes:
-            log.warning("import.manual_skip", channel=channel,
-                        channel_sku=channel_sku, reason="master_not_in_products")
+            log.warning(
+                "import.manual_skip",
+                channel=channel,
+                channel_sku=channel_sku,
+                reason="master_not_in_products",
+            )
             continue
         if channel == "rakuten" and channel_sku not in {r["channel_sku"] for r in rakuten}:
-            rakuten.append({"channel_sku": channel_sku, "master_code": master_code,
-                            "strategy": "M:manual_extra"})
+            rakuten.append(
+                {
+                    "channel_sku": channel_sku,
+                    "master_code": master_code,
+                    "strategy": "M:manual_extra",
+                }
+            )
             strategy_counts["M:manual_extra"] += 1
         elif channel == "shopify" and channel_sku not in seen_shopify:
-            shopify.append({"channel_sku": channel_sku, "master_code": master_code,
-                            "strategy": "M:manual_extra"})
+            shopify.append(
+                {
+                    "channel_sku": channel_sku,
+                    "master_code": master_code,
+                    "strategy": "M:manual_extra",
+                }
+            )
             seen_shopify.add(channel_sku)
             strategy_counts["M:manual_extra:shopify"] += 1
 
@@ -212,23 +228,32 @@ async def run(
     *,
     dry_run: bool = False,
 ) -> int:
-    log.info("import.start",
-             products=str(products_path), skus=str(skus_path),
-             rakuten=str(rakuten_path), manual=str(manual_path) if manual_path else None,
-             dry_run=dry_run)
+    log.info(
+        "import.start",
+        products=str(products_path),
+        skus=str(skus_path),
+        rakuten=str(rakuten_path),
+        manual=str(manual_path) if manual_path else None,
+        dry_run=dry_run,
+    )
 
     # ---- Build everything in memory first ----
     master_records = build_master_products(products_path)
     valid_master_codes = {m["sku_code"] for m in master_records}
     shopify, rakuten, strategy_counts = build_mappings(
-        skus_path, rakuten_path, manual_path, valid_master_codes,
+        skus_path,
+        rakuten_path,
+        manual_path,
+        valid_master_codes,
     )
 
-    log.info("import.plan",
-             master_products=len(master_records),
-             shopify_mappings=len(shopify),
-             rakuten_mappings=len(rakuten),
-             strategies=strategy_counts)
+    log.info(
+        "import.plan",
+        master_products=len(master_records),
+        shopify_mappings=len(shopify),
+        rakuten_mappings=len(rakuten),
+        strategies=strategy_counts,
+    )
 
     if dry_run:
         log.info("import.dry_run_complete")
@@ -255,46 +280,53 @@ async def run(
             mid = code_to_id.get(row["master_code"])
             if mid is None:
                 continue
-            all_mapping_rows.append({
-                "master_sku_id": mid,
-                "channel": "shopify",
-                "channel_sku": row["channel_sku"],
-                "is_active": True,
-            })
+            all_mapping_rows.append(
+                {
+                    "master_sku_id": mid,
+                    "channel": "shopify",
+                    "channel_sku": row["channel_sku"],
+                    "is_active": True,
+                }
+            )
         for row in rakuten:
             mid = code_to_id.get(row["master_code"])
             if mid is None:
                 continue
-            all_mapping_rows.append({
-                "master_sku_id": mid,
-                "channel": "rakuten",
-                "channel_sku": row["channel_sku"],
-                "is_active": True,
-            })
+            all_mapping_rows.append(
+                {
+                    "master_sku_id": mid,
+                    "channel": "rakuten",
+                    "channel_sku": row["channel_sku"],
+                    "is_active": True,
+                }
+            )
 
         if all_mapping_rows:
             stmt = pg_insert(ChannelSkuMapping).values(all_mapping_rows)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["channel", "channel_sku", "marketplace_id"],
-                set_={"master_sku_id": stmt.excluded.master_sku_id,
-                      "is_active": True,
-                      "updated_at": datetime.now(UTC)},
+                set_={
+                    "master_sku_id": stmt.excluded.master_sku_id,
+                    "is_active": True,
+                    "updated_at": datetime.now(UTC),
+                },
             )
             await session.execute(stmt)
 
         # 4) Auto-resolve open mapping_alerts whose (channel, channel_sku) now has a mapping.
         result = await session.execute(
-            select(ChannelSkuMapping.channel,
-                   ChannelSkuMapping.channel_sku,
-                   ChannelSkuMapping.master_sku_id)
+            select(
+                ChannelSkuMapping.channel,
+                ChannelSkuMapping.channel_sku,
+                ChannelSkuMapping.master_sku_id,
+            )
         )
-        mapping_lookup: dict[tuple[str, str], int] = {
-            (ch, cs): mid for ch, cs, mid in result.all()
-        }
+        mapping_lookup: dict[tuple[str, str], int] = {(ch, cs): mid for ch, cs, mid in result.all()}
 
         result = await session.execute(
-            select(MappingAlert.id, MappingAlert.channel, MappingAlert.channel_sku)
-            .where(MappingAlert.status == "open")
+            select(MappingAlert.id, MappingAlert.channel, MappingAlert.channel_sku).where(
+                MappingAlert.status == "open"
+            )
         )
         resolved_count = 0
         for alert_id, channel, channel_sku in result.all():
@@ -304,39 +336,49 @@ async def run(
             await session.execute(
                 update(MappingAlert)
                 .where(MappingAlert.id == alert_id)
-                .values(status="resolved",
-                        resolved_master_sku_id=mid,
-                        resolved_at=datetime.now(UTC))
+                .values(
+                    status="resolved", resolved_master_sku_id=mid, resolved_at=datetime.now(UTC)
+                )
             )
             resolved_count += 1
 
-    log.info("import.done",
-             master_products=len(master_records),
-             mappings_written=len(all_mapping_rows),
-             alerts_resolved=resolved_count,
-             strategies=strategy_counts)
+    log.info(
+        "import.done",
+        master_products=len(master_records),
+        mappings_written=len(all_mapping_rows),
+        alerts_resolved=resolved_count,
+        strategies=strategy_counts,
+    )
     return 0
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import CROSS MALL master + mappings")
-    parser.add_argument("--products", required=True, type=Path,
-                        help="商品情報CSV (item_*.csv)")
-    parser.add_argument("--skus", required=True, type=Path,
-                        help="商品SKU CSV (item_sku_*.csv)")
-    parser.add_argument("--rakuten", required=True, type=Path,
-                        help="楽天商品CSV (normal-item_*.csv)")
-    parser.add_argument("--manual", type=Path, default=None,
-                        help="Optional manual overrides CSV "
-                             "(headers: channel,channel_sku,master_sku)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Compute and log, don't write to DB")
+    parser.add_argument("--products", required=True, type=Path, help="商品情報CSV (item_*.csv)")
+    parser.add_argument("--skus", required=True, type=Path, help="商品SKU CSV (item_sku_*.csv)")
+    parser.add_argument(
+        "--rakuten", required=True, type=Path, help="楽天商品CSV (normal-item_*.csv)"
+    )
+    parser.add_argument(
+        "--manual",
+        type=Path,
+        default=None,
+        help="Optional manual overrides CSV (headers: channel,channel_sku,master_sku)",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Compute and log, don't write to DB")
     args = parser.parse_args()
     configure_logging("INFO")
-    sys.exit(asyncio.run(run(
-        args.products, args.skus, args.rakuten, args.manual,
-        dry_run=args.dry_run,
-    )))
+    sys.exit(
+        asyncio.run(
+            run(
+                args.products,
+                args.skus,
+                args.rakuten,
+                args.manual,
+                dry_run=args.dry_run,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":

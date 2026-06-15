@@ -127,7 +127,7 @@ async def test_attachment_color_by_level() -> None:
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
-        for level, expected_color in [
+        for level, _expected_color in [
             ("critical", "#dc2626"),
             ("error", "#f59e0b"),
         ]:

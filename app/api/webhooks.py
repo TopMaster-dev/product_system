@@ -82,8 +82,9 @@ async def shopify_webhook(
                     )
                 )
         except IntegrityError:
-            log.info("shopify.webhook.rejection_audit_duplicate",
-                     webhook_id=webhook_id, topic=topic)
+            log.info(
+                "shopify.webhook.rejection_audit_duplicate", webhook_id=webhook_id, topic=topic
+            )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid HMAC")
 
     try:

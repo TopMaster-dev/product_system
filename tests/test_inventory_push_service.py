@@ -128,10 +128,13 @@ async def test_failure_notifies_slack() -> None:
             client=client,
         )
         session = _FakeSession()
-        adapter = _StubAdapter(raise_exc=httpx.HTTPStatusError(
-            "429 too many requests", request=httpx.Request("POST", "https://x"),
-            response=httpx.Response(429),
-        ))
+        adapter = _StubAdapter(
+            raise_exc=httpx.HTTPStatusError(
+                "429 too many requests",
+                request=httpx.Request("POST", "https://x"),
+                response=httpx.Response(429),
+            )
+        )
         svc = InventoryPushService(session, notifier)
         await svc.push_single(
             adapter,
@@ -140,6 +143,7 @@ async def test_failure_notifies_slack() -> None:
 
     assert len(captured) == 1
     import json
+
     body = json.loads(captured[0].content)
     att = body["attachments"][0]
     assert att["title"].startswith("[ERROR]")
@@ -213,6 +217,7 @@ async def test_error_message_truncated_to_500_chars() -> None:
 async def test_empty_error_message_falls_back_to_class_name() -> None:
     class _Bare(Exception):
         pass
+
     session = _FakeSession()
     adapter = _StubAdapter(raise_exc=_Bare())
     svc = InventoryPushService(session, _no_op_notifier())

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import httpx
 import pytest
@@ -49,7 +48,7 @@ async def test_push_inventory_posts_set_operation() -> None:
     items = body["inventoryUpdateRequestRakutenItem"]
     assert items[0]["manageNumber"] == "MYSKU-123"
     assert items[0]["inventory"] == 42
-    assert items[0]["inventoryType"] == 1   # 通常在庫
+    assert items[0]["inventoryType"] == 1  # 通常在庫
     assert items[0]["inventoryOperation"] == 1  # SET
 
 
@@ -111,8 +110,11 @@ async def test_push_inventory_raises_on_per_item_error() -> None:
             200,
             json={
                 "inventoryUpdateResponseItem": [
-                    {"manageNumber": "X", "errorCode": "ITEM-NOT-FOUND",
-                     "message": "manageNumber not found"}
+                    {
+                        "manageNumber": "X",
+                        "errorCode": "ITEM-NOT-FOUND",
+                        "message": "manageNumber not found",
+                    }
                 ]
             },
         )

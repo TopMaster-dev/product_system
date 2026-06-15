@@ -39,15 +39,19 @@ async def run(*, dry_run: bool = False) -> int:
 
     async with async_session_factory() as session, session.begin():
         # Step 1: find duplicate pairs.
-        pairs_result = await session.execute(text("""
+        pairs_result = await session.execute(
+            text("""
             SELECT g.id AS gid_pk, g.channel_order_id AS gid_id,
                    n.id AS num_pk, n.channel_order_id AS num_id
             FROM orders g
-            JOIN orders n ON n.channel = 'shopify'
-              AND n.channel_order_id = regexp_replace(g.channel_order_id, '^gid://shopify/Order/', '')
+            JOIN orders n
+              ON n.channel = 'shopify'
+             AND n.channel_order_id
+                 = regexp_replace(g.channel_order_id, '^gid://shopify/Order/', '')
             WHERE g.channel = 'shopify'
               AND g.channel_order_id LIKE 'gid://shopify/Order/%'
-        """))
+        """)
+        )
         pairs = pairs_result.all()
         log.info("dedupe.pairs_found", count=len(pairs))
         gid_ids = [p.gid_id for p in pairs]
@@ -66,10 +70,12 @@ async def run(*, dry_run: bool = False) -> int:
         )
         events = events_result.all()
         affected_skus = {e.master_sku_id for e in events}
-        log.info("dedupe.events_to_remove",
-                 count=len(events),
-                 affected_master_skus=len(affected_skus),
-                 total_quantity_delta=sum(e.quantity_delta for e in events))
+        log.info(
+            "dedupe.events_to_remove",
+            count=len(events),
+            affected_master_skus=len(affected_skus),
+            total_quantity_delta=sum(e.quantity_delta for e in events),
+        )
 
         # Items that will cascade-delete with the orders (just for reporting).
         items_count = await session.execute(
@@ -96,7 +102,9 @@ async def run(*, dry_run: bool = False) -> int:
             """),
             {"gid_ids": gid_ids},
         )
-        log.info("dedupe.events_deleted", rowcount=del_events.rowcount)
+        # mypy: SA `Result[Any]` doesn't statically expose `rowcount`, but the
+        # runtime type for DML (DELETE/UPDATE) is CursorResult which does.
+        log.info("dedupe.events_deleted", rowcount=del_events.rowcount)  # type: ignore[attr-defined]
 
         # Step 3b: delete the gid-format orders (cascades order_items).
         del_orders = await session.execute(
@@ -106,7 +114,7 @@ async def run(*, dry_run: bool = False) -> int:
             """),
             {"pks": gid_pks},
         )
-        log.info("dedupe.orders_deleted", rowcount=del_orders.rowcount)
+        log.info("dedupe.orders_deleted", rowcount=del_orders.rowcount)  # type: ignore[attr-defined]
 
         # Step 4: rebuild on_hand_qty for affected snapshots from remaining
         # events. This is more thorough than a delta-correction: it guarantees
@@ -127,7 +135,7 @@ async def run(*, dry_run: bool = False) -> int:
                 """),
                 {"sku_ids": list(affected_skus)},
             )
-            log.info("dedupe.snapshots_recomputed", rowcount=recomputed.rowcount)
+            log.info("dedupe.snapshots_recomputed", rowcount=recomputed.rowcount)  # type: ignore[attr-defined]
 
     # Step 5: canonicalize the remaining solo gid-format orders to numeric
     # format, so the next polling cycle (which now writes numeric IDs via
@@ -135,36 +143,46 @@ async def run(*, dry_run: bool = False) -> int:
     # UNIQUE rather than creating a fresh duplicate.
     async with async_session_factory() as session, session.begin():
         # orders.channel_order_id
-        res_o = await session.execute(text("""
+        res_o = await session.execute(
+            text("""
             UPDATE orders
             SET channel_order_id = regexp_replace(channel_order_id, '^gid://shopify/Order/', '')
             WHERE channel = 'shopify'
               AND channel_order_id LIKE 'gid://shopify/Order/%'
-        """))
+        """)
+        )
         # order_items.line_id (stored on the rows whose order survived)
-        res_i = await session.execute(text("""
+        res_i = await session.execute(
+            text("""
             UPDATE order_items
             SET line_id = regexp_replace(line_id, '^gid://shopify/LineItem/', '')
             WHERE line_id LIKE 'gid://shopify/LineItem/%'
-        """))
+        """)
+        )
         # inventory_events.source_order_id / source_line_id
-        res_e_o = await session.execute(text("""
+        res_e_o = await session.execute(
+            text("""
             UPDATE inventory_events
             SET source_order_id = regexp_replace(source_order_id, '^gid://shopify/Order/', '')
             WHERE source_channel = 'shopify'
               AND source_order_id LIKE 'gid://shopify/Order/%'
-        """))
-        res_e_l = await session.execute(text("""
+        """)
+        )
+        res_e_l = await session.execute(
+            text("""
             UPDATE inventory_events
             SET source_line_id = regexp_replace(source_line_id, '^gid://shopify/LineItem/', '')
             WHERE source_channel = 'shopify'
               AND source_line_id LIKE 'gid://shopify/LineItem/%'
-        """))
-        log.info("dedupe.canonicalized",
-                 orders=res_o.rowcount,
-                 order_items=res_i.rowcount,
-                 events_order_id=res_e_o.rowcount,
-                 events_line_id=res_e_l.rowcount)
+        """)
+        )
+        log.info(
+            "dedupe.canonicalized",
+            orders=res_o.rowcount,  # type: ignore[attr-defined]
+            order_items=res_i.rowcount,  # type: ignore[attr-defined]
+            events_order_id=res_e_o.rowcount,  # type: ignore[attr-defined]
+            events_line_id=res_e_l.rowcount,  # type: ignore[attr-defined]
+        )
 
     log.info("dedupe.done")
     return 0

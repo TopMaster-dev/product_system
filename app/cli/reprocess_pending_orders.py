@@ -53,9 +53,7 @@ async def run(*, dry_run: bool = False, limit: int | None = None) -> int:
         inventory = InventoryService(session)
 
         stmt = (
-            select(Order)
-            .where(Order.status == OrderStatusEnum.PENDING_MAPPING)
-            .order_by(Order.id)
+            select(Order).where(Order.status == OrderStatusEnum.PENDING_MAPPING).order_by(Order.id)
         )
         if limit:
             stmt = stmt.limit(limit)
@@ -128,12 +126,14 @@ async def run(*, dry_run: bool = False, limit: int | None = None) -> int:
         if dry_run:
             await session.rollback()
 
-    log.info("reprocess.done",
-             orders_touched=orders_touched,
-             items_mapped=items_mapped,
-             consume_events=consume_events,
-             orders_promoted=orders_promoted,
-             orders_still_partial=orders_still_partial)
+    log.info(
+        "reprocess.done",
+        orders_touched=orders_touched,
+        items_mapped=items_mapped,
+        consume_events=consume_events,
+        orders_promoted=orders_promoted,
+        orders_still_partial=orders_still_partial,
+    )
     return 0
 
 

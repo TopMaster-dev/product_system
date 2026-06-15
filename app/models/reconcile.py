@@ -33,9 +33,7 @@ from app.models.base import Base, TimestampMixin
 
 class ReconcileRun(Base, TimestampMixin):
     __tablename__ = "reconcile_runs"
-    __table_args__ = (
-        Index("ix_reconcile_runs_status_started", "status", "started_at"),
-    )
+    __table_args__ = (Index("ix_reconcile_runs_status_started", "status", "started_at"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False)

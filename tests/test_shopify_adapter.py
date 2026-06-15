@@ -161,10 +161,10 @@ async def test_fetch_orders_walks_pagination() -> None:
         from datetime import UTC, datetime
 
         orders = await adapter.fetch_orders(since=datetime(2026, 5, 11, tzinfo=UTC))
-        assert [o.channel_order_id for o in orders] == [
-            "gid://shopify/Order/1",
-            "gid://shopify/Order/2",
-        ]
+        # v0.2.2 _strip_gid normalizes GraphQL `gid://shopify/Order/N` -> `N`
+        # so the polling path matches the webhook path's numeric channel_order_id
+        # and the (channel, channel_order_id) UNIQUE prevents duplicates.
+        assert [o.channel_order_id for o in orders] == ["1", "2"]
 
 
 @pytest.mark.unit

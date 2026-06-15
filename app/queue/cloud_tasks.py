@@ -34,7 +34,7 @@ class CloudTasksTaskQueue:
         service_account_email: str | None = None,
     ) -> None:
         try:
-            from google.cloud import tasks_v2  # type: ignore[import-not-found]
+            from google.cloud import tasks_v2  # type: ignore[import-untyped]
         except ImportError as exc:  # pragma: no cover - extras-gated
             raise RuntimeError(
                 "google-cloud-tasks is not installed; install the [gcp] extra"

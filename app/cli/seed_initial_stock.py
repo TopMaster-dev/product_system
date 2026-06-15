@@ -63,12 +63,14 @@ async def run(products_path: Path, reason: str, *, dry_run: bool = False) -> int
     log.info("seed.start", products=str(products_path), dry_run=dry_run, reason=reason)
     stock_map = load_stock(products_path)
     nonzero = {k: v for k, v in stock_map.items() if v != 0}
-    log.info("seed.parsed",
-             total=len(stock_map),
-             nonzero=len(nonzero),
-             zero=len(stock_map) - len(nonzero),
-             positive=sum(1 for v in stock_map.values() if v > 0),
-             negative=sum(1 for v in stock_map.values() if v < 0))
+    log.info(
+        "seed.parsed",
+        total=len(stock_map),
+        nonzero=len(nonzero),
+        zero=len(stock_map) - len(nonzero),
+        positive=sum(1 for v in stock_map.values() if v > 0),
+        negative=sum(1 for v in stock_map.values() if v < 0),
+    )
 
     if dry_run:
         return 0
@@ -111,35 +113,40 @@ async def run(products_path: Path, reason: str, *, dry_run: bool = False) -> int
                 continue
 
             # Upsert snapshot with += qty.
-            stmt = pg_insert(InventorySnapshot).values(
-                master_sku_id=sku_id,
-                on_hand_qty=qty,
-                last_event_id=event.id,
-            ).on_conflict_do_update(
-                index_elements=[InventorySnapshot.master_sku_id],
-                set_={
-                    "on_hand_qty": InventorySnapshot.__table__.c.on_hand_qty + qty,
-                    "last_event_id": event.id,
-                    "updated_at": now,
-                },
+            stmt = (
+                pg_insert(InventorySnapshot)
+                .values(
+                    master_sku_id=sku_id,
+                    on_hand_qty=qty,
+                    last_event_id=event.id,
+                )
+                .on_conflict_do_update(
+                    index_elements=[InventorySnapshot.master_sku_id],
+                    set_={
+                        "on_hand_qty": InventorySnapshot.__table__.c.on_hand_qty + qty,
+                        "last_event_id": event.id,
+                        "updated_at": now,
+                    },
+                )
             )
             await session.execute(stmt)
             inserted += 1
             snapshot_applied += 1
 
-    log.info("seed.done",
-             events_inserted=inserted,
-             skipped_existing=skipped_existing,
-             skipped_no_master_sku=skipped_no_sku,
-             snapshots_applied=snapshot_applied)
+    log.info(
+        "seed.done",
+        events_inserted=inserted,
+        skipped_existing=skipped_existing,
+        skipped_no_master_sku=skipped_no_sku,
+        snapshots_applied=snapshot_applied,
+    )
     return 0
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed initial stock from CROSS MALL CSV")
     parser.add_argument("--products", required=True, type=Path)
-    parser.add_argument("--reason", type=str,
-                        default="Initial stock seed from CROSS MALL")
+    parser.add_argument("--reason", type=str, default="Initial stock seed from CROSS MALL")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     configure_logging("INFO")

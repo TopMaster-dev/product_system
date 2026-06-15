@@ -24,7 +24,7 @@ class GoogleBigQueryClient:
 
     def __init__(self, *, project_id: str, dataset: str) -> None:
         try:
-            from google.cloud import bigquery  # type: ignore[import-not-found]
+            from google.cloud import bigquery  # type: ignore[import-untyped]
         except ImportError as exc:  # pragma: no cover - extras-gated
             raise RuntimeError(
                 "google-cloud-bigquery is not installed; install the [gcp] extra"

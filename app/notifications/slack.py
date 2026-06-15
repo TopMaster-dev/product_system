@@ -30,8 +30,8 @@ Level = Literal["critical", "error", "info"]
 _LEVEL_RANK: dict[Level, int] = {"critical": 30, "error": 20, "info": 10}
 _LEVEL_COLOR: dict[Level, str] = {
     "critical": "#dc2626",  # red-600
-    "error":    "#f59e0b",  # amber-500
-    "info":     "#3b82f6",  # blue-500
+    "error": "#f59e0b",  # amber-500
+    "info": "#3b82f6",  # blue-500
 }
 
 
@@ -71,8 +71,7 @@ class SlackNotifier:
             log.debug("slack.skip_no_url", level=level, title=title)
             return False
         if not self._should_send(level):
-            log.debug("slack.skip_below_min_level",
-                      level=level, min_level=self._min_level)
+            log.debug("slack.skip_below_min_level", level=level, min_level=self._min_level)
             return False
 
         attachment = self._build_attachment(level, title, message, fields or [])
@@ -80,19 +79,18 @@ class SlackNotifier:
         try:
             resp = await client.post(self._webhook_url, json={"attachments": [attachment]})
             if 200 <= resp.status_code < 300:
-                log.info("slack.delivered", level=level, title=title,
-                         status=resp.status_code)
+                log.info("slack.delivered", level=level, title=title, status=resp.status_code)
                 return True
             log.warning(
                 "slack.http_error",
-                level=level, title=title,
+                level=level,
+                title=title,
                 status=resp.status_code,
                 body_preview=resp.text[:200],
             )
             return False
         except httpx.HTTPError as exc:
-            log.warning("slack.transport_error", level=level, title=title,
-                        error=str(exc))
+            log.warning("slack.transport_error", level=level, title=title, error=str(exc))
             return False
         finally:
             if self._owns_client:
@@ -109,10 +107,7 @@ class SlackNotifier:
             "color": _LEVEL_COLOR[level],
             "title": f"[{level.upper()}] {title}",
             "text": message,
-            "fields": [
-                {"title": k, "value": v, "short": len(v) < 30}
-                for k, v in fields
-            ],
+            "fields": [{"title": k, "value": v, "short": len(v) < 30} for k, v in fields],
         }
 
 

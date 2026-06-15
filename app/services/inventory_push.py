@@ -83,8 +83,10 @@ class InventoryPushService:
                 request.channel_sku,
                 request.quantity,
             )
-        except Exception as exc:  # noqa: BLE001 — we deliberately convert any
-                                  # adapter failure into an auditable row
+        except Exception as exc:
+            # Any adapter failure is deliberately funneled into an auditable
+            # sync_attempts row (status='failed') and a Slack notification.
+            # No exception escapes; the caller proceeds with the attempt object.
             await self._mark_failed(attempt, exc)
             return attempt
 

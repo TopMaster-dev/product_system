@@ -22,9 +22,9 @@ def test_all_expected_tables_registered() -> None:
         "inventory_snapshots",
         "mapping_alerts",
         "webhook_logs",
-        "sync_attempts",     # Phase 1-B F1.1
-        "reconcile_runs",    # Phase 1-B F1.3
-        "reconcile_diffs",   # Phase 1-B F1.3
+        "sync_attempts",  # Phase 1-B F1.1
+        "reconcile_runs",  # Phase 1-B F1.3
+        "reconcile_diffs",  # Phase 1-B F1.3
     }
     assert expected.issubset(set(Base.metadata.tables.keys()))
 
@@ -33,10 +33,7 @@ def test_all_expected_tables_registered() -> None:
 def test_sync_attempts_indexes_present() -> None:
     """Two compound indexes drive the admin sync-errors page and SKU history."""
     table = Base.metadata.tables["sync_attempts"]
-    index_columns = {
-        tuple(c.name for c in idx.columns)
-        for idx in table.indexes
-    }
+    index_columns = {tuple(c.name for c in idx.columns) for idx in table.indexes}
     assert ("status", "started_at") in index_columns
     assert ("master_sku_id", "started_at") in index_columns
 
@@ -68,13 +65,9 @@ def test_sync_attempts_required_columns() -> None:
 def test_sync_attempts_self_referential_fk() -> None:
     """parent_attempt_id supports linking retries back to the original attempt."""
     table = Base.metadata.tables["sync_attempts"]
-    fk_target_tables = {
-        fk.column.table.name
-        for col in table.columns
-        for fk in col.foreign_keys
-    }
+    fk_target_tables = {fk.column.table.name for col in table.columns for fk in col.foreign_keys}
     assert "sync_attempts" in fk_target_tables  # parent_attempt_id self-FK
-    assert "master_skus" in fk_target_tables   # master_sku_id FK
+    assert "master_skus" in fk_target_tables  # master_sku_id FK
 
 
 @pytest.mark.unit
@@ -93,11 +86,7 @@ def test_reconcile_diff_uniqueness_constraint() -> None:
 def test_reconcile_diff_fk_targets() -> None:
     """reconcile_diffs links runs, master_skus, and the applied stocktake event."""
     table = Base.metadata.tables["reconcile_diffs"]
-    fk_target_tables = {
-        fk.column.table.name
-        for col in table.columns
-        for fk in col.foreign_keys
-    }
+    fk_target_tables = {fk.column.table.name for col in table.columns for fk in col.foreign_keys}
     assert "reconcile_runs" in fk_target_tables
     assert "master_skus" in fk_target_tables
     assert "inventory_events" in fk_target_tables
@@ -107,10 +96,7 @@ def test_reconcile_diff_fk_targets() -> None:
 def test_reconcile_run_has_status_started_index() -> None:
     """Status-by-time index drives the recent-runs admin query."""
     table = Base.metadata.tables["reconcile_runs"]
-    index_columns = {
-        tuple(c.name for c in idx.columns)
-        for idx in table.indexes
-    }
+    index_columns = {tuple(c.name for c in idx.columns) for idx in table.indexes}
     assert ("status", "started_at") in index_columns
 
 
@@ -118,10 +104,7 @@ def test_reconcile_run_has_status_started_index() -> None:
 def test_reconcile_diff_decision_index_for_approval_queue() -> None:
     """Composite (run, decision) index supports the 'pending approvals in this run' page."""
     table = Base.metadata.tables["reconcile_diffs"]
-    index_columns = {
-        tuple(c.name for c in idx.columns)
-        for idx in table.indexes
-    }
+    index_columns = {tuple(c.name for c in idx.columns) for idx in table.indexes}
     assert ("reconcile_run_id", "decision") in index_columns
 
 
@@ -131,6 +114,7 @@ def test_reconcile_enums_have_expected_values() -> None:
         ReconcileDiffDecisionEnum,
         ReconcileRunStatusEnum,
     )
+
     assert set(ReconcileRunStatusEnum) == {
         ReconcileRunStatusEnum.RUNNING,
         ReconcileRunStatusEnum.PENDING_APPROVAL,
