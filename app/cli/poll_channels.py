@@ -33,6 +33,7 @@ async def _poll_shopify(lookback_minutes: int) -> int:
         access_token=settings.shopify_access_token,
         webhook_secret=settings.shopify_webhook_secret,
         api_version=settings.shopify_api_version,
+        location_id=settings.shopify_location_id,
     ) as adapter:
         orders = await adapter.fetch_orders(since=since)
     return await _ingest(orders)

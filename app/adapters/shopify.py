@@ -65,6 +65,38 @@ query Orders($first: Int!, $query: String!, $cursor: String) {
 }
 """
 
+# Phase 1-B F1.6: inventory writeback.
+# Discovers the primary location when SHOPIFY_LOCATION_ID is not configured.
+_PRIMARY_LOCATION_QUERY = """
+query PrimaryLocation {
+  locations(first: 1, query: "status:active") {
+    edges { node { id name } }
+  }
+}
+"""
+
+# Looks up an inventoryItemId from a SKU. SKUs are unique per shop in
+# Shopify; if more than one is returned we treat it as ambiguous and raise.
+_INVENTORY_ITEM_BY_SKU_QUERY = """
+query InventoryItemBySku($q: String!) {
+  inventoryItems(first: 2, query: $q) {
+    edges { node { id sku } }
+  }
+}
+"""
+
+# Absolute SET (matches Rakuten's updateInventory operation 1). The central
+# DB is authoritative, so SET avoids any drift from increment/decrement
+# off a stale baseline.
+_INVENTORY_SET_MUTATION = """
+mutation InventorySet($input: InventorySetOnHandQuantitiesInput!) {
+  inventorySetOnHandQuantities(input: $input) {
+    inventoryAdjustmentGroup { id createdAt }
+    userErrors { field message code }
+  }
+}
+"""
+
 
 def _strip_gid(value: str | None) -> str:
     """Normalize Shopify GraphQL global IDs to the numeric suffix.
@@ -108,6 +140,7 @@ class ShopifyAdapter(ChannelAdapter):
         api_version: str = "2025-04",
         client: httpx.AsyncClient | None = None,
         rate_limiter: TokenBucket | None = None,
+        location_id: str = "",
     ) -> None:
         if not shop_domain:
             raise ValueError("shop_domain is required")
@@ -119,6 +152,9 @@ class ShopifyAdapter(ChannelAdapter):
         self._owns_client = client is None
         # Shopify GraphQL costs are calculated points; 50/s sustained is safe.
         self._rate_limiter = rate_limiter or TokenBucket(rate=50, capacity=100)
+        # Cached location GID for the inventory writeback. Empty = auto-discover
+        # on first push (per client decision D-2: single-location shops).
+        self._location_id = location_id
 
     async def __aenter__(self) -> ShopifyAdapter:
         if self._client is None:
@@ -153,8 +189,119 @@ class ShopifyAdapter(ChannelAdapter):
                 break
         return out
 
-    async def push_inventory(self, sku: str, quantity: int) -> None:
-        raise NotImplementedError("ShopifyAdapter.push_inventory is Phase 1-B")
+    async def push_inventory(self, sku: str, quantity: int) -> dict[str, Any] | None:
+        """Set the on-hand inventory for `sku` at the shop's primary location.
+
+        Per client decision D-1 we use an absolute SET (matching Rakuten's
+        updateInventory operation 1); the central DB is authoritative.
+
+        Per D-2 we auto-discover the location on first call when no explicit
+        location_id was supplied to the adapter, then cache it for subsequent
+        pushes in the same process.
+
+        Raises on logical failures (SKU not found, multiple SKUs match,
+        Shopify userErrors) so the InventoryPushService logs the failure to
+        sync_attempts.
+        """
+        if quantity < 0:
+            raise ValueError(
+                "Shopify rejects negative on-hand quantities; callers must clamp at 0 before push"
+            )
+        location_id = await self._resolve_location_id()
+        inventory_item_id = await self._lookup_inventory_item_id(sku)
+        body = await self._graphql(
+            _INVENTORY_SET_MUTATION,
+            {
+                "input": {
+                    "reason": "correction",
+                    "setQuantities": [
+                        {
+                            "inventoryItemId": inventory_item_id,
+                            "locationId": location_id,
+                            "quantity": int(quantity),
+                        }
+                    ],
+                }
+            },
+        )
+        result = (body.get("data") or {}).get("inventorySetOnHandQuantities") or {}
+        user_errors = result.get("userErrors") or []
+        if user_errors:
+            raise RuntimeError(f"Shopify inventory set rejected for sku={sku}: {user_errors}")
+        return result
+
+    async def _resolve_location_id(self) -> str:
+        if self._location_id:
+            return self._location_id
+        body = await self._graphql(_PRIMARY_LOCATION_QUERY, {})
+        edges = ((body.get("data") or {}).get("locations") or {}).get("edges") or []
+        if not edges:
+            raise RuntimeError(
+                "Shopify primary location auto-discovery returned no active "
+                "locations; configure SHOPIFY_LOCATION_ID explicitly"
+            )
+        loc_id = (edges[0].get("node") or {}).get("id")
+        if not loc_id:
+            raise RuntimeError("Shopify primary location node missing `id` field")
+        self._location_id = str(loc_id)
+        return self._location_id
+
+    async def _lookup_inventory_item_id(self, sku: str) -> str:
+        if not sku:
+            raise ValueError("SKU is required for Shopify inventory push")
+        # Shopify query syntax: `sku:<value>`. Escape any embedded quotes.
+        safe = sku.replace('"', '\\"')
+        body = await self._graphql(
+            _INVENTORY_ITEM_BY_SKU_QUERY,
+            {"q": f'sku:"{safe}"'},
+        )
+        edges = ((body.get("data") or {}).get("inventoryItems") or {}).get("edges") or []
+        if not edges:
+            raise RuntimeError(f"Shopify inventory item not found for sku={sku!r}")
+        if len(edges) > 1:
+            # `first: 2` above is the canary; if we get back two rows the SKU
+            # is ambiguous and we should not pick one arbitrarily.
+            raise RuntimeError(
+                f"Shopify returned multiple inventory items for sku={sku!r}; "
+                f"refusing to set quantity ambiguously"
+            )
+        item_id = (edges[0].get("node") or {}).get("id")
+        if not item_id:
+            raise RuntimeError(f"Shopify inventoryItems node missing `id` for sku={sku!r}")
+        return str(item_id)
+
+    @retry(
+        retry=retry_if_exception_type((httpx.HTTPError,)),
+        wait=wait_exponential(multiplier=1, min=1, max=30),
+        stop=stop_after_attempt(5),
+        reraise=True,
+    )
+    async def _graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        """Execute a GraphQL operation with the same auth, rate-limit, and
+        retry as the orders fetch path."""
+        await self._rate_limiter.acquire()
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=30.0)
+            self._owns_client = True
+        resp = await self._client.post(
+            self._endpoint,
+            json={"query": query, "variables": variables},
+            headers={
+                "X-Shopify-Access-Token": self._access_token,
+                "Content-Type": "application/json",
+            },
+        )
+        if resp.status_code >= 400:
+            log.error(
+                "shopify.api_error",
+                status=resp.status_code,
+                body_preview=resp.text[:500],
+            )
+        resp.raise_for_status()
+        body: dict[str, Any] = resp.json()
+        if body.get("errors"):
+            raise RuntimeError(f"Shopify GraphQL errors: {body['errors']}")
+        return body
 
     def verify_webhook(self, headers: dict[str, str], body: bytes) -> bool:
         received = self._header(headers, self.HEADER_HMAC)

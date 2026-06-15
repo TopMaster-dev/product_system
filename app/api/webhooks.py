@@ -42,6 +42,7 @@ def _adapter_from_settings(settings: Settings) -> ShopifyAdapter:
         access_token=settings.shopify_access_token,
         webhook_secret=settings.shopify_webhook_secret,
         api_version=settings.shopify_api_version,
+        location_id=settings.shopify_location_id,
     )
 
 

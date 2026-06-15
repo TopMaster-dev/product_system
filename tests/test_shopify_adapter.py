@@ -181,9 +181,13 @@ async def test_fetch_orders_raises_on_graphql_errors() -> None:
 
 
 @pytest.mark.unit
-async def test_push_inventory_not_implemented_in_phase1a() -> None:
-    with pytest.raises(NotImplementedError):
-        await _adapter().push_inventory("SKU-1", 5)
+async def test_push_inventory_implemented_in_phase1b() -> None:
+    """Phase 1-B F1.6: full behavioral coverage lives in
+    tests/test_shopify_push_inventory.py. This sanity test only confirms
+    the method exists and rejects negative quantities synchronously.
+    """
+    with pytest.raises(ValueError, match="negative"):
+        await _adapter().push_inventory("SKU-1", -1)
 
 
 @pytest.mark.unit
