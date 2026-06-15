@@ -36,6 +36,7 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
+from app.config import get_settings
 from app.logging import configure_logging, get_logger
 from app.notifications.slack import SlackNotifier
 
@@ -77,9 +78,15 @@ def parse_args(argv: list[str] | None = None) -> Args:
         help="Real Slack Incoming Webhook URL. Required only with --mode=real.",
     )
     parsed = parser.parse_args(argv)
-    if parsed.mode == "real" and not parsed.webhook_url:
-        parser.error("--mode=real requires --webhook-url")
-    return Args(mode=parsed.mode, webhook_url=parsed.webhook_url)
+    webhook_url = parsed.webhook_url
+    if parsed.mode == "real" and not webhook_url:
+        # Fall back to SLACK_WEBHOOK_URL env (typically wired in via
+        # Cloud Run Job --set-secrets=SLACK_WEBHOOK_URL=slack-webhook-url:latest)
+        # so the URL stays in Secret Manager rather than execution logs.
+        webhook_url = get_settings().slack_webhook_url
+    if parsed.mode == "real" and not webhook_url:
+        parser.error("--mode=real requires --webhook-url or SLACK_WEBHOOK_URL env")
+    return Args(mode=parsed.mode, webhook_url=webhook_url)
 
 
 def build_notifier(args: Args) -> SlackNotifier:

@@ -7,6 +7,7 @@ locals {
     "rakuten-license-key",
     "shopify-access-token",
     "shopify-webhook-secret",
+    "slack-webhook-url",
   ])
 }
 

@@ -64,7 +64,9 @@ target-version = "py311"
 # csv_file/* are local data-analysis scripts (Phase 1-A close-out tooling),
 # not production code; they contain intentional Japanese full-width chars
 # for regex matching against CROSS MALL CSV headers.
-extend-exclude = ["alembic/versions", "csv_file"]
+# docs/build_*.py generate client-facing docx/pdf deliverables in Japanese;
+# they are operator tooling, not application code.
+extend-exclude = ["alembic/versions", "csv_file", "docs"]
 
 [tool.ruff.lint]
 select = [
@@ -99,7 +101,7 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 plugins = ["pydantic.mypy"]
-exclude = ["alembic/versions/", "tests/", "csv_file/"]
+exclude = ["alembic/versions/", "tests/", "csv_file/", "docs/"]
 
 [[tool.mypy.overrides]]
 module = ["structlog.*"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -21,6 +22,17 @@ from verify_slack import (  # noqa: E402
     parse_args,
     run_verify,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_env_slack_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub verify_slack.get_settings() so the SLACK_WEBHOOK_URL fallback in
+    parse_args() does not leak local/CI env into argparse tests."""
+    monkeypatch.setattr(
+        "verify_slack.get_settings",
+        lambda: SimpleNamespace(slack_webhook_url=""),
+    )
+
 
 # ---------- argparse ----------
 
@@ -48,6 +60,21 @@ def test_parse_args_real_mode_with_url() -> None:
     args = parse_args(["--mode", "real", "--webhook-url", "https://hooks.slack.com/x"])
     assert args.mode == "real"
     assert args.webhook_url == "https://hooks.slack.com/x"
+
+
+@pytest.mark.unit
+def test_parse_args_real_mode_falls_back_to_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When --webhook-url is omitted, --mode=real reads SLACK_WEBHOOK_URL from
+    Settings — this is what makes the Cloud Run Job --set-secrets wiring
+    effective."""
+    monkeypatch.setattr(
+        "verify_slack.get_settings",
+        lambda: SimpleNamespace(slack_webhook_url="https://hooks.slack.com/from/env"),
+    )
+    args = parse_args(["--mode", "real"])
+    assert args.webhook_url == "https://hooks.slack.com/from/env"
 
 
 @pytest.mark.unit

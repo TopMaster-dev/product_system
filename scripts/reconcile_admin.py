@@ -26,8 +26,11 @@ Exit codes:
   2 — usage error
 
 Usage (Cloud Run Job):
+    # --csv must be a local path inside the container. The operator stages
+    # a dummy CSV with scripts/make_dummy_recon_csv.py, bundles it via the
+    # image build (or GCS FUSE mount), then references the in-container path.
     gcloud run jobs execute product-system-reconcile-admin \\
-        --args=start,--csv=gs://product-system-verify/recon/x.csv,\\
+        --args=start,--csv=/app/recon_dummy.csv,\\
                --triggered-by=sre-verify --wait
 
     gcloud run jobs execute product-system-reconcile-admin \\

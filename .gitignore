@@ -5,9 +5,7 @@
 *.swp
 
 # Docs working files (keep source scripts, ignore generated artifacts)
-docs/*.docx
-docs/*.pdf
-docs/*.csv
+docs/**
 
 # Environment / secrets
 .env
@@ -62,4 +60,3 @@ infra/terraform/terraform.tfvars
 # Local toolchains (terraform binary etc.)
 .local/
 **.csv
-/docs

@@ -17,6 +17,7 @@ RUN pip install --upgrade pip && pip install -e ".[gcp]"
 
 COPY app ./app
 COPY alembic ./alembic
+COPY scripts ./scripts
 COPY alembic.ini ./
 
 # Cloud Run injects PORT=8080. Local dev compose still uses 8000 (override via env).
