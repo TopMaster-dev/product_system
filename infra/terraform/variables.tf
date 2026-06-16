@@ -15,6 +15,12 @@ variable "service_image" {
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
 
+variable "jobs_image" {
+  description = "Container image for the verification Cloud Run Jobs. Empty = fall back to service_image. Set this (NOT service_image) to deploy a verification image to the jobs without redeploying the live service."
+  type        = string
+  default     = ""
+}
+
 variable "bigquery_dataset" {
   description = "Existing BigQuery dataset where daily exports land."
   type        = string

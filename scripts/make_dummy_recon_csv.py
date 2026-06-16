@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         out_path, rows = parse_args(argv)
     except SystemExit as exc:
-        return int(exc.code or 2)
+        return exc.code if isinstance(exc.code, int) else 2
     write_csv(rows, out_path)
     sys.stdout.write(f"wrote {len(rows)} rows to {out_path}\n")
     return 0

@@ -187,8 +187,8 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging("INFO")
     try:
         args = parse_args(argv)
-    except SystemExit as exc:  # argparse exits 2 on usage error
-        return int(exc.code or EXIT_USAGE)
+    except SystemExit as exc:  # argparse: 0 on --help, 2 on usage error
+        return exc.code if isinstance(exc.code, int) else EXIT_USAGE
     try:
         return asyncio.run(run_push(args))
     except Exception:

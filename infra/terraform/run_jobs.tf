@@ -14,10 +14,20 @@
 # ---- Shared env fragments (mirror run.tf) ----
 
 locals {
+  # Jobs use jobs_image when set, else fall back to service_image. This lets a
+  # verification image be deployed to the jobs WITHOUT changing the live
+  # service (run.tf), whose image stays pinned by var.service_image.
+  jobs_image = var.jobs_image != "" ? var.jobs_image : var.service_image
+
   job_base_env = {
     APP_ENV       = "prod"
     APP_LOG_LEVEL = "INFO"
     APP_TIMEZONE  = "Asia/Tokyo"
+    # Jobs run `python scripts/x.py`, which puts /app/scripts (not /app) on
+    # sys.path, so `import app` fails. The service masks this via uvicorn's
+    # CWD insertion; jobs need it explicit. (The v0.3.1+ image also bakes
+    # ENV PYTHONPATH=/app, making this redundant but harmless.)
+    PYTHONPATH = "/app"
   }
 
   job_db_env = {
@@ -100,7 +110,7 @@ resource "google_cloud_run_v2_job" "verification" {
       timeout         = each.value.timeout
 
       containers {
-        image   = var.service_image
+        image   = local.jobs_image
         command = ["python"]
         args    = [each.value.script]
 

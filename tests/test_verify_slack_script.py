@@ -211,3 +211,17 @@ def test_main_usage_error_returns_2() -> None:
     finally:
         sys.stderr = saved
     assert code == 2
+
+
+@pytest.mark.unit
+def test_main_help_returns_0() -> None:
+    """--help must exit 0, not EXIT_USAGE. Regression: `exc.code or X`
+    collapsed argparse's SystemExit(0) to the usage code, which broke the
+    Cloud Run Job --help smoke test."""
+    saved = sys.stdout
+    try:
+        sys.stdout = io.StringIO()
+        code = main(["--help"])
+    finally:
+        sys.stdout = saved
+    assert code == 0

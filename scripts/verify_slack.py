@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
     except SystemExit as exc:
-        return int(exc.code or EXIT_USAGE)
+        return exc.code if isinstance(exc.code, int) else EXIT_USAGE
     try:
         return asyncio.run(run_verify(args))
     except Exception:
