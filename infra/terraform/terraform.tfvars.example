@@ -8,3 +8,17 @@ db_password      = "REPLACE_WITH_A_STRONG_PASSWORD"
 # (us-docker.pkg.dev/cloudrun/container/hello) lets Terraform finish.
 # After we build the real image, redeploy via `gcloud run deploy ...`.
 # service_image = "asia-northeast1-docker.pkg.dev/inventory-496204/product-system/app:v0.1.0"
+
+# ---- Phase 1-B Stage 0 verification jobs (docs/14) ----
+# Set true to deploy the 4 verification Cloud Run Jobs + recon scratch bucket
+# for Stage 1 verification; set back to false to tear them down. Requires
+# service_image to point at a real image that bundles scripts/*.py.
+# create_verification_jobs = false
+#
+# Flip true only after the client delivers SLACK_WEBHOOK_URL (D-3) AND you have
+# pushed a secret version (gcloud secrets versions add slack-webhook-url ...).
+# slack_webhook_secret_ready = false
+#
+# Override only if "product-system-verify" is already taken (bucket names are
+# globally unique).
+# recon_verify_bucket = "product-system-verify"

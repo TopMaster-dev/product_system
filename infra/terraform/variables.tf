@@ -53,3 +53,23 @@ variable "admin_password" {
   type        = string
   sensitive   = true
 }
+
+# ---- Phase 1-B Stage 0 verification jobs (docs/14) ----
+
+variable "create_verification_jobs" {
+  description = "Create the 4 verification Cloud Run Jobs + recon scratch bucket. Verification-only; set true to deploy for Stage 1 verification, false to tear down (docs/14 §7)."
+  type        = bool
+  default     = false
+}
+
+variable "slack_webhook_secret_ready" {
+  description = "Wire SLACK_WEBHOOK_URL=slack-webhook-url:latest into the verify-slack job. Leave false until the client delivers the URL (D-3) AND a secret version exists — referencing a version-less secret makes the job fail to start."
+  type        = bool
+  default     = false
+}
+
+variable "recon_verify_bucket" {
+  description = "GCS bucket name for F1.8 reconcile dummy CSVs (gs:// input to reconcile_admin). Globally unique."
+  type        = string
+  default     = "product-system-verify"
+}

@@ -16,3 +16,13 @@ output "cloudsql_connection_name" {
 output "tasks_queue" {
   value = google_cloud_tasks_queue.webhook.name
 }
+
+output "verification_job_names" {
+  value       = sort([for j in google_cloud_run_v2_job.verification : j.name])
+  description = "Names of the deployed verification Cloud Run Jobs (empty unless create_verification_jobs = true)."
+}
+
+output "recon_verify_bucket" {
+  value       = var.create_verification_jobs ? google_storage_bucket.recon_verify[0].name : ""
+  description = "GCS bucket for F1.8 reconcile dummy CSVs (empty unless create_verification_jobs = true)."
+}
