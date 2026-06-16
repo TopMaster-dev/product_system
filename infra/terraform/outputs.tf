@@ -26,3 +26,8 @@ output "recon_verify_bucket" {
   value       = var.create_verification_jobs ? google_storage_bucket.recon_verify[0].name : ""
   description = "GCS bucket for F1.8 reconcile dummy CSVs (empty unless create_verification_jobs = true)."
 }
+
+output "image_registry_base" {
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_registry_repo}"
+  description = "Base path for the container image; append /app:<tag>. Matches cloudbuild.yaml output."
+}

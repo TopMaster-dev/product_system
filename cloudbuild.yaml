@@ -1,0 +1,55 @@
+# Cloud Build pipeline — build + push the product-system container image to
+# Artifact Registry.
+#
+# Quality gates (ruff / ruff format / mypy / pytest / terraform validate) run
+# in GitHub Actions (.github/workflows/ci.yml) on every PR to main. This
+# pipeline is the image build/push half, run post-merge or on demand for a
+# deploy; it deliberately does NOT re-run the test suite.
+#
+# Manual run (from repo root):
+#   gcloud builds submit --config=cloudbuild.yaml \
+#     --project=inventory-496204 --region=asia-northeast1 \
+#     --substitutions=_TAG=phase1b-stage0-20260616 .
+#
+# Trigger (recommended): a push-to-main Cloud Build trigger with the built-in
+# substitution _TAG=$SHORT_SHA, so every main commit yields an immutable,
+# SHA-tagged image.
+
+substitutions:
+  _REGION: asia-northeast1
+  _REPO: product-system # Artifact Registry repository id
+  _IMAGE: app
+  _TAG: latest # OVERRIDE with an immutable tag (commit SHA / dated) per build
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${_TAG}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:latest"
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s
+
+steps:
+  # Warm the layer cache from the previous :latest, if one exists. The first
+  # build has no prior image, so a pull failure is non-fatal.
+  - id: pull-cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker pull "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:latest" || exit 0
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --cache-from
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:latest"
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:${_TAG}"
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_IMAGE}:latest"
+      - .

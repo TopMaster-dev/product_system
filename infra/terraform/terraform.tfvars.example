@@ -22,3 +22,8 @@ db_password      = "REPLACE_WITH_A_STRONG_PASSWORD"
 # Override only if "product-system-verify" is already taken (bucket names are
 # globally unique).
 # recon_verify_bucket = "product-system-verify"
+
+# Artifact Registry: leave false unless you have imported the existing repo
+# (see artifact_registry.tf). cloudbuild.yaml pushes here regardless.
+# manage_artifact_registry = false
+# artifact_registry_repo   = "product-system"

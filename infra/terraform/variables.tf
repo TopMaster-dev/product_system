@@ -73,3 +73,17 @@ variable "recon_verify_bucket" {
   type        = string
   default     = "product-system-verify"
 }
+
+# ---- Artifact Registry (cloudbuild.yaml push target) ----
+
+variable "manage_artifact_registry" {
+  description = "Manage the Artifact Registry repo in Terraform. Default false because it was created imperatively (scripts/deploy_to_cloud_run.ps1) and already exists; import it first, then set true (see artifact_registry.tf)."
+  type        = bool
+  default     = false
+}
+
+variable "artifact_registry_repo" {
+  description = "Artifact Registry repository id for the container image (matches cloudbuild.yaml _REPO)."
+  type        = string
+  default     = "product-system"
+}

@@ -15,6 +15,8 @@ $TAG        = "v0.1.0"
 $IMG_URL    = "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${IMAGE}:$TAG"
 
 Write-Host "==> Ensuring Artifact Registry repository exists..."
+# If the repo is Terraform-managed (manage_artifact_registry=true), this
+# describe succeeds and the create is skipped.
 $exists = gcloud artifacts repositories describe $REPO --project=$PROJECT_ID --location=$REGION 2>$null
 if (-not $exists) {
     gcloud artifacts repositories create $REPO `
@@ -24,11 +26,14 @@ if (-not $exists) {
         --description="Product System container images"
 }
 
-Write-Host "==> Submitting build to Cloud Build (this takes 3-5 minutes)..."
+Write-Host "==> Submitting build to Cloud Build via cloudbuild.yaml (this takes 3-5 minutes)..."
+# Single source of truth for the image build is cloudbuild.yaml (build + push,
+# layer-cached). $TAG is passed through as the immutable image tag.
 gcloud builds submit `
     --project=$PROJECT_ID `
-    --tag=$IMG_URL `
     --region=$REGION `
+    --config=cloudbuild.yaml `
+    --substitutions="_TAG=$TAG" `
     .
 
 Write-Host "==> Deploying new revision to Cloud Run..."
