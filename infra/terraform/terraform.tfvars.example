@@ -27,3 +27,10 @@ db_password      = "REPLACE_WITH_A_STRONG_PASSWORD"
 # (see artifact_registry.tf). cloudbuild.yaml pushes here regardless.
 # manage_artifact_registry = false
 # artifact_registry_repo   = "product-system"
+
+# Cloud Build trigger: set true ONLY after connecting the GitHub repo to Cloud
+# Build via the GitHub App (one-time, console — docs/14 §10). Apply fails
+# otherwise. owner/repo default to this repository.
+# create_build_trigger = false
+# github_owner         = "TopMaster-dev"
+# github_repo          = "product_system"

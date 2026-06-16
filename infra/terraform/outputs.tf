@@ -31,3 +31,8 @@ output "image_registry_base" {
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_registry_repo}"
   description = "Base path for the container image; append /app:<tag>. Matches cloudbuild.yaml output."
 }
+
+output "build_trigger_id" {
+  value       = var.create_build_trigger ? google_cloudbuild_trigger.build_on_main[0].id : ""
+  description = "Cloud Build trigger id (empty unless create_build_trigger = true)."
+}

@@ -87,3 +87,23 @@ variable "artifact_registry_repo" {
   type        = string
   default     = "product-system"
 }
+
+# ---- Cloud Build trigger (push-to-main image build) ----
+
+variable "create_build_trigger" {
+  description = "Create the push-to-main Cloud Build trigger. Requires the GitHub repo to be connected to Cloud Build first (one-time, console — see docs/14 §10)."
+  type        = bool
+  default     = false
+}
+
+variable "github_owner" {
+  description = "GitHub org/user that owns the repo (for the Cloud Build trigger)."
+  type        = string
+  default     = "TopMaster-dev"
+}
+
+variable "github_repo" {
+  description = "GitHub repository name (for the Cloud Build trigger)."
+  type        = string
+  default     = "product_system"
+}
