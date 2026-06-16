@@ -51,6 +51,7 @@ gcp = [
     "google-cloud-tasks>=2.16",
     "google-cloud-secret-manager>=2.21",
     "google-cloud-bigquery>=3.27",
+    "google-cloud-storage>=2.16",
 ]
 
 [tool.setuptools.packages.find]

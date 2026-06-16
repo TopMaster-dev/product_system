@@ -26,11 +26,11 @@ Exit codes:
   2 — usage error
 
 Usage (Cloud Run Job):
-    # --csv must be a local path inside the container. The operator stages
-    # a dummy CSV with scripts/make_dummy_recon_csv.py, bundles it via the
-    # image build (or GCS FUSE mount), then references the in-container path.
+    # --csv accepts a local container path OR a gs:// URI. The latter is
+    # downloaded by app.cli.reconcile_inventory.resolve_csv_arg via the
+    # google-cloud-storage client; the SA needs Object Viewer on the bucket.
     gcloud run jobs execute product-system-reconcile-admin \\
-        --args=start,--csv=/app/recon_dummy.csv,\\
+        --args=start,--csv=gs://product-system-verify/recon/x.csv,\\
                --triggered-by=sre-verify --wait
 
     gcloud run jobs execute product-system-reconcile-admin \\
@@ -48,7 +48,6 @@ import asyncio
 import json
 import sys
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 
 from sqlalchemy import select
 
@@ -74,9 +73,11 @@ VERIFICATION_NOTES_PREFIX = "VERIFICATION_DO_NOT_PUSH_F17_"
 
 async def cmd_start(args: argparse.Namespace) -> int:
     """Delegates to app.cli.reconcile_inventory.run() so the CSV-loading
-    and diff-collection logic stays single-sourced."""
+    and diff-collection logic stays single-sourced. `args.csv` is passed
+    as a raw string so a `gs://bucket/object` URI is forwarded intact for
+    `reconcile_inventory.resolve_csv_arg` to download."""
     exit_code = await reconcile_inventory.run(
-        Path(args.csv),
+        args.csv,
         triggered_by=args.triggered_by,
         dry_run=False,
     )
@@ -85,7 +86,7 @@ async def cmd_start(args: argparse.Namespace) -> int:
 
 async def cmd_dry_run(args: argparse.Namespace) -> int:
     exit_code = await reconcile_inventory.run(
-        Path(args.csv),
+        args.csv,
         triggered_by=args.triggered_by,
         dry_run=True,
     )

@@ -13,7 +13,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.cli.reconcile_inventory import aggregate_csv_by_product, collect_diffs, run
+from app.cli.reconcile_inventory import (
+    aggregate_csv_by_product,
+    collect_diffs,
+    resolve_csv_arg,
+    run,
+)
 from app.models import InventorySnapshot, MasterSku, ReconcileDiff, ReconcileRun
 from app.services.reconcile import DiffInput
 
@@ -264,3 +269,111 @@ def test_diff_input_dataclass_is_frozen() -> None:
     d = DiffInput(master_sku_id=1, current_qty=2, target_qty=3)
     with pytest.raises(AttributeError):
         d.master_sku_id = 99  # type: ignore[misc]
+
+
+# ---------- resolve_csv_arg (gs:// + local) ----------
+
+
+@pytest.mark.unit
+def test_resolve_csv_arg_local_path_passes_through(tmp_path: Path) -> None:
+    p = tmp_path / "x.csv"
+    p.write_text("dummy", encoding="utf-8")
+    out = resolve_csv_arg(p)
+    assert out == p
+
+
+@pytest.mark.unit
+def test_resolve_csv_arg_local_path_string_becomes_path(tmp_path: Path) -> None:
+    p = tmp_path / "x.csv"
+    p.write_text("dummy", encoding="utf-8")
+    out = resolve_csv_arg(str(p))
+    assert out == p
+
+
+@pytest.mark.unit
+def test_resolve_csv_arg_gs_uri_delegates_to_download(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """gs:// branches go through _download_gs so tests can stub it without
+    pulling google-cloud-storage into the test runtime."""
+    downloaded = tmp_path / "downloaded.csv"
+    downloaded.write_text("payload", encoding="utf-8")
+    captured: list[str] = []
+
+    def fake_download(uri: str) -> Path:
+        captured.append(uri)
+        return downloaded
+
+    monkeypatch.setattr("app.cli.reconcile_inventory._download_gs", fake_download)
+    out = resolve_csv_arg("gs://product-system-verify/recon/x.csv")
+    assert out == downloaded
+    assert captured == ["gs://product-system-verify/recon/x.csv"]
+
+
+@pytest.mark.unit
+def test_run_resolves_gs_uri_before_reading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """run() forwards a gs:// arg through resolve_csv_arg; the downloaded
+    Path is what aggregate_csv_by_product sees. We stub _download_gs to a
+    canned CSV and force exit-2 by leaving the master_sku table empty —
+    but session_factory is patched to never be called because we monkeypatch
+    aggregate_csv_by_product to a no-op and supply a stub session_factory."""
+    import asyncio
+
+    local_csv = _write_csv(
+        tmp_path,
+        "fake.csv",
+        [
+            ["区分", "商品コード", "属性１名", "属性２名", "在庫数量"],
+            ["u", "GS-A", "", "", "3"],
+        ],
+    )
+
+    def fake_download(uri: str) -> Path:
+        assert uri == "gs://b/x.csv"
+        return local_csv
+
+    monkeypatch.setattr("app.cli.reconcile_inventory._download_gs", fake_download)
+
+    # Stub the session factory so the test stays a unit test (no DB).
+    class _FakeSession:
+        async def execute(self, *_a, **_kw):  # type: ignore[no-untyped-def]
+            class _R:
+                @staticmethod
+                def all():
+                    return []
+
+                @staticmethod
+                def scalars():
+                    return _R()
+
+            return _R()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def begin(self):
+            return self
+
+    def _factory():
+        return _FakeSession()
+
+    exit_code = asyncio.run(
+        run("gs://b/x.csv", triggered_by="t", dry_run=True, session_factory=_factory)
+    )
+    assert exit_code == 0
+
+
+@pytest.mark.unit
+def test_download_gs_rejects_malformed_uri() -> None:
+    """A gs:// URI without an object key must raise ValueError before any
+    network call. The malformed-URI check runs before the storage import,
+    so this test is safe even without google-cloud-storage installed."""
+    from app.cli import reconcile_inventory as ri
+
+    with pytest.raises(ValueError, match="malformed gs:// URI"):
+        ri._download_gs("gs://only-bucket")

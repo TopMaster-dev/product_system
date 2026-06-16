@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import csv
 import sys
+import tempfile
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
@@ -38,6 +39,8 @@ from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import InventorySnapshot, MasterSku
 from app.services.reconcile import DiffInput, ReconcileService
+
+GS_PREFIX = "gs://"
 
 # A factory that produces async sessions. Defaults to the production
 # async_session_factory; tests override with a factory bound to the test
@@ -51,6 +54,41 @@ ENC = "cp932"
 # Columns produced by CROSS MALL's inventory CSV export.
 COL_PRODUCT_CODE = "商品コード"
 COL_QTY = "在庫数量"
+
+
+def _download_gs(uri: str) -> Path:
+    """Download a `gs://bucket/object` URI to a local temp file.
+
+    Lives in a separate function so tests can monkeypatch this entry point
+    without pulling google-cloud-storage into the test runtime.
+    """
+    bucket_name, _, blob_name = uri[len(GS_PREFIX) :].partition("/")
+    if not bucket_name or not blob_name:
+        raise ValueError(f"malformed gs:// URI: {uri!r}")
+    from google.cloud import storage  # type: ignore
+
+    client = storage.Client()
+    blob = client.bucket(bucket_name).blob(blob_name)
+    tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
+        delete=False,
+        suffix=Path(blob_name).suffix or ".csv",
+    )
+    tmp.close()
+    blob.download_to_filename(tmp.name)
+    return Path(tmp.name)
+
+
+def resolve_csv_arg(csv_arg: str | Path) -> Path:
+    """Normalize the `--csv` argument to a local `Path`.
+
+    Plain paths pass through. `gs://bucket/object` URIs are downloaded to
+    a temp file (its lifecycle is the process lifetime — Cloud Run Jobs
+    are one-shot so the file is collected when the container exits).
+    """
+    raw = str(csv_arg)
+    if raw.startswith(GS_PREFIX):
+        return _download_gs(raw)
+    return Path(raw)
 
 
 def aggregate_csv_by_product(path: Path) -> dict[str, int]:
@@ -152,7 +190,7 @@ def _diff_iter(diffs: list[DiffInput]) -> Iterator[DiffInput]:
 
 
 async def run(
-    csv_path: Path,
+    csv_path: Path | str,
     *,
     triggered_by: str = "cloud_scheduler",
     dry_run: bool = False,
@@ -160,16 +198,25 @@ async def run(
 ) -> int:
     """Top-level CLI entry. `session_factory` defaults to the production
     `async_session_factory`; tests pass in a factory bound to the test
-    engine so the fixture-seeded data is visible to the CLI."""
+    engine so the fixture-seeded data is visible to the CLI.
+
+    `csv_path` accepts a local path or a `gs://bucket/object` URI; gs:// URIs
+    are downloaded to a temp file before reading.
+    """
     factory = session_factory or async_session_factory
     log.info("reconcile.cli.start", csv=str(csv_path), triggered_by=triggered_by, dry_run=dry_run)
+    try:
+        local_path = resolve_csv_arg(csv_path)
+    except (ValueError, OSError) as exc:
+        log.error("reconcile.cli.csv_resolve_failed", csv=str(csv_path), error=str(exc))
+        return 2
     # Sync stat is acceptable here; we run as a one-shot CLI and Path.exists()
     # returns immediately. Switching to anyio.Path would only add a dependency.
-    if not csv_path.exists():  # noqa: ASYNC240
-        log.error("reconcile.cli.csv_not_found", csv=str(csv_path))
+    if not local_path.exists():
+        log.error("reconcile.cli.csv_not_found", csv=str(local_path))
         return 2
 
-    csv_aggregates = aggregate_csv_by_product(csv_path)
+    csv_aggregates = aggregate_csv_by_product(local_path)
     log.info("reconcile.cli.csv_loaded", row_count=len(csv_aggregates))
 
     async with factory() as read_session:
@@ -186,7 +233,7 @@ async def run(
             source="cross_mall_csv",
             triggered_by=triggered_by,
             diffs=_diff_iter(diffs),
-            csv_filename=csv_path.name,
+            csv_filename=local_path.name,
         )
     log.info(
         "reconcile.cli.run_created",
@@ -204,8 +251,9 @@ def main() -> None:
     parser.add_argument(
         "--csv",
         required=True,
-        type=Path,
-        help="Path to CROSS MALL inventory CSV (CP932).",
+        type=str,
+        help="Path to CROSS MALL inventory CSV (CP932). "
+        "Accepts a local path or a gs://bucket/object URI.",
     )
     parser.add_argument(
         "--triggered-by",
