@@ -138,3 +138,29 @@ async def test_attachment_color_by_level() -> None:
             )
             await n.notify(level=level, title="t", message="m")  # type: ignore[arg-type]
     assert [c["attachments"][0]["color"] for c in captured] == ["#dc2626", "#f59e0b"]
+
+
+# ---------- get_slack_notifier factory ----------
+
+
+@pytest.mark.unit
+def test_get_slack_notifier_accepts_settings_object() -> None:
+    """Regression: passing a (pydantic, unhashable) Settings must not raise.
+    Previously get_slack_notifier was lru_cache'd and tried to hash Settings,
+    raising `TypeError: unhashable type: 'Settings'` on every explicit call."""
+    from app.config import Settings
+    from app.notifications.slack import get_slack_notifier
+
+    s = Settings(
+        slack_webhook_url="https://hooks.slack.com/services/T/B/X",
+        slack_notify_min_level="error",
+    )
+    n = get_slack_notifier(s)
+    assert n._webhook_url == "https://hooks.slack.com/services/T/B/X"  # type: ignore[attr-defined]
+
+
+@pytest.mark.unit
+def test_get_slack_notifier_no_arg_is_cached_singleton() -> None:
+    from app.notifications.slack import get_slack_notifier
+
+    assert get_slack_notifier() is get_slack_notifier()

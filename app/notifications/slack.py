@@ -111,11 +111,26 @@ class SlackNotifier:
         }
 
 
-@lru_cache(maxsize=1)
-def get_slack_notifier(settings: Settings | None = None) -> SlackNotifier:
-    """Process-wide notifier, configured from app settings."""
-    s = settings or get_settings()
+def _notifier_from(settings: Settings) -> SlackNotifier:
     return SlackNotifier(
-        webhook_url=s.slack_webhook_url,
-        min_level=s.slack_notify_min_level,
+        webhook_url=settings.slack_webhook_url,
+        min_level=settings.slack_notify_min_level,
     )
+
+
+@lru_cache(maxsize=1)
+def _default_slack_notifier() -> SlackNotifier:
+    return _notifier_from(get_settings())
+
+
+def get_slack_notifier(settings: Settings | None = None) -> SlackNotifier:
+    """Process-wide notifier, configured from app settings.
+
+    With no argument, returns a cached singleton built from `get_settings()`.
+    Pass an explicit `settings` to build one from a specific Settings — this
+    path is NOT cached, because pydantic Settings is unhashable and cannot be
+    an lru_cache key (caching on it raised `TypeError: unhashable type`).
+    """
+    if settings is None:
+        return _default_slack_notifier()
+    return _notifier_from(settings)
