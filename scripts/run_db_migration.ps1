@@ -39,9 +39,13 @@ try {
 
     Write-Host "==> Running Alembic upgrade..."
     $env:DATABASE_URL_SYNC = "postgresql+psycopg2://postgres:${DB_PASSWORD}@127.0.0.1:${LOCAL_PORT}/$DB"
+    Write-Host "-- current revision (before):"
+    py -m alembic current
     py -m alembic upgrade head
+    Write-Host "-- current revision (after):"
+    py -m alembic current
 
-    Write-Host "`nMigration complete. Production DB is now on schema 0002."
+    Write-Host "`nMigration complete. Production DB is now at Alembic head."
 }
 finally {
     Write-Host "==> Stopping Cloud SQL Auth Proxy..."
