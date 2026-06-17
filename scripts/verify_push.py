@@ -21,12 +21,13 @@ Usage (locally via cloud-sql-proxy):
         --quantity 5 \\
         --triggered-by 'manual:f14-shopify-noop'
 
-Usage (Cloud Run Job, recommended for production):
+Usage (Cloud Run Job, recommended for production — the script path MUST be the
+first --args element, and --master-sku-id is optional: when omitted it is
+resolved from the active channel_sku_mapping for --channel-sku):
     gcloud run jobs execute product-system-verify-push \\
-        --args=--channel=shopify,\\
-               --master-sku-id=42,\\
-               --channel-sku=R64silverus7,\\
-               --quantity=5,\\
+        --args=scripts/verify_push.py,--channel=shopify,\\
+               --channel-sku=N41gold,\\
+               --quantity=19,\\
                --triggered-by=manual:f14-shopify-noop --wait
 """
 
@@ -39,12 +40,16 @@ import sys
 from dataclasses import dataclass
 from typing import Literal
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.adapters.base import ChannelAdapter
 from app.adapters.rakuten import RakutenAdapter
 from app.adapters.shopify import ShopifyAdapter
 from app.config import Settings, get_settings
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
+from app.models import ChannelSkuMapping
 from app.notifications.slack import get_slack_notifier
 from app.services.inventory_push import InventoryPushService, PushRequest
 
@@ -60,7 +65,7 @@ EXIT_USAGE = 2
 @dataclass(frozen=True, slots=True)
 class Args:
     channel: Channel
-    master_sku_id: int
+    master_sku_id: int | None  # None -> resolve from channel_sku_mappings
     channel_sku: str
     quantity: int
     triggered_by: str
@@ -79,9 +84,10 @@ def parse_args(argv: list[str] | None = None) -> Args:
     )
     parser.add_argument(
         "--master-sku-id",
-        required=True,
         type=int,
-        help="master_skus.id for the SKU being pushed.",
+        default=None,
+        help="master_skus.id for the SKU being pushed. Optional — if omitted, "
+        "it is resolved from the active channel_sku_mapping for --channel-sku.",
     )
     parser.add_argument(
         "--channel-sku",
@@ -137,17 +143,63 @@ def build_adapter(channel: Channel, settings: Settings) -> ChannelAdapter:
     raise ValueError(f"unknown channel: {channel}")  # pragma: no cover
 
 
+async def resolve_master_sku_id(
+    session: AsyncSession,
+    channel: Channel,
+    channel_sku: str,
+) -> int:
+    """Resolve master_skus.id from the active channel_sku_mapping when the
+    operator passes only --channel-sku. Raises when there is no active mapping
+    or the SKU maps to more than one master (ambiguous)."""
+    result = await session.execute(
+        select(ChannelSkuMapping.master_sku_id).where(
+            ChannelSkuMapping.channel == channel,
+            ChannelSkuMapping.channel_sku == channel_sku,
+            ChannelSkuMapping.is_active.is_(True),
+        )
+    )
+    ids = sorted({r[0] for r in result.all()})
+    if not ids:
+        raise RuntimeError(
+            f"no active channel_sku_mapping for channel={channel} "
+            f"channel_sku={channel_sku!r}; pass --master-sku-id explicitly"
+        )
+    if len(ids) > 1:
+        raise RuntimeError(
+            f"channel_sku={channel_sku!r} maps to multiple master_sku_ids {ids}; "
+            "pass --master-sku-id explicitly"
+        )
+    return ids[0]
+
+
 async def run_push(args: Args) -> int:
     settings = get_settings()
     adapter = build_adapter(args.channel, settings)
     notifier = get_slack_notifier(settings)
 
     async with async_session_factory() as session, session.begin():
+        master_sku_id = args.master_sku_id
+        if master_sku_id is None:
+            try:
+                master_sku_id = await resolve_master_sku_id(session, args.channel, args.channel_sku)
+            except RuntimeError as exc:
+                sys.stdout.write(
+                    json.dumps(
+                        {
+                            "channel": args.channel,
+                            "channel_sku": args.channel_sku,
+                            "status": "error",
+                            "error": str(exc),
+                        }
+                    )
+                    + "\n"
+                )
+                return EXIT_FAILED
         svc = InventoryPushService(session, notifier)
         attempt = await svc.push_single(
             adapter,
             PushRequest(
-                master_sku_id=args.master_sku_id,
+                master_sku_id=master_sku_id,
                 channel_sku=args.channel_sku,
                 quantity=args.quantity,
                 triggered_by=args.triggered_by,
@@ -168,7 +220,7 @@ async def run_push(args: Args) -> int:
                 "attempt_id": attempt_id,
                 "status": attempt_status,
                 "channel": args.channel,
-                "master_sku_id": args.master_sku_id,
+                "master_sku_id": master_sku_id,
                 "channel_sku": args.channel_sku,
                 "quantity": args.quantity,
                 "error_code": attempt_error_code,

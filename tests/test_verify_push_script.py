@@ -25,6 +25,7 @@ from verify_push import (  # noqa: E402 — after sys.path mutation
     build_adapter,
     main,
     parse_args,
+    resolve_master_sku_id,
 )
 
 # ---------- argparse ----------
@@ -81,6 +82,24 @@ def test_parse_args_requires_all_flags() -> None:
 
 
 @pytest.mark.unit
+def test_parse_args_master_sku_id_optional() -> None:
+    args = parse_args(
+        [
+            "--channel",
+            "shopify",
+            "--channel-sku",
+            "N41gold",
+            "--quantity",
+            "19",
+            "--triggered-by",
+            "t",
+        ]
+    )
+    assert args.master_sku_id is None
+    assert args.channel_sku == "N41gold"
+
+
+@pytest.mark.unit
 def test_parse_args_quantity_must_be_int() -> None:
     with pytest.raises(SystemExit):
         parse_args(
@@ -97,6 +116,49 @@ def test_parse_args_quantity_must_be_int() -> None:
                 "t",
             ]
         )
+
+
+# ---------- resolve_master_sku_id ----------
+
+
+class _FakeResult:
+    def __init__(self, rows: list[tuple[int]]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[tuple[int]]:
+        return self._rows
+
+
+class _FakeSession:
+    def __init__(self, rows: list[tuple[int]]) -> None:
+        self._rows = rows
+
+    async def execute(self, *_a: object, **_kw: object) -> _FakeResult:
+        return _FakeResult(self._rows)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resolve_master_sku_id_single() -> None:
+    session = _FakeSession([(42,)])
+    got = await resolve_master_sku_id(session, "shopify", "N41gold")  # type: ignore[arg-type]
+    assert got == 42
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resolve_master_sku_id_not_found() -> None:
+    session = _FakeSession([])
+    with pytest.raises(RuntimeError, match="no active channel_sku_mapping"):
+        await resolve_master_sku_id(session, "shopify", "MISSING")  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resolve_master_sku_id_ambiguous() -> None:
+    session = _FakeSession([(1,), (2,)])
+    with pytest.raises(RuntimeError, match="multiple master_sku_ids"):
+        await resolve_master_sku_id(session, "shopify", "DUP")  # type: ignore[arg-type]
 
 
 # ---------- build_adapter ----------
