@@ -35,7 +35,7 @@ class _FakeSettings:
 @pytest.mark.unit
 def test_parse_args_location_mode() -> None:
     args = parse_args(["--mode", "location"])
-    assert args == Args(mode="location", channel_sku="")
+    assert args == Args(mode="location", channel_sku="", limit=20)
 
 
 @pytest.mark.unit
@@ -55,6 +55,26 @@ def test_parse_args_sku_mode_with_value() -> None:
 def test_parse_args_rejects_unknown_mode() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--mode", "bogus"])
+
+
+@pytest.mark.unit
+def test_parse_args_list_mode_with_limit() -> None:
+    args = parse_args(["--mode", "list", "--limit", "30"])
+    assert args.mode == "list"
+    assert args.limit == 30
+
+
+@pytest.mark.unit
+def test_parse_args_onhand_requires_channel_sku() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--mode", "onhand"])
+
+
+@pytest.mark.unit
+def test_parse_args_onhand_with_value() -> None:
+    args = parse_args(["--mode", "onhand", "--channel-sku", "ABC"])
+    assert args.mode == "onhand"
+    assert args.channel_sku == "ABC"
 
 
 # ---------- main() with mocked GraphQL ----------
@@ -206,3 +226,110 @@ def test_main_usage_error_returns_2() -> None:
     finally:
         sys.stderr = saved
     assert code == 2
+
+
+# ---------- list / onhand modes ----------
+
+
+@pytest.mark.unit
+def test_main_list_mode_returns_variants(capsys: pytest.CaptureFixture[str]) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "productVariants": {
+                        "edges": [
+                            {
+                                "node": {
+                                    "sku": "REAL-SKU-1",
+                                    "title": "gold",
+                                    "product": {"title": "Ring"},
+                                    "inventoryItem": {"id": "gid://shopify/InventoryItem/1"},
+                                }
+                            },
+                            {
+                                "node": {
+                                    "sku": "REAL-SKU-2",
+                                    "title": "silver",
+                                    "product": {"title": "Ring"},
+                                    "inventoryItem": {"id": "gid://shopify/InventoryItem/2"},
+                                }
+                            },
+                        ]
+                    }
+                }
+            },
+        )
+
+    adapter, _ = _adapter_with(handler)
+    with patch("verify_shopify_meta.build_adapter", return_value=adapter):
+        code = main(["--mode", "list", "--limit", "5"])
+    assert code == EXIT_OK
+    out = capsys.readouterr().out
+    assert '"count": 2' in out
+    assert "REAL-SKU-1" in out
+    assert "REAL-SKU-2" in out
+
+
+@pytest.mark.unit
+def test_main_onhand_mode_returns_quantities(capsys: pytest.CaptureFixture[str]) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        q = req.content
+        if b"inventoryLevel" in q:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "inventoryItem": {
+                            "inventoryLevel": {
+                                "quantities": [
+                                    {"name": "on_hand", "quantity": 5},
+                                    {"name": "available", "quantity": 4},
+                                ]
+                            }
+                        }
+                    }
+                },
+            )
+        if b"locations" in q:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"locations": {"edges": [{"node": {"id": "gid://shopify/Location/9"}}]}}
+                },
+            )
+        # inventoryItems lookup
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "inventoryItems": {
+                        "edges": [{"node": {"id": "gid://shopify/InventoryItem/77", "sku": "ABC"}}]
+                    }
+                }
+            },
+        )
+
+    adapter, _ = _adapter_with(handler)
+    with patch("verify_shopify_meta.build_adapter", return_value=adapter):
+        code = main(["--mode", "onhand", "--channel-sku", "ABC"])
+    assert code == EXIT_OK
+    out = capsys.readouterr().out
+    assert '"on_hand": 5' in out
+    assert '"result": "ok"' in out
+
+
+@pytest.mark.unit
+def test_main_onhand_mode_sku_not_found_returns_1(capsys: pytest.CaptureFixture[str]) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if b"inventoryItems" in req.content:
+            return httpx.Response(200, json={"data": {"inventoryItems": {"edges": []}}})
+        return httpx.Response(200, json={"data": {}})
+
+    adapter, _ = _adapter_with(handler)
+    with patch("verify_shopify_meta.build_adapter", return_value=adapter):
+        code = main(["--mode", "onhand", "--channel-sku", "MISSING"])
+    assert code == EXIT_VERIFICATION_FAILED
+    out = capsys.readouterr().out
+    assert '"result": "error"' in out

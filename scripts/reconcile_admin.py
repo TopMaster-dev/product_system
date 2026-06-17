@@ -26,18 +26,22 @@ Exit codes:
   2 — usage error
 
 Usage (Cloud Run Job):
+    # IMPORTANT: --args REPLACES the container args entirely, so the script
+    # path (scripts/reconcile_admin.py) MUST be the first --args element, or
+    # the container runs `python <subcommand>` and exits 2.
     # --csv accepts a local container path OR a gs:// URI. The latter is
     # downloaded by app.cli.reconcile_inventory.resolve_csv_arg via the
     # google-cloud-storage client; the SA needs Object Viewer on the bucket.
     gcloud run jobs execute product-system-reconcile-admin \\
-        --args=start,--csv=gs://product-system-verify/recon/x.csv,\\
+        --args=scripts/reconcile_admin.py,start,\\
+               --csv=gs://product-system-verify/recon/x.csv,\\
                --triggered-by=sre-verify --wait
 
     gcloud run jobs execute product-system-reconcile-admin \\
-        --args=approve,--diff-id=42,--approved-by=sre-verify --wait
+        --args=scripts/reconcile_admin.py,approve,--diff-id=42,--approved-by=sre-verify --wait
 
     gcloud run jobs execute product-system-reconcile-admin \\
-        --args=finalize,--run-id=7,--approved-by=sre-verify,\\
+        --args=scripts/reconcile_admin.py,finalize,--run-id=7,--approved-by=sre-verify,\\
                --notes=VERIFICATION_DO_NOT_PUSH_F17_2026-06-16 --wait
 """
 

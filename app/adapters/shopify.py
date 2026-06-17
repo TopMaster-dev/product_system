@@ -97,6 +97,28 @@ mutation InventorySet($input: InventorySetOnHandQuantitiesInput!) {
 }
 """
 
+# Read-only diagnostics (F1.6 verification). List the live variant SKUs so the
+# real Shopify SKU format can be compared against the CROSS MALL channel_sku
+# mappings, and read current on-hand so a no-op SET value can be obtained
+# without a Shopify Admin login.
+_LIST_VARIANTS_QUERY = """
+query ListVariants($first: Int!) {
+  productVariants(first: $first) {
+    edges { node { sku title product { title } inventoryItem { id } } }
+  }
+}
+"""
+
+_ON_HAND_QUERY = """
+query OnHand($itemId: ID!, $locId: ID!) {
+  inventoryItem(id: $itemId) {
+    inventoryLevel(locationId: $locId) {
+      quantities(names: ["on_hand", "available"]) { name quantity }
+    }
+  }
+}
+"""
+
 
 def _strip_gid(value: str | None) -> str:
     """Normalize Shopify GraphQL global IDs to the numeric suffix.
@@ -269,6 +291,41 @@ class ShopifyAdapter(ChannelAdapter):
         if not item_id:
             raise RuntimeError(f"Shopify inventoryItems node missing `id` for sku={sku!r}")
         return str(item_id)
+
+    async def list_variant_skus(self, first: int = 20) -> list[dict[str, str]]:
+        """Read-only: the first `first` live product variant SKUs (+ product
+        title + inventoryItem id). Used to discover the real Shopify SKU format
+        for comparison against the CROSS MALL channel_sku mappings."""
+        body = await self._graphql(_LIST_VARIANTS_QUERY, {"first": first})
+        edges = ((body.get("data") or {}).get("productVariants") or {}).get("edges") or []
+        out: list[dict[str, str]] = []
+        for edge in edges:
+            node = edge.get("node") or {}
+            out.append(
+                {
+                    "sku": node.get("sku") or "",
+                    "variant_title": node.get("title") or "",
+                    "product_title": (node.get("product") or {}).get("title") or "",
+                    "inventory_item_id": (node.get("inventoryItem") or {}).get("id") or "",
+                }
+            )
+        return out
+
+    async def get_on_hand(self, sku: str) -> dict[str, int]:
+        """Read-only: current on_hand / available for `sku` at the primary
+        location. Lets a no-op SET value be obtained without Shopify Admin
+        access. Raises (via the SKU lookup) when the SKU is not found."""
+        item_id = await self._lookup_inventory_item_id(sku)
+        location_id = await self._resolve_location_id()
+        body = await self._graphql(_ON_HAND_QUERY, {"itemId": item_id, "locId": location_id})
+        level = ((body.get("data") or {}).get("inventoryItem") or {}).get("inventoryLevel") or {}
+        quantities = level.get("quantities") or []
+        out: dict[str, int] = {}
+        for q in quantities:
+            name = q.get("name")
+            if name:
+                out[name] = int(q.get("quantity") or 0)
+        return out
 
     @retry(
         retry=retry_if_exception_type((httpx.HTTPError,)),
