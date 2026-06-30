@@ -35,7 +35,7 @@ class _FakeSettings:
 @pytest.mark.unit
 def test_parse_args_location_mode() -> None:
     args = parse_args(["--mode", "location"])
-    assert args == Args(mode="location", channel_sku="", limit=20)
+    assert args == Args(mode="location", channel_sku="", limit=0)
 
 
 @pytest.mark.unit
@@ -270,6 +270,54 @@ def test_main_list_mode_returns_variants(capsys: pytest.CaptureFixture[str]) -> 
     assert '"count": 2' in out
     assert "REAL-SKU-1" in out
     assert "REAL-SKU-2" in out
+
+
+@pytest.mark.unit
+def test_main_list_mode_paginates(capsys: pytest.CaptureFixture[str]) -> None:
+    """--mode=list follows pageInfo.hasNextPage across pages."""
+    pages = [
+        {
+            "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+            "edges": [
+                {
+                    "node": {
+                        "sku": "PAGE1-SKU",
+                        "title": "g",
+                        "product": {"title": "P"},
+                        "inventoryItem": {"id": "gid://shopify/InventoryItem/1"},
+                    }
+                }
+            ],
+        },
+        {
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+            "edges": [
+                {
+                    "node": {
+                        "sku": "PAGE2-SKU",
+                        "title": "s",
+                        "product": {"title": "P"},
+                        "inventoryItem": {"id": "gid://shopify/InventoryItem/2"},
+                    }
+                }
+            ],
+        },
+    ]
+    calls = {"n": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        page = pages[min(calls["n"], 1)]
+        calls["n"] += 1
+        return httpx.Response(200, json={"data": {"productVariants": page}})
+
+    adapter, _ = _adapter_with(handler)
+    with patch("verify_shopify_meta.build_adapter", return_value=adapter):
+        code = main(["--mode", "list"])  # limit=0 -> all pages
+    assert code == EXIT_OK
+    out = capsys.readouterr().out
+    assert '"count": 2' in out
+    assert "PAGE1-SKU" in out and "PAGE2-SKU" in out
+    assert calls["n"] == 2  # exactly two pages fetched
 
 
 @pytest.mark.unit

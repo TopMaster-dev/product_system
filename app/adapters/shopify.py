@@ -102,12 +102,15 @@ mutation InventorySet($input: InventorySetOnHandQuantitiesInput!) {
 # mappings, and read current on-hand so a no-op SET value can be obtained
 # without a Shopify Admin login.
 _LIST_VARIANTS_QUERY = """
-query ListVariants($first: Int!) {
-  productVariants(first: $first) {
+query ListVariants($first: Int!, $cursor: String) {
+  productVariants(first: $first, after: $cursor) {
+    pageInfo { hasNextPage endCursor }
     edges { node { sku title product { title } inventoryItem { id } } }
   }
 }
 """
+# Shopify caps productVariants(first:) at 250; paginate to read the whole shop.
+_LIST_PAGE_SIZE = 250
 
 _ON_HAND_QUERY = """
 query OnHand($itemId: ID!, $locId: ID!) {
@@ -292,23 +295,37 @@ class ShopifyAdapter(ChannelAdapter):
             raise RuntimeError(f"Shopify inventoryItems node missing `id` for sku={sku!r}")
         return str(item_id)
 
-    async def list_variant_skus(self, first: int = 20) -> list[dict[str, str]]:
-        """Read-only: the first `first` live product variant SKUs (+ product
-        title + inventoryItem id). Used to discover the real Shopify SKU format
-        for comparison against the CROSS MALL channel_sku mappings."""
-        body = await self._graphql(_LIST_VARIANTS_QUERY, {"first": first})
-        edges = ((body.get("data") or {}).get("productVariants") or {}).get("edges") or []
+    async def list_variant_skus(self, max_total: int = 0) -> list[dict[str, str]]:
+        """Read-only: live product variant SKUs (+ product title + inventoryItem
+        id), paginating through the whole shop. `max_total` <= 0 returns every
+        variant; > 0 stops after that many. Used to resolve CROSS MALL channel
+        SKUs against the real Shopify SKUs (which are too inconsistent to
+        construct, so we look them up)."""
         out: list[dict[str, str]] = []
-        for edge in edges:
-            node = edge.get("node") or {}
-            out.append(
-                {
-                    "sku": node.get("sku") or "",
-                    "variant_title": node.get("title") or "",
-                    "product_title": (node.get("product") or {}).get("title") or "",
-                    "inventory_item_id": (node.get("inventoryItem") or {}).get("id") or "",
-                }
+        cursor: str | None = None
+        while True:
+            body = await self._graphql(
+                _LIST_VARIANTS_QUERY, {"first": _LIST_PAGE_SIZE, "cursor": cursor}
             )
+            conn = ((body.get("data") or {}).get("productVariants")) or {}
+            for edge in conn.get("edges") or []:
+                node = edge.get("node") or {}
+                out.append(
+                    {
+                        "sku": node.get("sku") or "",
+                        "variant_title": node.get("title") or "",
+                        "product_title": (node.get("product") or {}).get("title") or "",
+                        "inventory_item_id": (node.get("inventoryItem") or {}).get("id") or "",
+                    }
+                )
+                if 0 < max_total <= len(out):
+                    return out
+            info = conn.get("pageInfo") or {}
+            if not info.get("hasNextPage"):
+                break
+            cursor = info.get("endCursor")
+            if not cursor:
+                break
         return out
 
     async def get_on_hand(self, sku: str) -> dict[str, int]:

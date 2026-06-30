@@ -88,8 +88,8 @@ def parse_args(argv: list[str] | None = None) -> Args:
     parser.add_argument(
         "--limit",
         type=int,
-        default=20,
-        help="How many variant SKUs to list (--mode=list). Default 20.",
+        default=0,
+        help="Max variant SKUs to list (--mode=list). 0 = all (paginated).",
     )
     parsed = parser.parse_args(argv)
     if parsed.mode in ("sku", "onhand") and not parsed.channel_sku:
@@ -161,7 +161,7 @@ async def verify_sku(channel_sku: str) -> int:
 async def verify_list(limit: int) -> int:
     adapter = build_adapter()
     async with adapter:
-        variants = await adapter.list_variant_skus(first=limit)
+        variants = await adapter.list_variant_skus(max_total=limit)
     sys.stdout.write(
         json.dumps({"mode": "list", "result": "ok", "count": len(variants), "variants": variants})
         + "\n"
