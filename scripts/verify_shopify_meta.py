@@ -162,10 +162,14 @@ async def verify_list(limit: int) -> int:
     adapter = build_adapter()
     async with adapter:
         variants = await adapter.list_variant_skus(max_total=limit)
-    sys.stdout.write(
-        json.dumps({"mode": "list", "result": "ok", "count": len(variants), "variants": variants})
-        + "\n"
-    )
+    # NDJSON: one variant per line so each Cloud Logging entry is small and
+    # complete. A single big JSON array (~600 variants) exceeds Cloud Run's
+    # per-line log limit and gets dropped entirely. Read back with the filter
+    # jsonPayload.v=variant.
+    for v in variants:
+        sys.stdout.write(json.dumps({"v": "variant", **v}) + "\n")
+    summary = {"v": "list_summary", "result": "ok", "count": len(variants)}
+    sys.stdout.write(json.dumps(summary) + "\n")
     return EXIT_OK
 
 
