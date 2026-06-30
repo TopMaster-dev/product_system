@@ -13,6 +13,7 @@ from app.cli.build_channel_mapping import (
     extract_token,
     product_token,
     resolve_rakuten,
+    resolve_shop_target,
     resolve_shopify,
 )
 
@@ -30,6 +31,8 @@ from app.cli.build_channel_mapping import (
         ("ジュエリーボックス", None),  # packaging — no token
         ("", None),
         ("#R09 sun ring", "R09"),  # token not at the very end
+        ("316L hawaiian horseshoe ring ?R52", "R52"),  # '?' = mojibake'd '#'
+        ("316L id chain bracelet ?B49", "B49"),
     ],
 )
 def test_extract_token(name: str, expected: str | None) -> None:
@@ -41,6 +44,13 @@ def test_extract_color() -> None:
     assert extract_color("??? / GOLD", "B71gold") == "gold"
     assert extract_color("US7 / SILVER") == "silver"
     assert extract_color("Default Title", "R05") == ""
+
+
+@pytest.mark.unit
+def test_extract_color_combined() -> None:
+    # A single two-tone variant must not be collapsed onto the 'gold' bucket.
+    assert extract_color("gold & silver") == "gold&silver"
+    assert extract_color("R19goldsilverus7") == "gold&silver"
 
 
 @pytest.mark.unit
@@ -62,14 +72,22 @@ def test_extract_size(texts: tuple[str, ...], expected: str) -> None:
 # ---------- Shopify index + resolver ----------
 
 
-def _shop() -> object:
+def _shop():  # type: ignore[no-untyped-def]
+    # (sku, product_title, variant_title, inventory_item_id)
     rows = [
-        ("B13gold", "bracelet #B13", "??? / GOLD"),
-        ("B13silver", "bracelet #B13", "??? / SILVER"),
-        ("R05", "feather ring #R05", "??? / GOLD"),  # single variant, gold-tagged
-        ("R09goldus7", "sun ring #R09", "US7 / GOLD"),
-        ("R09goldus9", "sun ring #R09", "US9 / GOLD"),
-        ("", "no-sku ring #N90", "??? / GOLD"),  # empty SKU
+        ("B13gold", "bracelet #B13", "??? / GOLD", "iidB13g"),
+        ("B13silver", "bracelet #B13", "??? / SILVER", "iidB13s"),
+        ("R05", "feather ring #R05", "??? / GOLD", "iidR05"),  # single, gold-tagged
+        ("R09goldus7", "sun ring #R09", "US7 / GOLD", "iidR09g7"),
+        ("R09goldus9", "sun ring #R09", "US9 / GOLD", "iidR09g9"),
+        ("", "no-sku ring #N90", "??? / GOLD", "iidN90"),  # empty SKU
+        ("B17gold", "stud bangle #B17", "??? / GOLD", "iidB17"),  # single, gold only
+        # B29gold reused on TWO products (bracelet #B29 + necklace #N29) => ambiguous
+        ("B29gold", "coin bracelet #B29", "??? / GOLD", "iidB29a"),
+        ("B29gold", "horseshoe necklace #N29", "??? / GOLD", "iidB29b"),
+        # S/M bracelet whose CROSS MALL skucode equals the live sku (equality pass)
+        ("B66goldS", "S&M bracelet #B66", "17.5cm / GOLD", "iidB66gS"),
+        ("B66goldM", "S&M bracelet #B66", "19cm / GOLD", "iidB66gM"),
     ]
     return build_shopify_index(rows)
 
@@ -77,8 +95,11 @@ def _shop() -> object:
 @pytest.mark.unit
 def test_shopify_index_counts_and_empty_sku() -> None:
     idx = _shop()
-    assert idx.total == 6
+    assert idx.total == 11
     assert idx.empty_sku == [("N90", "no-sku ring #N90")]
+    assert idx.is_ambiguous("B29gold") is True  # 2 inventory items
+    assert idx.has_unique_sku("B13gold") is True
+    assert idx.unique_sku_iid("B13gold") == "iidB13g"
 
 
 @pytest.mark.unit
@@ -96,16 +117,49 @@ def test_resolve_shopify_single_variant_fallback() -> None:
 
 
 @pytest.mark.unit
+def test_resolve_shopify_single_variant_color_guard() -> None:
+    # Only B17gold exists; a silver CROSS MALL variant must NOT reuse it.
+    idx = _shop()
+    assert resolve_shopify(idx, "B17", "gold", "") == "B17gold"
+    assert resolve_shopify(idx, "B17", "silver", "") == ""
+
+
+@pytest.mark.unit
+def test_resolve_shopify_ambiguous_returns_empty() -> None:
+    # B29gold maps to 2 inventory items -> never returned from the resolver.
+    idx = _shop()
+    assert resolve_shopify(idx, "B29", "gold", "") == ""
+    assert resolve_shopify(idx, "N29", "gold", "") == ""
+
+
+@pytest.mark.unit
 def test_resolve_shopify_not_found() -> None:
     idx = _shop()
     assert resolve_shopify(idx, "R07", "gold", "7") == ""  # token absent
     assert resolve_shopify(idx, "N90", "gold", "") == ""  # only empty-sku variant
 
 
+@pytest.mark.unit
+def test_resolve_shop_target_direct_equality() -> None:
+    # CROSS MALL skucode == a unique live Shopify sku: authoritative, even when
+    # the size encodings (S vs cm) would defeat fuzzy matching.
+    idx = _shop()
+    sku, iid, reason = resolve_shop_target(idx, "B66", "gold", "S", "B66goldS")
+    assert (sku, iid, reason) == ("B66goldS", "iidB66gS", "")
+
+
+@pytest.mark.unit
+def test_resolve_shop_target_ambiguous_reason() -> None:
+    idx = _shop()
+    sku, iid, reason = resolve_shop_target(idx, "B29", "gold", "", "B29gold")
+    assert sku == "" and iid == ""
+    assert "重複" in reason
+
+
 # ---------- Rakuten index + resolver ----------
 
 
-def _rk() -> object:
+def _rk():  # type: ignore[no-untyped-def]
     # Real Rakuten variation values are English lowercase 'gold'/'silver',
     # and color sometimes sits in opt2 with size in opt1 (so scan both).
     rows = [
@@ -132,10 +186,37 @@ def test_resolve_rakuten_by_color() -> None:
     assert resolve_rakuten(idx, None, "gold", "") == ""
 
 
-# ---------- end-to-end build_mapping ----------
+# ---------- product_token ----------
 
 
 @pytest.mark.unit
+def test_product_token_prefers_rakuten_name() -> None:
+    rk = build_rakuten_index(
+        [{"manage": "00037c", "name": "bracelet #B13", "sku_mgmt": "", "opt1": "", "opt2": ""}]
+    )
+    assert product_token("00037c", {"00037c": "no token here"}, rk) == "B13"
+
+
+@pytest.mark.unit
+def test_product_token_code_fallback() -> None:
+    # name carries no trailing token, but the 商品コード itself IS the 商品番号.
+    rk = build_rakuten_index([])
+    assert product_token("B34", {"B34": "316L plain necklace"}, rk) == "B34"
+    assert product_token("P07", {"P07": "anklet"}, rk) == "P07"
+    assert product_token("9999", {"9999": "ジュエリーBOX"}, rk) is None  # not a token
+
+
+@pytest.mark.unit
+def test_product_token_excludes_addons() -> None:
+    # A length-extension add-on mentions #N19 mid-name but is not an N19 variant.
+    rk = build_rakuten_index([])
+    name = "s925 anchor necklace #N19 長さ変更用 ※一緒にご購入ください"
+    assert product_token("T01", {"T01": name}, rk) is None
+
+
+# ---------- end-to-end build_mapping ----------
+
+
 def test_build_mapping_full_and_confirm() -> None:
     shop = _shop()
     rk = build_rakuten_index(
@@ -155,7 +236,6 @@ def test_build_mapping_full_and_confirm() -> None:
     }
     stock_map = {("00037c", "gold", ""): 7, ("00037c", "silver", ""): 3}
 
-    # 00037c is a Rakuten direct code (== manage 030c) whose name carries #B13.
     rk.manage.add("00037c")
     rk.manage_token["00037c"] = "B13"
     rk.var["00037c"] = rk.var["030c"]
@@ -164,16 +244,74 @@ def test_build_mapping_full_and_confirm() -> None:
         xm_name=xm_name, xm_var=xm_var, stock_map=stock_map, rk=rk, shop=shop
     )
 
-    assert stats["full"] == 2  # both colors resolve Shopify + Rakuten
+    assert stats["full"] == 2
     assert stats["mapping_rows"] == 2
     assert stats["no_token_products"] == 1
-    # gold row carries the REAL looked-up Shopify SKU + stock, not the crossmall code.
     gold = next(r for r in mapping if r[2] == "gold")
-    assert gold[4] == "B13gold"  # Shopify_SKU
-    assert gold[6] == "00037c-gold" or gold[6] == "030c-gold"
+    assert gold[4] == "B13gold"  # real looked-up Shopify sku
+    assert gold[6] in ("00037c-gold", "030c-gold")
     assert gold[7] == 7  # qty
-    # the packaging product lands on the confirm sheet.
+    assert gold[8] == "iidB13g"  # inventory_item_id threaded through
     assert any("トークン無し" in str(r[-1]) for r in confirm)
+
+
+@pytest.mark.unit
+def test_build_mapping_diverts_negative_stock() -> None:
+    shop = _shop()
+    rk = build_rakuten_index(
+        [
+            {"manage": "030", "name": "", "sku_mgmt": "030-gold", "opt1": "gold", "opt2": ""},
+        ]
+    )
+    rk.manage.add("00037c")
+    rk.manage_token["00037c"] = "B13"
+    rk.var["00037c"] = rk.var["030"]
+    xm_var = {"00037c": [{"sku": "00037cgold", "color": "gold", "size": ""}]}
+    stock_map = {("00037c", "gold", ""): -5}  # negative on-hand
+
+    _mapping, confirm, stats = build_mapping(
+        xm_name={"00037c": "x"}, xm_var=xm_var, stock_map=stock_map, rk=rk, shop=shop
+    )
+    assert stats["full"] == 0  # negative stock is never sync-ready
+    assert stats["negative_diverted"] == 1
+    assert any("在庫マイナス" in str(r[-1]) for r in confirm)
+
+
+@pytest.mark.unit
+def test_build_mapping_routes_ambiguous_shopify_to_confirm() -> None:
+    shop = _shop()
+    rk = build_rakuten_index([])
+    # token N29 resolves (via Shopify) to B29gold, which is ambiguous -> confirm.
+    xm_name = {"056c": "necklace #N29"}
+    xm_var = {"056c": [{"sku": "056cgold", "color": "gold", "size": ""}]}
+    mapping, confirm, stats = build_mapping(
+        xm_name=xm_name, xm_var=xm_var, stock_map={}, rk=rk, shop=shop
+    )
+    assert mapping == []
+    assert stats["ambiguous_shopify"] == 1
+    assert any("重複" in str(r[-1]) for r in confirm)
+
+
+@pytest.mark.unit
+def test_build_mapping_recovers_via_sku_equality() -> None:
+    # CROSS MALL skucode B66goldS == a unique live Shopify sku, even though the
+    # S-vs-cm sizes defeat fuzzy matching -> recovered as a full mapping.
+    shop = _shop()
+    rk = build_rakuten_index(
+        [
+            {"manage": "B66c", "name": "", "sku_mgmt": "B66c-goldS", "opt1": "gold", "opt2": "S"},
+        ]
+    )
+    rk.manage.add("B66c")
+    rk.manage_token["B66c"] = "B66"
+    xm_name = {"B66c": "S&M bracelet #B66"}
+    xm_var = {"B66c": [{"sku": "B66goldS", "color": "gold", "size": "S"}]}
+    mapping, _confirm, stats = build_mapping(
+        xm_name=xm_name, xm_var=xm_var, stock_map={("B66c", "gold", "S"): 4}, rk=rk, shop=shop
+    )
+    assert stats["full"] == 1
+    row = mapping[0]
+    assert row[4] == "B66goldS" and row[8] == "iidB66gS"
 
 
 @pytest.mark.unit
@@ -189,12 +327,3 @@ def test_build_mapping_shopify_only_when_rakuten_missing() -> None:
     assert stats["shopify_only"] == 1
     assert mapping == []
     assert any("楽天SKU未確定" in str(r[-1]) for r in confirm)
-
-
-@pytest.mark.unit
-def test_product_token_prefers_rakuten_name() -> None:
-    rk = build_rakuten_index(
-        [{"manage": "00037c", "name": "bracelet #B13", "sku_mgmt": "", "opt1": "", "opt2": ""}]
-    )
-    # crossmall name has no token, but the matching Rakuten code's name does.
-    assert product_token("00037c", {"00037c": "no token here"}, rk) == "B13"

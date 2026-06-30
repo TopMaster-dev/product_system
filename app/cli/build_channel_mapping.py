@@ -46,10 +46,13 @@ TOKEN_RE = re.compile(r"[BNRPEAH]\d{2,3}[A-Za-z]?", re.IGNORECASE)
 
 
 def extract_token(name: str | None) -> str | None:
-    """The 商品番号 is the trailing token of the 商品名, with or without '#'."""
+    """The 商品番号 is the trailing token of the 商品名, with or without '#'.
+    '?' (and its full-width form) is treated as a separator because the
+    gcloud-logging export of the Shopify titles substitutes it for a mojibake'd
+    '#' (e.g. '...ring ?R52')."""
     if not name:
         return None
-    for part in reversed(re.split(r"[\s　#＃]+", name.strip())):  # noqa: RUF001
+    for part in reversed(re.split(r"[\s　#＃?？]+", name.strip())):  # noqa: RUF001
         if TOKEN_RE.fullmatch(part):
             return part.upper()
     return None
@@ -57,9 +60,12 @@ def extract_token(name: str | None) -> str | None:
 
 def extract_color(*texts: str) -> str:
     blob = " ".join(t for t in texts if t).lower()
-    if "gold" in blob:
+    has_gold, has_silver = "gold" in blob, "silver" in blob
+    if has_gold and has_silver:
+        return "gold&silver"  # a single two-tone variant, not the gold leg of a pair
+    if has_gold:
         return "gold"
-    if "silver" in blob:
+    if has_silver:
         return "silver"
     return ""
 
@@ -86,14 +92,33 @@ class ShopifyIndex:
     lookup: dict[tuple[str, str, str], str] = field(default_factory=dict)
     by_token: dict[str, list[dict[str, str]]] = field(default_factory=lambda: defaultdict(list))
     empty_sku: list[tuple[str, str]] = field(default_factory=list)
+    # sku -> set of inventory_item_ids. A sku with >1 id is AMBIGUOUS: Shopify's
+    # own data reuses one SKU string across products (e.g. #N29 is mislabeled
+    # with B29gold/B29silver), so the push path (query sku:"...") would return
+    # 2 items and refuse to set quantity. Such sku must never enter the
+    # confirmed mapping — route it to the confirm sheet instead.
+    sku_iids: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     total: int = 0
 
+    def is_ambiguous(self, sku: str) -> bool:
+        return len(self.sku_iids.get(sku, ())) > 1
 
-def build_shopify_index(rows: list[tuple[str, str, str]]) -> ShopifyIndex:
-    """rows: (sku, product_title, variant_title)."""
+    def unique_sku_iid(self, sku: str) -> str:
+        """The inventory_item_id for a sku that resolves to exactly one item, else ''."""
+        ids = self.sku_iids.get(sku, set())
+        return next(iter(ids)) if len(ids) == 1 else ""
+
+    def has_unique_sku(self, sku: str) -> bool:
+        return bool(sku) and len(self.sku_iids.get(sku, ())) == 1
+
+
+def build_shopify_index(rows: list[tuple[str, str, str, str]]) -> ShopifyIndex:
+    """rows: (sku, product_title, variant_title, inventory_item_id)."""
     idx = ShopifyIndex()
-    for sku, ptitle, vtitle in rows:
+    for sku, ptitle, vtitle, iid in rows:
         idx.total += 1
+        if sku and iid:
+            idx.sku_iids[sku].add(iid)
         token = extract_token(ptitle)
         if not token:
             continue
@@ -109,7 +134,13 @@ def build_shopify_index(rows: list[tuple[str, str, str]]) -> ShopifyIndex:
 
 def resolve_shopify(idx: ShopifyIndex, token: str, color: str, size: str) -> str:
     """Look up the real Shopify SKU, with fallbacks for color/size tagging
-    differences between CROSS MALL and Shopify."""
+    differences between CROSS MALL and Shopify. Never returns an ambiguous
+    (duplicated-across-products) sku."""
+    sku = _resolve_shopify_raw(idx, token, color, size)
+    return "" if idx.is_ambiguous(sku) else sku
+
+
+def _resolve_shopify_raw(idx: ShopifyIndex, token: str, color: str, size: str) -> str:
     if (token, color, size) in idx.lookup:
         return idx.lookup[(token, color, size)]
     if color and (token, color, "") in idx.lookup:
@@ -123,8 +154,14 @@ def resolve_shopify(idx: ShopifyIndex, token: str, color: str, size: str) -> str
             same = [v for v in same_color if v["size"] == size]
             if len(same) == 1:
                 return same[0]["sku"]
-    if len(cands) == 1:  # token has a single variant — unambiguous
-        return cands[0]["sku"]
+    if len(cands) == 1:
+        only = cands[0]
+        # Single-variant fallback only when it can't mis-assign a color: the
+        # CROSS MALL variant has no color, or the lone Shopify variant has no
+        # color, or they agree. Otherwise (e.g. CROSS MALL silver vs the only
+        # B17gold) send it to confirm rather than reuse the wrong-color sku.
+        if not color or not only["color"] or only["color"] == color:
+            return only["sku"]
     return ""
 
 
@@ -176,12 +213,47 @@ def resolve_rakuten(idx: RakutenIndex, manage: str | None, color: str, size: str
 # ---------- the mapper ----------
 
 
+# Add-on / accessory products (e.g. a 長さ変更用 chain extension) carry another
+# product's token mid-name ('...necklace #N19 長さ変更用 ※...一緒にご購入...') and must
+# NOT be folded into that jewelry token's group.
+_ADDON_MARKERS = ("長さ変更用", "一緒にご購入", "длина")  # last is a guard, never matches
+
+
 def product_token(code: str, xm_name: dict[str, str], rk: RakutenIndex) -> str | None:
     # c-products lack the token in their CROSS MALL name but match a Rakuten
     # manage directly, whose name carries it; prefer that.
     if code in rk.manage_token:
         return rk.manage_token[code]
-    return extract_token(xm_name.get(code, ""))
+    name = xm_name.get(code, "")
+    if any(marker in name for marker in _ADDON_MARKERS):
+        return None  # accessory, not a variant of the token it mentions
+    token = extract_token(name)
+    if token:
+        return token
+    # The 商品コード itself may BE the 商品番号 (e.g. 'B34', 'P07') when the name
+    # carries no trailing token — recovers products that would otherwise be
+    # silently dropped as 'トークン無し'.
+    if TOKEN_RE.fullmatch(code):
+        return code.upper()
+    return None
+
+
+def resolve_shop_target(
+    shop: ShopifyIndex, token: str, color: str, size: str, crossmall_skucode: str
+) -> tuple[str, str, str]:
+    """Resolve the Shopify variant for a CROSS MALL variant.
+    Returns (sku, inventory_item_id, confirm_reason). reason == '' means resolved.
+    Order: (1) direct equality — the CROSS MALL 商品SKUコード IS a unique live
+    Shopify sku (authoritative, zero guesswork); (2) fuzzy token+color/size, but
+    never an ambiguous (duplicated-across-products) sku."""
+    if shop.has_unique_sku(crossmall_skucode):
+        return crossmall_skucode, shop.unique_sku_iid(crossmall_skucode), ""
+    raw = _resolve_shopify_raw(shop, token, color, size)
+    if raw and shop.is_ambiguous(raw):
+        return "", "", f"Shopify_SKU重複(複数商品で同一SKU:{raw}); 要Shopify修正"
+    if raw:
+        return raw, shop.unique_sku_iid(raw), ""
+    return "", "", "Shopify該当SKU無し"
 
 
 def build_mapping(
@@ -204,7 +276,14 @@ def build_mapping(
 
     mapping: list[list[object]] = []
     confirm: list[list[object]] = []
-    stats = {"full": 0, "shopify_only": 0, "rakuten_only": 0, "neither": 0}
+    stats = {
+        "full": 0,
+        "shopify_only": 0,
+        "rakuten_only": 0,
+        "neither": 0,
+        "negative_diverted": 0,
+        "ambiguous_shopify": 0,
+    }
 
     for token, members in groups.items():
         direct = [c for c in members if c in rk.manage]
@@ -218,9 +297,13 @@ def build_mapping(
                 if q is not None:
                     seen[key]["qty"] = q
         for (color, size), info in seen.items():
-            shop_sku = resolve_shopify(shop, token, color, size)
+            crossmall_skucode = str(info.get("sku", ""))
+            shop_sku, shop_iid, shop_reason = resolve_shop_target(
+                shop, token, color, size, crossmall_skucode
+            )
             rk_sku = resolve_rakuten(rk, manage, color, size)
             qty = info.get("qty", "")
+            negative = isinstance(qty, int) and qty < 0
             row: list[object] = [
                 token,
                 info["src"],
@@ -231,19 +314,28 @@ def build_mapping(
                 rk_sku,
                 qty,
             ]
-            if shop_sku and rk_sku:
+            # A confirmed/sync-ready row needs both channels AND non-negative
+            # stock. Negative on-hand signals oversell / un-reconciled stock the
+            # client must resolve before any push.
+            if shop_sku and rk_sku and not negative:
                 stats["full"] += 1
-                mapping.append(row)
+                mapping.append([*row, shop_iid])
                 continue
             reasons = []
             if not shop_sku:
-                reasons.append("Shopify該当SKU無し")
+                reasons.append(shop_reason)
             if not rk_sku:
                 reasons.append("楽天SKU未確定")
+            if negative:
+                reasons.append("在庫マイナス: 要確認")
             confirm.append([*row, "; ".join(reasons)])
-            if shop_sku:
+            if shop_reason.startswith("Shopify_SKU重複"):
+                stats["ambiguous_shopify"] += 1
+            if negative and shop_sku and rk_sku:
+                stats["negative_diverted"] += 1
+            elif shop_sku and not rk_sku:
                 stats["shopify_only"] += 1
-            elif rk_sku:
+            elif rk_sku and not shop_sku:
                 stats["rakuten_only"] += 1
             else:
                 stats["neither"] += 1
@@ -338,15 +430,16 @@ def load_rakuten_rows(path: Path) -> list[dict[str, str]]:
     return out
 
 
-def load_shopify_list(path: Path) -> list[tuple[str, str, str]]:
+def load_shopify_list(path: Path) -> list[tuple[str, str, str, str]]:
     """Tab-separated lines: sku<TAB>product_title<TAB>variant_title<TAB>item_id."""
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str]] = []
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for line in f:
             parts = line.rstrip("\n").split("\t")
             if len(parts) < 3:
                 continue
-            out.append((parts[0], parts[1], parts[2]))
+            iid = parts[3] if len(parts) > 3 else ""
+            out.append((parts[0], parts[1], parts[2], iid))
     return out
 
 
@@ -391,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
             "楽天_商品管理番号",
             "楽天_SKU管理番号",
             "在庫数量",
+            "Shopify_inventory_item_id",
         ],
         mapping,
     )
@@ -413,6 +507,8 @@ def main(argv: list[str] | None = None) -> int:
         f"mapping={stats['mapping_rows']} confirm={stats['confirm_rows']} "
         f"full={stats['full']} shopify_only={stats['shopify_only']} "
         f"rakuten_only={stats['rakuten_only']} neither={stats['neither']} "
+        f"negative_diverted={stats['negative_diverted']} "
+        f"ambiguous_shopify={stats['ambiguous_shopify']} "
         f"no_token_products={stats['no_token_products']} "
         f"shopify_empty_sku={len(shop.empty_sku)}\n"
     )
