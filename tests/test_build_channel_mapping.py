@@ -327,3 +327,51 @@ def test_build_mapping_shopify_only_when_rakuten_missing() -> None:
     assert stats["shopify_only"] == 1
     assert mapping == []
     assert any("楽天SKU未確定" in str(r[-1]) for r in confirm)
+
+
+# ---------- scope layer (client decisions) ----------
+
+
+@pytest.mark.unit
+def test_scope_excludes_codes() -> None:
+    shop = _shop()
+    rk = build_rakuten_index([])
+    xm_name = {"del": "ring #R05"}
+    xm_var = {"del": [{"sku": "xg", "color": "", "size": ""}]}
+    mapping, confirm, stats = build_mapping(
+        xm_name=xm_name, xm_var=xm_var, stock_map={}, rk=rk, shop=shop, scope={"del": "exclude"}
+    )
+    assert stats["excluded"] == 1
+    assert mapping == [] and confirm == []  # dropped from both
+
+
+@pytest.mark.unit
+def test_scope_shopify_only_is_complete_without_rakuten() -> None:
+    # 楽天未販売: a Shopify-resolved row is a FULL mapping, not "楽天SKU未確定".
+    shop = _shop()
+    rk = build_rakuten_index([])  # no Rakuten
+    xm_name = {"0012c": "ring #R05"}
+    xm_var = {"0012c": [{"sku": "0012c", "color": "", "size": ""}]}
+    mapping, _confirm, stats = build_mapping(
+        xm_name=xm_name,
+        xm_var=xm_var,
+        stock_map={},
+        rk=rk,
+        shop=shop,
+        scope={"0012c": "shopify_only"},
+    )
+    assert stats["full"] == 1
+    assert mapping[0][4] == "R05" and mapping[0][6] == ""  # Shopify set, Rakuten blank
+
+
+@pytest.mark.unit
+def test_scope_bundle_is_set_aside() -> None:
+    shop = _shop()
+    rk = build_rakuten_index([])
+    xm_name = {"0010c": "necklace #N21"}
+    xm_var = {"0010c": [{"sku": "0010cgold", "color": "gold", "size": ""}]}
+    mapping, confirm, stats = build_mapping(
+        xm_name=xm_name, xm_var=xm_var, stock_map={}, rk=rk, shop=shop, scope={"0010c": "bundle"}
+    )
+    assert stats["bundle_set_aside"] == 1
+    assert mapping == [] and confirm == []  # handled by the bundle feature, not here

@@ -263,11 +263,30 @@ def build_mapping(
     stock_map: dict[tuple[str, str, str], int],
     rk: RakutenIndex,
     shop: ShopifyIndex,
+    scope: dict[str, str] | None = None,
 ) -> tuple[list[list[object]], list[list[object]], dict[str, int]]:
-    """Returns (mapping_rows, confirm_rows, stats)."""
+    """Returns (mapping_rows, confirm_rows, stats).
+
+    `scope` carries the client's per-商品コード decisions (from scope_decisions.csv):
+      - 'exclude'      : drop entirely (販売なし/対象外).
+      - 'shopify_only' : intentionally Shopify-only (楽天未販売) — a Shopify match
+                         is COMPLETE without Rakuten.
+      - 'rakuten_only' : intentionally Rakuten-only.
+      - 'bundle'       : a set/組み合わせ product — set aside for the bundle feature.
+    """
+    scope = scope or {}
     groups: dict[str, list[str]] = defaultdict(list)
     no_token: list[str] = []
+    excluded_codes: list[str] = []
+    bundle_codes: list[str] = []
     for code in xm_var:
+        decision = scope.get(code, "")
+        if decision == "exclude":
+            excluded_codes.append(code)
+            continue
+        if decision == "bundle":
+            bundle_codes.append(code)  # handled by the bundle-inventory feature
+            continue
         token = product_token(code, xm_name, rk)
         if token:
             groups[token].append(code)
@@ -297,6 +316,10 @@ def build_mapping(
                 if q is not None:
                     seen[key]["qty"] = q
         for (color, size), info in seen.items():
+            src = str(info["src"])
+            decision = scope.get(src, "")
+            need_shop = decision != "rakuten_only"
+            need_rk = decision != "shopify_only"
             crossmall_skucode = str(info.get("sku", ""))
             shop_sku, shop_iid, shop_reason = resolve_shop_target(
                 shop, token, color, size, crossmall_skucode
@@ -304,38 +327,31 @@ def build_mapping(
             rk_sku = resolve_rakuten(rk, manage, color, size)
             qty = info.get("qty", "")
             negative = isinstance(qty, int) and qty < 0
-            row: list[object] = [
-                token,
-                info["src"],
-                color,
-                size,
-                shop_sku,
-                manage or "",
-                rk_sku,
-                qty,
-            ]
-            # A confirmed/sync-ready row needs both channels AND non-negative
-            # stock. Negative on-hand signals oversell / un-reconciled stock the
-            # client must resolve before any push.
-            if shop_sku and rk_sku and not negative:
+            row: list[object] = [token, src, color, size, shop_sku, manage or "", rk_sku, qty]
+            shop_ok = bool(shop_sku) or not need_shop
+            rk_ok = bool(rk_sku) or not need_rk
+            # A confirmed/sync-ready row needs its REQUIRED channels AND
+            # non-negative stock. Negative on-hand signals oversell / un-reconciled
+            # stock the client must resolve before any push.
+            if shop_ok and rk_ok and not negative:
                 stats["full"] += 1
                 mapping.append([*row, shop_iid])
                 continue
             reasons = []
-            if not shop_sku:
+            if need_shop and not shop_sku:
                 reasons.append(shop_reason)
-            if not rk_sku:
+            if need_rk and not rk_sku:
                 reasons.append("楽天SKU未確定")
             if negative:
                 reasons.append("在庫マイナス: 要確認")
             confirm.append([*row, "; ".join(reasons)])
             if shop_reason.startswith("Shopify_SKU重複"):
                 stats["ambiguous_shopify"] += 1
-            if negative and shop_sku and rk_sku:
+            if negative and shop_ok and rk_ok:
                 stats["negative_diverted"] += 1
-            elif shop_sku and not rk_sku:
+            elif shop_ok and not rk_ok:
                 stats["shopify_only"] += 1
-            elif rk_sku and not shop_sku:
+            elif rk_ok and not shop_ok:
                 stats["rakuten_only"] += 1
             else:
                 stats["neither"] += 1
@@ -355,6 +371,8 @@ def build_mapping(
             ]
         )
 
+    stats["excluded"] = len(excluded_codes)
+    stats["bundle_set_aside"] = len(bundle_codes)
     stats["no_token_products"] = len(no_token)
     stats["mapping_rows"] = len(mapping)
     stats["confirm_rows"] = len(confirm)
@@ -430,6 +448,21 @@ def load_rakuten_rows(path: Path) -> list[dict[str, str]]:
     return out
 
 
+def load_scope(path: Path) -> dict[str, str]:
+    """商品コード -> decision (exclude/shopify_only/rakuten_only/bundle), from the
+    client-annotated scope_decisions.csv."""
+    out: dict[str, str] = {}
+    rows = _read_csv(path)
+    if not rows:
+        return out
+    h = rows[0]
+    ci, di = h.index("商品コード"), h.index("decision")
+    for r in rows[1:]:
+        if len(r) > max(ci, di) and r[ci] and r[di]:
+            out[r[ci]] = r[di]
+    return out
+
+
 def load_shopify_list(path: Path) -> list[tuple[str, str, str, str]]:
     """Tab-separated lines: sku<TAB>product_title<TAB>variant_title<TAB>item_id."""
     out: list[tuple[str, str, str, str]] = []
@@ -460,6 +493,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--rakuten", required=True, type=Path)
     p.add_argument("--stock", required=True, type=Path)
     p.add_argument("--shopify-list", required=True, type=Path, dest="shopify_list")
+    p.add_argument(
+        "--scope",
+        type=Path,
+        default=None,
+        help="Optional scope_decisions.csv (商品コード,decision) from the client review.",
+    )
     p.add_argument("--out-dir", required=True, type=Path, dest="out_dir")
     return p.parse_args(argv)
 
@@ -469,8 +508,9 @@ def main(argv: list[str] | None = None) -> int:
     xm_name, xm_var, stock_map = load_crossmall(args.products, args.skus, args.stock)
     rk = build_rakuten_index(load_rakuten_rows(args.rakuten))
     shop = build_shopify_index(load_shopify_list(args.shopify_list))
+    scope = load_scope(args.scope) if args.scope else {}
     mapping, confirm, stats = build_mapping(
-        xm_name=xm_name, xm_var=xm_var, stock_map=stock_map, rk=rk, shop=shop
+        xm_name=xm_name, xm_var=xm_var, stock_map=stock_map, rk=rk, shop=shop, scope=scope
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(
@@ -509,6 +549,7 @@ def main(argv: list[str] | None = None) -> int:
         f"rakuten_only={stats['rakuten_only']} neither={stats['neither']} "
         f"negative_diverted={stats['negative_diverted']} "
         f"ambiguous_shopify={stats['ambiguous_shopify']} "
+        f"excluded={stats['excluded']} bundle_set_aside={stats['bundle_set_aside']} "
         f"no_token_products={stats['no_token_products']} "
         f"shopify_empty_sku={len(shop.empty_sku)}\n"
     )
