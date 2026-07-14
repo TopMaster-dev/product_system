@@ -375,3 +375,24 @@ def test_scope_bundle_is_set_aside() -> None:
     )
     assert stats["bundle_set_aside"] == 1
     assert mapping == [] and confirm == []  # handled by the bundle feature, not here
+
+
+@pytest.mark.unit
+def test_bundle_set_aside_by_token_survives_recoding() -> None:
+    # Client re-coded the N21 parent from 0010c to a new code 'N21'; a token-based
+    # bundle set-aside catches it even without a scope entry for the new code.
+    shop = _shop()
+    rk = build_rakuten_index([])
+    xm_name = {"N21": "necklace #N21"}
+    xm_var = {"N21": [{"sku": "N21gold", "color": "gold", "size": ""}]}
+    mapping, confirm, stats = build_mapping(
+        xm_name=xm_name,
+        xm_var=xm_var,
+        stock_map={},
+        rk=rk,
+        shop=shop,
+        scope={},  # no scope entry for the new code
+        bundle_tokens={"N21"},
+    )
+    assert stats["bundle_set_aside"] == 1
+    assert mapping == [] and confirm == []

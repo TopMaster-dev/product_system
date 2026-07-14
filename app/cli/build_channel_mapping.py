@@ -264,6 +264,7 @@ def build_mapping(
     rk: RakutenIndex,
     shop: ShopifyIndex,
     scope: dict[str, str] | None = None,
+    bundle_tokens: set[str] | None = None,
 ) -> tuple[list[list[object]], list[list[object]], dict[str, int]]:
     """Returns (mapping_rows, confirm_rows, stats).
 
@@ -273,8 +274,13 @@ def build_mapping(
                          is COMPLETE without Rakuten.
       - 'rakuten_only' : intentionally Rakuten-only.
       - 'bundle'       : a set/組み合わせ product — set aside for the bundle feature.
+
+    `bundle_tokens` (from bundle_definitions.csv) sets aside bundle parents by
+    TOKEN, which is robust to the client re-coding a parent (e.g. 056c -> N29):
+    every code under a bundle token is set aside, whatever its 商品コード.
     """
     scope = scope or {}
+    bundle_tokens = bundle_tokens or set()
     groups: dict[str, list[str]] = defaultdict(list)
     no_token: list[str] = []
     excluded_codes: list[str] = []
@@ -284,10 +290,10 @@ def build_mapping(
         if decision == "exclude":
             excluded_codes.append(code)
             continue
-        if decision == "bundle":
+        token = product_token(code, xm_name, rk)
+        if decision == "bundle" or (token is not None and token in bundle_tokens):
             bundle_codes.append(code)  # handled by the bundle-inventory feature
             continue
-        token = product_token(code, xm_name, rk)
         if token:
             groups[token].append(code)
         else:
@@ -463,6 +469,19 @@ def load_scope(path: Path) -> dict[str, str]:
     return out
 
 
+def load_bundle_tokens(path: Path) -> set[str]:
+    """Bundle parent tokens (e.g. N21, N29) from bundle_definitions.csv."""
+    out: set[str] = set()
+    rows = _read_csv(path)
+    if not rows:
+        return out
+    ti = rows[0].index("bundle_token")
+    for r in rows[1:]:
+        if len(r) > ti and r[ti].strip():
+            out.add(r[ti].strip().upper())
+    return out
+
+
 def load_shopify_list(path: Path) -> list[tuple[str, str, str, str]]:
     """Tab-separated lines: sku<TAB>product_title<TAB>variant_title<TAB>item_id."""
     out: list[tuple[str, str, str, str]] = []
@@ -499,6 +518,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Optional scope_decisions.csv (商品コード,decision) from the client review.",
     )
+    p.add_argument(
+        "--bundle-defs",
+        type=Path,
+        default=None,
+        dest="bundle_defs",
+        help="Optional bundle_definitions.csv; parents are set aside by token.",
+    )
     p.add_argument("--out-dir", required=True, type=Path, dest="out_dir")
     return p.parse_args(argv)
 
@@ -509,8 +535,15 @@ def main(argv: list[str] | None = None) -> int:
     rk = build_rakuten_index(load_rakuten_rows(args.rakuten))
     shop = build_shopify_index(load_shopify_list(args.shopify_list))
     scope = load_scope(args.scope) if args.scope else {}
+    bundle_tokens = load_bundle_tokens(args.bundle_defs) if args.bundle_defs else set()
     mapping, confirm, stats = build_mapping(
-        xm_name=xm_name, xm_var=xm_var, stock_map=stock_map, rk=rk, shop=shop, scope=scope
+        xm_name=xm_name,
+        xm_var=xm_var,
+        stock_map=stock_map,
+        rk=rk,
+        shop=shop,
+        scope=scope,
+        bundle_tokens=bundle_tokens,
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(
