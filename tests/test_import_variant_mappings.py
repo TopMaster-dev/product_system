@@ -1,0 +1,102 @@
+"""Unit tests for app/cli/import_variant_mappings.py (pure plan builder)."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.cli.import_variant_mappings import build_plan, canonical_sku
+
+
+@pytest.mark.unit
+def test_canonical_sku_prefers_shopify() -> None:
+    assert canonical_sku("N21gold", "789") == "N21gold"
+    assert canonical_sku("", "789") == "789"  # Rakuten-only fallback
+    assert canonical_sku("", "") == ""
+
+
+def _m(token: str, color: str, size: str, shop: str, rk: str) -> dict[str, str]:
+    return {
+        "token": token,
+        "色": color,
+        "サイズ": size,
+        "Shopify_SKU": shop,
+        "楽天_SKU管理番号": rk,
+    }
+
+
+@pytest.mark.unit
+def test_set_bundle_masters_mappings_and_links() -> None:
+    mapping = [_m("N23", "gold", "", "N23gold", "501"), _m("N32", "gold", "", "N32gold", "502")]
+    bundle = [
+        {
+            "bundle_token": "N21",
+            "色": "gold",
+            "親_Shopify_SKU": "N21gold",
+            "親_楽天SKU管理番号": "789",
+            "構成品トークン(;)": "N23;N32",
+        }
+    ]
+    plan = build_plan(mapping, bundle, [])
+
+    assert set(plan.masters) == {"N23gold", "N32gold", "N21gold"}
+    assert plan.masters["N21gold"].is_bundle is True  # the set parent
+    assert plan.masters["N23gold"].is_bundle is False  # a component holds stock
+
+    mappings = {(m.channel, m.channel_sku, m.sku_code) for m in plan.mappings}
+    assert ("shopify", "N21gold", "N21gold") in mappings
+    assert ("rakuten", "789", "N21gold") in mappings
+    assert ("rakuten", "501", "N23gold") in mappings
+
+    links = {(link.bundle_sku_code, link.component_sku_code) for link in plan.links}
+    assert links == {("N21gold", "N23gold"), ("N21gold", "N32gold")}
+    assert plan.warnings == []
+
+
+@pytest.mark.unit
+def test_shared_stock_anklet_master_bracelet_bundle() -> None:
+    shared = [
+        {
+            "token": "B09",
+            "色": "gold",
+            "主_Shopify_SKU": "B09goldanklet",
+            "主_楽天SKU管理番号": "1308",
+            "連動_Shopify_SKU": "B09goldbracelet",
+            "連動_楽天SKU管理番号": "1307",
+        }
+    ]
+    plan = build_plan([], [], shared)
+
+    assert plan.masters["B09goldanklet"].is_bundle is False  # master stock
+    assert plan.masters["B09goldbracelet"].is_bundle is True  # linked, derived
+
+    mappings = {(m.channel, m.channel_sku, m.sku_code) for m in plan.mappings}
+    assert ("shopify", "B09goldanklet", "B09goldanklet") in mappings
+    assert ("shopify", "B09goldbracelet", "B09goldbracelet") in mappings
+    assert ("rakuten", "1307", "B09goldbracelet") in mappings
+
+    links = {(link.bundle_sku_code, link.component_sku_code) for link in plan.links}
+    assert links == {("B09goldbracelet", "B09goldanklet")}
+
+
+@pytest.mark.unit
+def test_rakuten_only_row_uses_rakuten_sku_as_code() -> None:
+    plan = build_plan([_m("R99", "gold", "", "", "9999")], [], [])
+    assert "9999" in plan.masters
+    assert plan.masters["9999"].is_bundle is False
+
+
+@pytest.mark.unit
+def test_missing_component_master_warns_not_crashes() -> None:
+    bundle = [
+        {
+            "bundle_token": "N21",
+            "色": "gold",
+            "親_Shopify_SKU": "N21gold",
+            "親_楽天SKU管理番号": "789",
+            "構成品トークン(;)": "N23;N32",
+        }
+    ]
+    plan = build_plan([], bundle, [])  # components absent from mapping
+    assert plan.links == []  # nothing linked
+    assert any("N23" in w for w in plan.warnings)
+    assert any("N32" in w for w in plan.warnings)
