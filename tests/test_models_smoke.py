@@ -25,6 +25,7 @@ def test_all_expected_tables_registered() -> None:
         "sync_attempts",  # Phase 1-B F1.1
         "reconcile_runs",  # Phase 1-B F1.3
         "reconcile_diffs",  # Phase 1-B F1.3
+        "bundle_components",  # Phase 1-B 組み合わせ商品 / 共有在庫
     }
     assert expected.issubset(set(Base.metadata.tables.keys()))
 
@@ -130,6 +131,8 @@ def test_reconcile_enums_have_expected_values() -> None:
 
 @pytest.mark.unit
 def test_inventory_event_idempotency_constraint() -> None:
+    """master_sku_id is part of the key so one order line can fan out to
+    per-component decrements (bundle/shared-stock) without colliding."""
     table = Base.metadata.tables["inventory_events"]
     constraint_columns = {
         tuple(sorted(c.name for c in uc.columns))
@@ -138,10 +141,43 @@ def test_inventory_event_idempotency_constraint() -> None:
     }
     assert (
         "event_type",
+        "master_sku_id",
         "source_channel",
         "source_line_id",
         "source_order_id",
     ) in constraint_columns
+
+
+@pytest.mark.unit
+def test_master_sku_has_is_bundle_flag() -> None:
+    table = Base.metadata.tables["master_skus"]
+    assert "is_bundle" in table.columns
+    assert table.c.is_bundle.nullable is False
+    assert table.c.is_bundle.type.python_type is bool
+
+
+@pytest.mark.unit
+def test_bundle_components_uniqueness_and_fks() -> None:
+    """A (bundle, component) pair is unique, and both sides FK to master_skus."""
+    table = Base.metadata.tables["bundle_components"]
+    cols = {
+        tuple(sorted(c.name for c in uc.columns))
+        for uc in table.constraints
+        if uc.__class__.__name__ == "UniqueConstraint"
+    }
+    assert ("bundle_master_sku_id", "component_master_sku_id") in cols
+    fk_targets = {fk.column.table.name for col in table.columns for fk in col.foreign_keys}
+    assert fk_targets == {"master_skus"}
+    assert table.c.quantity_per.nullable is False
+
+
+@pytest.mark.unit
+def test_bundle_components_reverse_index() -> None:
+    """Index on component_master_sku_id drives the 'which bundles use this
+    component?' re-derive lookup (shared N23 -> 4 sets; anklet -> anklet+bracelet)."""
+    table = Base.metadata.tables["bundle_components"]
+    index_columns = {tuple(c.name for c in idx.columns) for idx in table.indexes}
+    assert ("component_master_sku_id",) in index_columns
 
 
 @pytest.mark.unit

@@ -11,10 +11,12 @@ Phase 1-A tables:
 Phase 1-B additions:
 - sync_attempts
 - reconcile_runs, reconcile_diffs
+- bundle_components (組み合わせ商品 / 共有在庫)
 """
 
 from app.models.base import Base, TimestampMixin
 from app.models.bigquery_export_run import BigQueryExportRun
+from app.models.bundle_component import BundleComponent
 from app.models.channel_sku_mapping import ChannelSkuMapping
 from app.models.enums import (
     ChannelEnum,
@@ -39,6 +41,7 @@ from app.models.webhook_log import WebhookLog
 __all__ = [
     "Base",
     "BigQueryExportRun",
+    "BundleComponent",
     "ChannelEnum",
     "ChannelSkuMapping",
     "FulfillmentTypeEnum",

@@ -1,9 +1,12 @@
 """InventoryEvent / InventorySnapshot — event-sourced inventory state.
 
 Idempotency strategy:
-- `inventory_events` has UNIQUE on (event_type, source_channel, source_order_id, source_line_id).
-  For order-driven events all three source columns are populated, so the same
-  order line cannot decrement stock twice.
+- `inventory_events` has UNIQUE on
+  (event_type, source_channel, source_order_id, source_line_id, master_sku_id).
+  For order-driven events the source columns are populated, so the same order
+  line cannot decrement the same SKU twice. `master_sku_id` is part of the key so
+  a bundle/shared-stock order line can FAN OUT to per-component decrements — one
+  line, several component events — without colliding on the idempotency key.
 - For events without a source order (manual_adjust / stocktake / receipt) the
   source_* columns are NULL; Postgres treats each NULL as distinct, so multiple
   manual adjustments coexist freely.
@@ -36,6 +39,7 @@ class InventoryEvent(Base):
             "source_channel",
             "source_order_id",
             "source_line_id",
+            "master_sku_id",
             name="uq_inventory_event_source",
         ),
         Index("ix_inventory_events_sku_time", "master_sku_id", "occurred_at"),
