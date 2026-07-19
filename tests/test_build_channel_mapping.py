@@ -63,10 +63,62 @@ def test_extract_color_combined() -> None:
         (("フリー",), ""),
         (("M",), "M"),
         (("Default Title", "R05"), ""),
+        # dual-type products encode the type in the second axis, on every channel
+        (("アンクレット", "gold"), "anklet"),  # CROSS MALL 属性２名
+        (("ブレスレット",), "bracelet"),
+        (("?? / GOLD", "B09goldanklet"), "anklet"),  # Shopify sku suffix
+        (("ネックレス",), "necklace"),
     ],
 )
 def test_extract_size(texts: tuple[str, ...], expected: str) -> None:
     assert extract_size(*texts) == expected
+
+
+@pytest.mark.unit
+def test_dual_type_anklet_bracelet_resolves_distinctly() -> None:
+    # #B09 is sold as both an anklet AND a bracelet in gold; each must map to its
+    # OWN Shopify + Rakuten SKU (previously they collapsed and went to confirm).
+    shop = build_shopify_index(
+        [
+            ("B09goldanklet", "horseshoe anklet #B09", "?? / GOLD", "iidA"),
+            ("B09goldbracelet", "horseshoe anklet #B09", "?? / GOLD", "iidB"),
+        ]
+    )
+    rk = build_rakuten_index(
+        [
+            {"manage": "027c", "name": "anklet #B09", "sku_mgmt": "", "opt1": "", "opt2": ""},
+            {
+                "manage": "027c",
+                "name": "",
+                "sku_mgmt": "1308",
+                "opt1": "gold",
+                "opt2": "アンクレット",
+            },
+            {
+                "manage": "027c",
+                "name": "",
+                "sku_mgmt": "1307",
+                "opt1": "gold",
+                "opt2": "ブレスレット",
+            },
+        ]
+    )
+    rk.manage.add("027c")
+    rk.manage_token["027c"] = "B09"
+    xm_name = {"027c": "anklet #B09"}
+    xm_var = {
+        "027c": [
+            {"sku": "027cgoldanklet", "color": "gold", "size": "anklet"},
+            {"sku": "027cgoldbracelet", "color": "gold", "size": "bracelet"},
+        ]
+    }
+    mapping, _confirm, stats = build_mapping(
+        xm_name=xm_name, xm_var=xm_var, stock_map={}, rk=rk, shop=shop
+    )
+    assert stats["full"] == 2
+    by_type = {r[3]: (r[4], r[6]) for r in mapping}  # size(type) -> (shopify, rakuten)
+    assert by_type["anklet"] == ("B09goldanklet", "1308")
+    assert by_type["bracelet"] == ("B09goldbracelet", "1307")
 
 
 # ---------- Shopify index + resolver ----------

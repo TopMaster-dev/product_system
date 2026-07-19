@@ -70,6 +70,19 @@ def extract_color(*texts: str) -> str:
     return ""
 
 
+# The second variant axis is a numeric size for rings, but a TYPE for products
+# sold as both an anklet and a bracelet (e.g. #B09): CROSS MALL 属性２名 =
+# アンクレット/ブレスレット, Rakuten opt2 = same, Shopify sku suffix = anklet/bracelet.
+# Single-type products leave 属性2 empty, so this only splits genuine dual-type
+# products; the resolver's color-only fallback still covers a single-type product
+# whose Shopify sku happens to carry a type suffix.
+_TYPE_ALIASES = (
+    ("anklet", ("anklet", "アンクレット")),
+    ("bracelet", ("bracelet", "ブレスレット")),
+    ("necklace", ("necklace", "ネックレス")),
+)
+
+
 def extract_size(*texts: str) -> str:
     blob = " ".join(t for t in texts if t)
     m = re.search(r"us[a]?\s*(\d+)", blob, re.IGNORECASE)  # US7 / USA7
@@ -81,6 +94,10 @@ def extract_size(*texts: str) -> str:
     m = re.search(r"(?<![A-Za-z])([SML])(?![A-Za-z])", blob)
     if m:
         return m.group(1).upper()
+    low = blob.lower()
+    for canon, aliases in _TYPE_ALIASES:
+        if any(a.lower() in low for a in aliases):
+            return canon
     return ""
 
 
