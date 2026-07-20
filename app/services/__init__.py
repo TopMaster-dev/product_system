@@ -1,6 +1,7 @@
 """Service layer — use cases and business logic."""
 
 from app.services.bigquery_export import BigQueryExportService, ExportResult
+from app.services.bundle_push import BundlePushService
 from app.services.exceptions import (
     InventoryInsufficientError,
     MappingNotFoundError,
@@ -13,6 +14,7 @@ from app.services.mapping import MappingService
 
 __all__ = [
     "BigQueryExportService",
+    "BundlePushService",
     "EventSource",
     "ExportResult",
     "IngestResult",
