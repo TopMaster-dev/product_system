@@ -9,6 +9,8 @@ from app.cli.import_variant_mappings import (
     build_crossmall_mappings,
     build_plan,
     canonical_sku,
+    code_from_crossmall_key,
+    crossmall_key,
 )
 
 
@@ -110,6 +112,13 @@ def test_crossmall_mappings_cover_aliases_and_skip_bundles() -> None:
     assert ("N23|gold|", "N23gold") in keys  # alias 2 -> same master
     assert all(m.sku_code != "N29gold" for m in out)  # bundle parent skipped
     assert all(m.channel == "crossmall" for m in out)
+
+
+@pytest.mark.unit
+def test_crossmall_key_roundtrips_code() -> None:
+    assert code_from_crossmall_key(crossmall_key("006c", "gold", "")) == "006c"
+    assert code_from_crossmall_key(crossmall_key("027c", "gold", "anklet")) == "027c"
+    assert code_from_crossmall_key("H1||") == "H1"
 
 
 @pytest.mark.unit

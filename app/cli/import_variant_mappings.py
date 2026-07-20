@@ -179,6 +179,11 @@ def crossmall_key(code: str, color: str, size: str) -> str:
     return f"{code}|{color}|{size}"
 
 
+def code_from_crossmall_key(key: str) -> str:
+    """The 商品コード encoded at the start of a crossmall channel_sku."""
+    return key.split("|", 1)[0]
+
+
 def build_crossmall_mappings(
     masters: dict[str, MasterSpec],
     xm_var: dict[str, list[dict[str, str]]],
