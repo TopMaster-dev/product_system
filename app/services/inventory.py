@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    BundleComponent,
     InventoryEvent,
     InventoryEventTypeEnum,
     InventorySnapshot,
@@ -42,6 +43,18 @@ class EventSource:
     channel: str
     order_id: str
     line_id: str
+
+
+def compute_bundle_available(components: list[tuple[int, int]]) -> int:
+    """Derived bundle availability from (on_hand, quantity_per) per component:
+    max(0, min over components of floor(on_hand / quantity_per)). Empty -> 0.
+
+    This is the pushable quantity for a set/組み合わせ or shared-stock parent —
+    clamped at 0 so a component going negative never advertises negative stock.
+    """
+    if not components:
+        return 0
+    return max(0, min(on_hand // max(quantity_per, 1) for on_hand, quantity_per in components))
 
 
 class InventoryService:
@@ -137,6 +150,45 @@ class InventoryService:
         )
         qty = result.scalar_one_or_none()
         return qty or 0
+
+    # ---------- bundle / shared-stock ----------
+
+    async def resolve_consumption(self, master_sku_id: int) -> list[tuple[int, int]]:
+        """The (component_master_sku_id, quantity_per) list to decrement for ONE
+        unit ordered of this master. A bundle/shared-stock parent fans out to its
+        components; a normal SKU is itself with quantity_per=1.
+
+        The fan-out reuses one EventSource for every component — master_sku_id is
+        part of uq_inventory_event_source, so the component events don't collide.
+        """
+        result = await self._session.execute(
+            select(
+                BundleComponent.component_master_sku_id,
+                BundleComponent.quantity_per,
+            ).where(BundleComponent.bundle_master_sku_id == master_sku_id)
+        )
+        components = [(cid, qp) for cid, qp in result.all()]
+        return components or [(master_sku_id, 1)]
+
+    async def get_bundle_available(self, bundle_master_sku_id: int) -> int:
+        """Derived availability for a bundle/shared-stock parent (compute-on-read).
+        A master with no components returns its own snapshot (i.e. a normal SKU)."""
+        result = await self._session.execute(
+            select(
+                BundleComponent.component_master_sku_id,
+                BundleComponent.quantity_per,
+            ).where(BundleComponent.bundle_master_sku_id == bundle_master_sku_id)
+        )
+        comps = result.all()
+        if not comps:
+            return await self.get_current_stock(bundle_master_sku_id)
+        snap_result = await self._session.execute(
+            select(InventorySnapshot.master_sku_id, InventorySnapshot.on_hand_qty).where(
+                InventorySnapshot.master_sku_id.in_([cid for cid, _ in comps])
+            )
+        )
+        on_hand: dict[int, int] = {mid: q for mid, q in snap_result.all()}  # noqa: C416
+        return compute_bundle_available([(on_hand.get(cid, 0), qp) for cid, qp in comps])
 
     # ---------- internal helpers ----------
 

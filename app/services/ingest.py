@@ -99,16 +99,21 @@ class OrderIngestService:
             if is_cancelled:
                 # Cancelled-on-arrival: never consumed, nothing to compensate.
                 continue
-            await self._inventory.consume_for_order_line(
-                master_sku_id=mapped_id,
-                quantity=line.quantity,
-                source=EventSource(
-                    channel=payload.channel,
-                    order_id=payload.channel_order_id,
-                    line_id=line.line_id,
-                ),
-                occurred_at=payload.ordered_at,
+            source = EventSource(
+                channel=payload.channel,
+                order_id=payload.channel_order_id,
+                line_id=line.line_id,
             )
+            # A bundle/shared-stock line fans out to its components; a normal SKU
+            # consumes itself. All component events share one source — master_sku_id
+            # is in the event UNIQUE, so they don't collide.
+            for comp_id, qty_per in await self._inventory.resolve_consumption(mapped_id):
+                await self._inventory.consume_for_order_line(
+                    master_sku_id=comp_id,
+                    quantity=line.quantity * qty_per,
+                    source=source,
+                    occurred_at=payload.ordered_at,
+                )
             consumed += 1
 
         if pending and not is_cancelled:
@@ -155,17 +160,24 @@ class OrderIngestService:
         compensated = 0
         for item in result.scalars().all():
             assert item.master_sku_id is not None  # narrowed by WHERE
-            applied = await self._inventory.cancel_order_line(
-                master_sku_id=item.master_sku_id,
-                quantity=item.quantity,
-                source=EventSource(
-                    channel=order.channel,
-                    order_id=order.channel_order_id,
-                    line_id=item.line_id,
-                ),
-                occurred_at=occurred_at,
+            source = EventSource(
+                channel=order.channel,
+                order_id=order.channel_order_id,
+                line_id=item.line_id,
             )
-            if applied is not None:
+            # Mirror the consume fan-out: re-expand the (possibly bundle) parent
+            # into components and return each. The OrderItem holds the parent id.
+            line_applied = False
+            for comp_id, qty_per in await self._inventory.resolve_consumption(item.master_sku_id):
+                applied = await self._inventory.cancel_order_line(
+                    master_sku_id=comp_id,
+                    quantity=item.quantity * qty_per,
+                    source=source,
+                    occurred_at=occurred_at,
+                )
+                if applied is not None:
+                    line_applied = True
+            if line_applied:
                 compensated += 1
         return compensated
 

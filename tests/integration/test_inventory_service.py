@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
-from app.models import InventoryEvent, InventoryEventTypeEnum, MasterSku
+from app.models import BundleComponent, InventoryEvent, InventoryEventTypeEnum, MasterSku
 from app.services import (
     EventSource,
     InventoryInsufficientError,
@@ -26,6 +26,58 @@ async def _make_sku(session, code: str = "TEST-001") -> MasterSku:
     session.add(sku)
     await session.flush()
     return sku
+
+
+async def _make_bundle(session, parent_code: str, comp_specs: list[tuple[str, int]]):
+    """Create a bundle parent (is_bundle) + component masters with seeded stock +
+    bundle_components links. Returns (parent, [components])."""
+    parent = MasterSku(sku_code=parent_code, name=parent_code, is_bundle=True)
+    session.add(parent)
+    await session.flush()
+    svc = InventoryService(session)
+    comps = []
+    for code, stock in comp_specs:
+        c = MasterSku(sku_code=code, name=code)
+        session.add(c)
+        await session.flush()
+        if stock:
+            await svc.manual_adjust(
+                master_sku_id=c.id, quantity_delta=stock, reason="seed", operator="t"
+            )
+        session.add(
+            BundleComponent(
+                bundle_master_sku_id=parent.id, component_master_sku_id=c.id, quantity_per=1
+            )
+        )
+        comps.append(c)
+    await session.flush()
+    return parent, comps
+
+
+async def test_get_bundle_available_is_min_over_components(db_session) -> None:
+    parent, _ = await _make_bundle(db_session, "N21gold", [("N23gold", 27), ("N32gold", 55)])
+    svc = InventoryService(db_session)
+    assert await svc.get_bundle_available(parent.id) == 27  # min(27, 55)
+
+
+async def test_resolve_consumption_fans_out_bundle_but_not_normal(db_session) -> None:
+    parent, (a, b) = await _make_bundle(db_session, "N21gold", [("N23gold", 5), ("N32gold", 5)])
+    svc = InventoryService(db_session)
+    assert set(await svc.resolve_consumption(parent.id)) == {(a.id, 1), (b.id, 1)}
+    assert await svc.resolve_consumption(a.id) == [(a.id, 1)]  # a normal SKU is itself
+
+
+async def test_bundle_fan_out_decrements_each_component(db_session) -> None:
+    """One bundle order line decrements every component; all component events
+    share one source (master_sku_id disambiguates the widened UNIQUE)."""
+    parent, (a, b) = await _make_bundle(db_session, "N21gold", [("N23gold", 27), ("N32gold", 55)])
+    svc = InventoryService(db_session)
+    src = EventSource(channel="shopify", order_id="O-1", line_id="L-1")
+    for comp_id, qty_per in await svc.resolve_consumption(parent.id):
+        await svc.consume_for_order_line(master_sku_id=comp_id, quantity=2 * qty_per, source=src)
+    assert await svc.get_current_stock(a.id) == 25  # 27 - 2
+    assert await svc.get_current_stock(b.id) == 53  # 55 - 2
+    assert await svc.get_bundle_available(parent.id) == 25  # min(25, 53)
 
 
 async def test_consume_decrements_snapshot(db_session) -> None:

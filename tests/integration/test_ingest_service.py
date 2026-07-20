@@ -65,6 +65,71 @@ async def _seed_mapping(session, *, channel: str, sku: str) -> int:
     return master.id
 
 
+async def _seed_bundle_mapping(session, *, parent_code: str, comp_specs: list[tuple[str, int]]):
+    """A bundle parent mapped on shopify + component masters with seeded stock."""
+    from app.models import BundleComponent
+
+    parent = MasterSku(sku_code=parent_code, name=parent_code, is_bundle=True)
+    session.add(parent)
+    await session.flush()
+    session.add(
+        ChannelSkuMapping(
+            master_sku_id=parent.id, channel="shopify", channel_sku=parent_code, is_active=True
+        )
+    )
+    inv = InventoryService(session)
+    comps = []
+    for code, stock in comp_specs:
+        c = MasterSku(sku_code=code, name=code)
+        session.add(c)
+        await session.flush()
+        await inv.manual_adjust(
+            master_sku_id=c.id, quantity_delta=stock, reason="seed", operator="t"
+        )
+        session.add(
+            BundleComponent(
+                bundle_master_sku_id=parent.id, component_master_sku_id=c.id, quantity_per=1
+            )
+        )
+        comps.append(c)
+    await session.flush()
+    return parent, comps
+
+
+async def test_bundle_order_fans_out_to_components(db_session) -> None:
+    """An order for a bundle SKU decrements its COMPONENTS, not the parent."""
+    parent, (a, b) = await _seed_bundle_mapping(
+        db_session, parent_code="N21gold", comp_specs=[("N23gold", 10), ("N32gold", 10)]
+    )
+    inv = InventoryService(db_session)
+    svc = OrderIngestService(db_session)
+
+    result = await svc.ingest(_normalized(channel_order_id="OB-1", sku="N21gold", quantity=2))
+
+    assert result.consumed_count == 1
+    assert await inv.get_current_stock(a.id) == 8  # each component -2
+    assert await inv.get_current_stock(b.id) == 8
+    assert await inv.get_current_stock(parent.id) == 0  # parent holds no own stock
+    assert await inv.get_bundle_available(parent.id) == 8  # min(8, 8)
+
+
+async def test_bundle_cancellation_restores_components(db_session) -> None:
+    _parent, (a,) = await _seed_bundle_mapping(
+        db_session, parent_code="N21gold", comp_specs=[("N23gold", 10)]
+    )
+    inv = InventoryService(db_session)
+    svc = OrderIngestService(db_session)
+
+    await svc.ingest(_normalized(channel_order_id="OB-2", sku="N21gold", quantity=3))
+    assert await inv.get_current_stock(a.id) == 7
+
+    cancelled = await svc.ingest(
+        _normalized(channel_order_id="OB-2", sku="N21gold", quantity=3, status="cancelled")
+    )
+    assert cancelled.cancelled_count == 1
+    assert await inv.get_current_stock(a.id) == 10  # component restored
+
+
 async def test_mapped_order_decrements_inventory(db_session) -> None:
     master_id = await _seed_mapping(db_session, channel="shopify", sku="MAPPED")
     svc = OrderIngestService(db_session)
