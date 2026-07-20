@@ -82,6 +82,8 @@
   {% set nav_items = [
     ('/admin/', 'ダッシュボード'),
     ('/admin/inventory', '在庫一覧'),
+    ('/admin/reconcile', 'リコンサイル'),
+    ('/admin/sync-errors', '同期エラー'),
     ('/admin/mappings', 'マッピング'),
     ('/admin/alerts', 'アラート'),
     ('/admin/adjust', '手動調整'),
@@ -178,7 +180,7 @@
 
   <footer class="border-t border-ink-200 bg-white">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between text-xs text-ink-500">
-      <div>Phase 1-A · <span class="font-mono">v{{ version }}</span></div>
+      <div>Phase 1-B · <span class="font-mono">v{{ version }}</span></div>
       <div class="hidden sm:block">Product System Admin</div>
     </div>
   </footer>

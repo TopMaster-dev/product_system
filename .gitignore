@@ -55,6 +55,9 @@ logs/
 *.tfstate.*
 .terraform/
 infra/terraform/terraform.tfvars
+# Ignore all real tfvars (may hold secrets) but keep the tracked *.example templates.
+*.tfvars
+!*.tfvars.example
 !infra/terraform/.terraform.lock.hcl
 
 # Local toolchains (terraform binary etc.)

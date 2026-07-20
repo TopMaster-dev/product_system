@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}リコンサイル · Product System{% endblock %}
+{% block content %}
+
+<div class="mb-5 flex items-start justify-between gap-4 flex-wrap">
+  <div>
+    <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">リコンサイル（在庫照合）</h1>
+    <p class="text-sm text-ink-500 mt-1">CROSS MALL の在庫CSVと基準在庫を照合し、差分を承認して反映します</p>
+  </div>
+  <a href="/admin/reconcile/upload"
+     class="inline-flex items-center gap-2 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold px-4 py-2 transition shadow-card">
+    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    在庫CSVを取込
+  </a>
+</div>
+
+{% if pending_runs %}
+  <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 px-4 py-3 text-sm flex items-center gap-2">
+    <svg class="w-4 h-4 text-amber-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+    承認待ちの照合が <span class="font-semibold">{{ pending_runs }}</span> 件あります。差分を確認してください。
+  </div>
+{% endif %}
+
+{% macro run_badge(s) %}
+  <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded ring-1 whitespace-nowrap
+    {% if s == 'pending_approval' %}bg-amber-50 text-amber-700 ring-amber-200
+    {% elif s == 'applied' %}bg-emerald-50 text-emerald-700 ring-emerald-200
+    {% elif s == 'cancelled' %}bg-ink-100 text-ink-500 ring-ink-200
+    {% else %}bg-sky-50 text-sky-700 ring-sky-200{% endif %}">
+    {% if s == 'pending_approval' %}承認待ち{% elif s == 'applied' %}反映済{% elif s == 'cancelled' %}取消{% elif s == 'running' %}実行中{% else %}{{ s }}{% endif %}
+  </span>
+{% endmacro %}
+
+<div class="hidden md:block bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="scroll-area overflow-x-auto">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold whitespace-nowrap">実行時刻</th>
+          <th class="px-4 py-3 text-left font-semibold">状態</th>
+          <th class="px-4 py-3 text-left font-semibold">CSV</th>
+          <th class="px-4 py-3 text-right font-semibold">差分</th>
+          <th class="px-4 py-3 text-right font-semibold">反映</th>
+          <th class="px-4 py-3 text-left font-semibold">実行者</th>
+          <th class="px-4 py-3 text-right font-semibold"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for run in runs %}
+          <tr class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="px-4 py-3">{{ run_badge(run.status) }}</td>
+            <td class="px-4 py-3 text-xs text-ink-600 font-mono">{{ run.csv_filename or '—' }}</td>
+            <td class="px-4 py-3 text-right tabular-nums font-medium text-ink-800">{{ run.diff_count }}</td>
+            <td class="px-4 py-3 text-right tabular-nums text-ink-600">{{ run.applied_count }}</td>
+            <td class="px-4 py-3 text-xs text-ink-600 font-mono">{{ run.triggered_by }}</td>
+            <td class="px-4 py-3 text-right">
+              <a href="/admin/reconcile/{{ run.id }}" class="inline-flex items-center gap-1 text-brand-600 hover:text-brand-700 text-xs font-semibold">
+                詳細
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </a>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="px-4 py-16 text-center">
+              <div class="flex flex-col items-center gap-2 text-ink-500">
+                <svg class="w-10 h-10 text-ink-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div class="text-sm">照合履歴はまだありません。「在庫CSVを取込」から開始してください。</div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Mobile cards -->
+<div class="md:hidden space-y-2">
+  {% for run in runs %}
+    <a href="/admin/reconcile/{{ run.id }}" class="block bg-white rounded-xl border border-ink-200 p-4">
+      <div class="flex items-center justify-between gap-3 mb-2">
+        <div class="text-xs text-ink-500 font-mono">{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        {{ run_badge(run.status) }}
+      </div>
+      <div class="text-xs text-ink-600 font-mono mb-2 break-all">{{ run.csv_filename or '—' }}</div>
+      <div class="flex items-center gap-4 text-xs text-ink-600">
+        <span>差分 <span class="font-semibold text-ink-800 tabular-nums">{{ run.diff_count }}</span></span>
+        <span>反映 <span class="font-semibold text-ink-800 tabular-nums">{{ run.applied_count }}</span></span>
+      </div>
+    </a>
+  {% else %}
+    <div class="bg-white rounded-xl border border-ink-200 p-8 text-center text-sm text-ink-500">照合履歴はまだありません。</div>
+  {% endfor %}
+</div>
+{% endblock %}

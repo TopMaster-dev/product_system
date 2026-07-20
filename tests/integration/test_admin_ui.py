@@ -23,12 +23,16 @@ from app.models import (
     ChannelSkuMapping,
     InventoryEvent,
     InventoryEventTypeEnum,
+    InventorySnapshot,
     MappingAlert,
     MappingAlertStatusEnum,
     MasterSku,
     Order,
     OrderItem,
     OrderStatusEnum,
+    ReconcileDiff,
+    ReconcileRun,
+    SyncAttempt,
 )
 
 pytestmark = pytest.mark.integration
@@ -292,3 +296,269 @@ async def test_alerts_resolve_replays_pending_order(admin_client, _test_engine) 
         )
         assert len(events) == 1
         assert events[0].quantity_delta == -2
+
+
+# --------------------------------------------------------------------------- #
+# 同期エラー (sync errors)                                                      #
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_failed_push(factory, sku_id: int, *, channel: str = "shopify") -> int:
+    async with factory() as session, session.begin():
+        attempt = SyncAttempt(
+            attempt_type="push_inventory",
+            channel=channel,
+            master_sku_id=sku_id,
+            payload={"channel_sku": "SHOP-9", "quantity": 5, "triggered_by": "poll"},
+            status="failed",
+            error_code="ReadTimeout",
+            error_message="read timed out",
+        )
+        session.add(attempt)
+        await session.flush()
+        return attempt.id
+
+
+async def test_sync_errors_list_localizes_and_filters(admin_client, _test_engine) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    sku_id = await _seed_sku(factory, "SE-1", "SyncErr")
+    await _seed_failed_push(factory, sku_id)
+
+    r = await admin_client.get("/admin/sync-errors", headers=_auth_header())
+    assert r.status_code == 200
+    assert "SE-1" in r.text
+    assert "タイムアウト" in r.text  # localized guidance
+    assert "再実行" in r.text  # retry button present
+
+    # Default filter is failed; asking for succeeded hides it.
+    r = await admin_client.get("/admin/sync-errors?status=succeeded", headers=_auth_header())
+    assert "SE-1" not in r.text
+
+
+class _FakeAdapter:
+    """Minimal ChannelAdapter stand-in for exercising the retry push path
+    without a live channel (mirrors how the push-service tests fake adapters)."""
+
+    channel = "shopify"
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[tuple[str, int]] = []
+
+    async def __aenter__(self) -> _FakeAdapter:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def push_inventory(self, channel_sku: str, quantity: int) -> dict[str, object]:
+        self.calls.append((channel_sku, quantity))
+        if self.fail:
+            raise RuntimeError("boom")
+        return {"ok": True, "quantity": quantity}
+
+
+async def test_sync_errors_retry_pushes_current_quantity(
+    admin_client, _test_engine, monkeypatch
+) -> None:
+    from app.ui.routes import sync_errors as sync_errors_module
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    sku_id = await _seed_sku(factory, "SE-2", "Retryable")
+    async with factory() as session, session.begin():
+        session.add(InventorySnapshot(master_sku_id=sku_id, on_hand_qty=4))
+    attempt_id = await _seed_failed_push(factory, sku_id)
+
+    fake = _FakeAdapter()
+    monkeypatch.setattr(sync_errors_module, "build_retry_adapter", lambda channel, settings: fake)
+
+    r = await admin_client.post(
+        f"/admin/sync-errors/{attempt_id}/retry",
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert "retried" in r.headers["location"]
+    # It re-pushed the CURRENT snapshot quantity (4), not the stale payload (5).
+    assert fake.calls == [("SHOP-9", 4)]
+
+    async with factory() as session:
+        child = (
+            await session.execute(
+                select(SyncAttempt).where(SyncAttempt.parent_attempt_id == attempt_id)
+            )
+        ).scalar_one()
+        assert child.status == "succeeded"
+        assert child.payload["quantity"] == 4
+
+
+async def test_sync_errors_retry_without_adapter_flashes_nocreds(
+    admin_client, _test_engine, monkeypatch
+) -> None:
+    from app.ui.routes import sync_errors as sync_errors_module
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    sku_id = await _seed_sku(factory, "SE-4", "NoCreds")
+    attempt_id = await _seed_failed_push(factory, sku_id)
+
+    monkeypatch.setattr(sync_errors_module, "build_retry_adapter", lambda channel, settings: None)
+
+    r = await admin_client.post(
+        f"/admin/sync-errors/{attempt_id}/retry",
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert "nocreds" in r.headers["location"]
+
+
+async def test_sync_errors_retry_rejects_non_failed(admin_client, _test_engine) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    sku_id = await _seed_sku(factory, "SE-3", "Succeeded")
+    async with factory() as session, session.begin():
+        attempt = SyncAttempt(
+            attempt_type="push_inventory",
+            channel="shopify",
+            master_sku_id=sku_id,
+            payload={"channel_sku": "S", "quantity": 1},
+            status="succeeded",
+        )
+        session.add(attempt)
+        await session.flush()
+        attempt_id = attempt.id
+
+    r = await admin_client.post(
+        f"/admin/sync-errors/{attempt_id}/retry",
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert "notfailed" in r.headers["location"]
+
+
+# --------------------------------------------------------------------------- #
+# リコンサイル / 在庫CSV取込                                                     #
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_reconcilable_variant(factory) -> int:
+    """A variant master + its crossmall mapping (key '006c||') + a snapshot of 10."""
+    async with factory() as session, session.begin():
+        sku = MasterSku(sku_code="006cV", name="Variant")
+        session.add(sku)
+        await session.flush()
+        session.add(
+            ChannelSkuMapping(
+                master_sku_id=sku.id, channel="crossmall", channel_sku="006c||", is_active=True
+            )
+        )
+        session.add(InventorySnapshot(master_sku_id=sku.id, on_hand_qty=10))
+        return sku.id
+
+
+async def test_reconcile_list_renders(admin_client, _test_engine) -> None:
+    r = await admin_client.get("/admin/reconcile", headers=_auth_header())
+    assert r.status_code == 200
+    assert "リコンサイル" in r.text
+
+
+async def test_reconcile_upload_rejects_bad_csv(admin_client, _test_engine) -> None:
+    bad = "商品コード\r\n006c\r\n".encode("cp932")  # missing 在庫数量
+    r = await admin_client.post(
+        "/admin/reconcile/upload",
+        files={"file": ("bad.csv", bad, "text/csv")},
+        headers=_auth_header(),
+    )
+    assert r.status_code == 200
+    assert "取込できません" in r.text
+
+
+async def test_reconcile_upload_preview_execute_approve_finalize(
+    admin_client, _test_engine
+) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    sku_id = await _seed_reconcilable_variant(factory)
+    csv_bytes = "商品コード,在庫数量\r\n006c,27\r\n".encode("cp932")
+
+    # 1) Preview — shows the +17 diff, no run created yet.
+    r = await admin_client.post(
+        "/admin/reconcile/upload",
+        files={"file": ("stock.csv", csv_bytes, "text/csv")},
+        headers=_auth_header(),
+    )
+    assert r.status_code == 200
+    assert "006cV" in r.text
+    assert "+17" in r.text
+    async with factory() as session:
+        assert (await session.execute(select(ReconcileRun))).scalars().all() == []
+
+    # 2) Execute — creates the run.
+    b64 = base64.b64encode(csv_bytes).decode("ascii")
+    r = await admin_client.post(
+        "/admin/reconcile/execute",
+        data={"csv_b64": b64, "filename": "stock.csv"},
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    location = r.headers["location"]
+    assert "flash=created" in location
+    run_id = int(location.split("/admin/reconcile/")[1].split("?")[0])
+
+    # 3) Detail renders with the diff.
+    r = await admin_client.get(f"/admin/reconcile/{run_id}", headers=_auth_header())
+    assert r.status_code == 200
+    assert "+17" in r.text
+
+    # 4) Approve the diff -> snapshot corrected to 27.
+    async with factory() as session:
+        diff_id = (
+            await session.execute(
+                select(ReconcileDiff.id).where(ReconcileDiff.reconcile_run_id == run_id)
+            )
+        ).scalar_one()
+    r = await admin_client.post(
+        f"/admin/reconcile/{run_id}/diffs/{diff_id}/approve",
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    async with factory() as session:
+        snap = (
+            await session.execute(
+                select(InventorySnapshot).where(InventorySnapshot.master_sku_id == sku_id)
+            )
+        ).scalar_one()
+        assert snap.on_hand_qty == 27
+
+    # 5) Finalize -> run applied.
+    r = await admin_client.post(
+        f"/admin/reconcile/{run_id}/finalize",
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert "finalized" in r.headers["location"]
+    async with factory() as session:
+        run = await session.get(ReconcileRun, run_id)
+        assert run.status == "applied"
+
+
+async def test_reconcile_export_csv(admin_client, _test_engine) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_reconcilable_variant(factory)
+    csv_bytes = "商品コード,在庫数量\r\n006c,27\r\n".encode("cp932")
+    b64 = base64.b64encode(csv_bytes).decode("ascii")
+    r = await admin_client.post(
+        "/admin/reconcile/execute",
+        data={"csv_b64": b64, "filename": "stock.csv"},
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    run_id = int(r.headers["location"].split("/admin/reconcile/")[1].split("?")[0])
+
+    r = await admin_client.get(f"/admin/reconcile/{run_id}/export.csv", headers=_auth_header())
+    assert r.status_code == 200
+    assert "text/csv" in r.headers["content-type"]
+    assert "006cV" in r.text
+    assert "sku_code,name,current_qty,target_qty,delta,decision" in r.text

@@ -17,6 +17,10 @@ from app.models import (
     MappingAlert,
     MappingAlertStatusEnum,
     MasterSku,
+    ReconcileRun,
+    ReconcileRunStatusEnum,
+    SyncAttempt,
+    SyncAttemptStatusEnum,
 )
 from app.ui.auth import OperatorDep
 from app.ui.deps import templates
@@ -41,6 +45,16 @@ async def home(
     events_today = await session.scalar(
         select(func.count()).select_from(InventoryEvent).where(InventoryEvent.occurred_at >= today)
     )
+    sync_errors = await session.scalar(
+        select(func.count())
+        .select_from(SyncAttempt)
+        .where(SyncAttempt.status == SyncAttemptStatusEnum.FAILED.value)
+    )
+    pending_reconcile = await session.scalar(
+        select(func.count())
+        .select_from(ReconcileRun)
+        .where(ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value)
+    )
 
     return templates.TemplateResponse(
         request,
@@ -53,6 +67,8 @@ async def home(
                 "mappings": mapping_count or 0,
                 "open_alerts": open_alerts or 0,
                 "events_today": events_today or 0,
+                "sync_errors": sync_errors or 0,
+                "pending_reconcile": pending_reconcile or 0,
             },
         },
     )

@@ -1,0 +1,49 @@
+# Staging environment variables (Phase 1-B, P1B-059).
+#
+# Copy to `staging.tfvars`, fill in the real values, and apply against a
+# SEPARATE GCP project in the `staging` Terraform workspace so prod state and
+# prod resources are never touched:
+#
+#   cp staging.tfvars.example staging.tfvars
+#   terraform workspace new staging      # once; then `terraform workspace select staging`
+#   terraform apply -var-file=staging.tfvars
+#
+# See docs/19_phase1b_staging_environment.md for the full runbook.
+#
+# Sensitive values (db_password, admin_password) are intentionally NOT set here.
+# Supply them via environment so they never land in a committed file:
+#   export TF_VAR_db_password='...'      # PowerShell: $env:TF_VAR_db_password='...'
+#   export TF_VAR_admin_password='...'
+
+# --- Project / region --------------------------------------------------------
+project_id       = "REPLACE-WITH-STAGING-PROJECT-ID"   # a DIFFERENT project from prod
+region           = "asia-northeast1"
+bigquery_dataset = "product_system_staging"            # a staging dataset (create beforehand)
+
+# --- Container image ---------------------------------------------------------
+# Point at the SAME image you deploy to prod (promote the same artifact), or a
+# feature build you want to validate before prod.
+service_image = "asia-northeast1-docker.pkg.dev/REPLACE-WITH-STAGING-PROJECT-ID/product-system/app:latest"
+
+# --- Cloud SQL ---------------------------------------------------------------
+db_tier = "db-f1-micro"   # cheapest tier is fine for staging
+
+# --- Channel endpoints -------------------------------------------------------
+# Use SANDBOX / DEV stores so staging never writes to the client's live
+# marketplaces. Leave channel push credentials OUT of Terraform: register them
+# in the staging project's Secret Manager (see docs/19), or leave them empty to
+# run staging with pushes disabled (adapters no-op when creds are absent).
+shopify_shop_domain = "your-dev-store.myshopify.com"
+rakuten_shop_url    = "https://www.rakuten.co.jp/your-staging-shop/"
+
+# --- Admin UI ----------------------------------------------------------------
+admin_username = "staging_admin"
+# admin_password -> supply via TF_VAR_admin_password (see header)
+
+# --- Globally-unique names (must differ from prod) ---------------------------
+recon_verify_bucket = "product-system-staging-verify"
+
+# --- Optional toggles (keep verification jobs / build trigger off in staging) -
+create_verification_jobs = false
+manage_artifact_registry = false
+create_build_trigger     = false

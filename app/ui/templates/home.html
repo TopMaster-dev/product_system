@@ -56,8 +56,38 @@
   </a>
 </div>
 
+<!-- Ops status: sync errors + pending reconcile -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6">
+  <a href="/admin/sync-errors"
+     class="rounded-xl bg-white transition p-4 sm:p-5 flex items-center justify-between
+            {% if stats.sync_errors %}border-2 border-red-300 hover:border-red-400{% else %}border border-ink-200 hover:border-emerald-300{% endif %} hover:shadow-card-hover">
+    <div>
+      <div class="text-xs font-medium tracking-wide mb-1 {% if stats.sync_errors %}text-red-600{% else %}text-ink-500{% endif %}">同期エラー（要対応）</div>
+      <div class="text-2xl sm:text-3xl font-semibold tracking-tight tabular-nums {% if stats.sync_errors %}text-red-600{% else %}text-ink-900{% endif %}">{{ stats.sync_errors }}</div>
+    </div>
+    <svg class="w-5 h-5 {% if stats.sync_errors %}text-red-500{% else %}text-emerald-500{% endif %}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+  </a>
+  <a href="/admin/reconcile"
+     class="rounded-xl bg-white transition p-4 sm:p-5 flex items-center justify-between
+            {% if stats.pending_reconcile %}border-2 border-amber-300 hover:border-amber-400{% else %}border border-ink-200 hover:border-brand-300{% endif %} hover:shadow-card-hover">
+    <div>
+      <div class="text-xs font-medium tracking-wide mb-1 {% if stats.pending_reconcile %}text-amber-600{% else %}text-ink-500{% endif %}">承認待ちの照合</div>
+      <div class="text-2xl sm:text-3xl font-semibold tracking-tight tabular-nums {% if stats.pending_reconcile %}text-amber-600{% else %}text-ink-900{% endif %}">{{ stats.pending_reconcile }}</div>
+    </div>
+    <svg class="w-5 h-5 {% if stats.pending_reconcile %}text-amber-500{% else %}text-ink-400{% endif %}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+  </a>
+</div>
+
 <!-- Quick actions -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 mb-6">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+  <a href="/admin/reconcile/upload"
+     class="rounded-xl bg-white border border-ink-200 p-5 hover:border-brand-300 hover:shadow-card-hover transition">
+    <div class="flex items-center gap-2.5 mb-1.5 text-ink-900">
+      <svg class="w-5 h-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span class="font-semibold">在庫CSV取込</span>
+    </div>
+    <p class="text-sm text-ink-500 leading-relaxed">CROSS MALL の在庫CSVで照合</p>
+  </a>
   <a href="/admin/adjust"
      class="rounded-xl bg-brand-600 hover:bg-brand-700 text-white p-5 transition shadow-card hover:shadow-card-hover">
     <div class="flex items-center gap-2.5 mb-1.5">

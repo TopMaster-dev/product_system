@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     best_seller_window_days: int = 30
     best_seller_top_percent: int = 20
 
+    # Phase 1-B: daily reconcile CSV source. gs:// URI of the CROSS MALL stock
+    # export that the scheduled reconcile job reads. Empty disables the
+    # scheduled job (it logs and no-ops); the admin-UI CSV upload path is
+    # independent of this setting.
+    reconcile_csv_uri: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "prod"
