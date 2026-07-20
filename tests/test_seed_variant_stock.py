@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.cli.seed_variant_stock import aggregate_variant_stock
+from app.cli.seed_variant_stock import aggregate_variant_stock, clamp_negatives
 
 
 @pytest.mark.unit
@@ -24,6 +24,24 @@ def test_aggregate_sums_aliases_by_token_color_size() -> None:
     assert out[("N23", "silver", "")] == 7
     assert out[("B09", "gold", "anklet")] == 50
     assert out[("B09", "gold", "bracelet")] == 50
+
+
+@pytest.mark.unit
+def test_clamp_negatives_zeroes_negatives_and_reports_them() -> None:
+    stock = {
+        ("N23", "gold", ""): 27,
+        ("R55", "gold", ""): -5,
+        ("B09", "silver", "anklet"): 0,
+        ("H1", "gold", ""): -1,
+    }
+    clamped, negatives = clamp_negatives(stock)
+    # Negatives are zeroed in the clamped result; non-negatives untouched.
+    assert clamped[("R55", "gold", "")] == 0
+    assert clamped[("H1", "gold", "")] == 0
+    assert clamped[("N23", "gold", "")] == 27
+    assert clamped[("B09", "silver", "anklet")] == 0
+    # The original negative values are reported for review.
+    assert negatives == {("R55", "gold", ""): -5, ("H1", "gold", ""): -1}
 
 
 @pytest.mark.unit

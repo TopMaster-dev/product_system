@@ -58,7 +58,18 @@ def aggregate_variant_stock(
     return dict(out)
 
 
-async def run(base: Path, reason: str, *, dry_run: bool) -> int:
+def clamp_negatives(
+    variant_stock: dict[tuple[str, str, str], int],
+) -> tuple[dict[tuple[str, str, str], int], dict[tuple[str, str, str], int]]:
+    """Physical stock can't be negative: return (clamped, negatives) where every
+    qty < 0 in `clamped` is set to 0, and `negatives` records the original
+    negative values (for review — CROSS MALL's own oversell/data issues)."""
+    negatives = {k: v for k, v in variant_stock.items() if v < 0}
+    clamped = {k: (v if v >= 0 else 0) for k, v in variant_stock.items()}
+    return clamped, negatives
+
+
+async def run(base: Path, reason: str, *, dry_run: bool, clamp_negative: bool = False) -> int:
     prod = Path(glob.glob(str(base / "item_[0-9]*.csv"))[0])
     skus = Path(glob.glob(str(base / "item_sku_*.csv"))[0])
     stock = Path(glob.glob(str(base / "stock_*.csv"))[0])
@@ -68,13 +79,26 @@ async def run(base: Path, reason: str, *, dry_run: bool) -> int:
     rk = build_rakuten_index(load_rakuten_rows(rak))
     code2token = {c: product_token(c, xm_name, rk) for c in xm_var}
     variant_stock = aggregate_variant_stock(stock_map, code2token)
+    clamped_stock, negatives = clamp_negatives(variant_stock)
+    if clamp_negative:
+        variant_stock = clamped_stock
 
     log.info(
         "seed_variant.parsed",
         variant_keys=len(variant_stock),
         nonzero=sum(1 for v in variant_stock.values() if v != 0),
-        negative=sum(1 for v in variant_stock.values() if v < 0),
+        negative=len(negatives),
+        clamp_negative=clamp_negative,
     )
+    if negatives:
+        # Surface the negative CROSS MALL variants (up to 60) so the client can
+        # review/fix them at source; with --clamp-negative these are seeded as 0.
+        log.warning(
+            "seed_variant.negatives",
+            count=len(negatives),
+            seeded_as="0 (clamped)" if clamp_negative else "as-is (negative!)",
+            items=[f"{t}|{c}|{s}={v}" for (t, c, s), v in sorted(negatives.items())][:60],
+        )
     if dry_run:
         log.info("seed_variant.dry_run")
         return 0
@@ -140,9 +164,18 @@ def main() -> None:
     p.add_argument("--base", type=Path, default=Path("csv_file/phase1-B/latest_version"))
     p.add_argument("--reason", type=str, default="Variant initial stock seed from CROSS MALL")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "--clamp-negative",
+        action="store_true",
+        help="Seed negative CROSS MALL variants as 0 (physical stock can't be negative).",
+    )
     args = p.parse_args()
     configure_logging("INFO")
-    sys.exit(asyncio.run(run(args.base, args.reason, dry_run=args.dry_run)))
+    sys.exit(
+        asyncio.run(
+            run(args.base, args.reason, dry_run=args.dry_run, clamp_negative=args.clamp_negative)
+        )
+    )
 
 
 if __name__ == "__main__":
