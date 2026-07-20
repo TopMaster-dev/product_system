@@ -215,6 +215,37 @@ def build_crossmall_mappings(
 # ---------- DB apply (idempotent upsert) ----------
 
 
+def dedupe_mapping_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Collapse rows sharing the upsert conflict key (channel, channel_sku): a
+    single INSERT ... ON CONFLICT DO UPDATE cannot touch the same target row
+    twice (Postgres CardinalityViolation). Sources overlap — e.g. a variant in
+    both _mapping_resolved and _client_confirm_sheet — so duplicates are normal.
+    Returns (deduped, conflicts) where conflicts lists channel SKUs that pointed
+    to MORE THAN ONE master (a real ambiguity; the last occurrence is kept)."""
+    deduped: dict[tuple[str, str], dict[str, Any]] = {}
+    conflicts: list[str] = []
+    for row in rows:
+        key = (row["channel"], row["channel_sku"])
+        prev = deduped.get(key)
+        if prev is not None and prev["master_sku_id"] != row["master_sku_id"]:
+            conflicts.append(
+                f"{key[0]}:{key[1]} -> masters {prev['master_sku_id']} vs {row['master_sku_id']}"
+            )
+        deduped[key] = row
+    return list(deduped.values()), conflicts
+
+
+def dedupe_link_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse bundle_component rows sharing (bundle, component) — same
+    single-statement upsert constraint as the mappings."""
+    deduped: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in rows:
+        deduped[(row["bundle_master_sku_id"], row["component_master_sku_id"])] = row
+    return list(deduped.values())
+
+
 async def apply_plan(plan: ImportPlan, *, dry_run: bool) -> dict[str, int]:
     counts = {
         "masters": len(plan.masters),
@@ -255,7 +286,7 @@ async def apply_plan(plan: ImportPlan, *, dry_run: bool) -> dict[str, int]:
         result = await session.execute(select(MasterSku.id, MasterSku.sku_code))
         code_to_id: dict[str, int] = {code: mid for mid, code in result.all()}
 
-        # 2) upsert channel_sku_mappings
+        # 2) upsert channel_sku_mappings (deduped on the conflict key)
         mapping_rows = [
             {
                 "master_sku_id": code_to_id[m.sku_code],
@@ -266,6 +297,13 @@ async def apply_plan(plan: ImportPlan, *, dry_run: bool) -> dict[str, int]:
             for m in plan.mappings
             if m.sku_code in code_to_id
         ]
+        mapping_rows, mapping_conflicts = dedupe_mapping_rows(mapping_rows)
+        if mapping_conflicts:
+            log.warning(
+                "import_variant.mapping_conflicts",
+                count=len(mapping_conflicts),
+                samples=mapping_conflicts[:20],
+            )
         if mapping_rows:
             stmt = pg_insert(ChannelSkuMapping).values(mapping_rows)
             stmt = stmt.on_conflict_do_update(
@@ -288,6 +326,7 @@ async def apply_plan(plan: ImportPlan, *, dry_run: bool) -> dict[str, int]:
             for link in plan.links
             if link.bundle_sku_code in code_to_id and link.component_sku_code in code_to_id
         ]
+        link_rows = dedupe_link_rows(link_rows)
         if link_rows:
             stmt = pg_insert(BundleComponent).values(link_rows)
             stmt = stmt.on_conflict_do_update(

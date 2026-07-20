@@ -11,6 +11,8 @@ from app.cli.import_variant_mappings import (
     canonical_sku,
     code_from_crossmall_key,
     crossmall_key,
+    dedupe_link_rows,
+    dedupe_mapping_rows,
 )
 
 
@@ -119,6 +121,38 @@ def test_crossmall_key_roundtrips_code() -> None:
     assert code_from_crossmall_key(crossmall_key("006c", "gold", "")) == "006c"
     assert code_from_crossmall_key(crossmall_key("027c", "gold", "anklet")) == "027c"
     assert code_from_crossmall_key("H1||") == "H1"
+
+
+@pytest.mark.unit
+def test_dedupe_mapping_rows_collapses_identical_and_flags_conflicts() -> None:
+    rows = [
+        {"master_sku_id": 1, "channel": "shopify", "channel_sku": "N23gold", "is_active": True},
+        # exact duplicate (variant in both mapping + confirm sheet) -> collapsed
+        {"master_sku_id": 1, "channel": "shopify", "channel_sku": "N23gold", "is_active": True},
+        # same channel SKU, DIFFERENT master -> real ambiguity, keep last + report
+        {"master_sku_id": 2, "channel": "rakuten", "channel_sku": "501", "is_active": True},
+        {"master_sku_id": 3, "channel": "rakuten", "channel_sku": "501", "is_active": True},
+    ]
+    deduped, conflicts = dedupe_mapping_rows(rows)
+    keys = {(r["channel"], r["channel_sku"]): r["master_sku_id"] for r in deduped}
+    assert keys == {("shopify", "N23gold"): 1, ("rakuten", "501"): 3}  # last wins
+    assert len(conflicts) == 1
+    assert "rakuten:501" in conflicts[0]
+
+
+@pytest.mark.unit
+def test_dedupe_link_rows_collapses_duplicate_bundle_component() -> None:
+    rows = [
+        {"bundle_master_sku_id": 10, "component_master_sku_id": 20, "quantity_per": 1},
+        {"bundle_master_sku_id": 10, "component_master_sku_id": 20, "quantity_per": 2},
+        {"bundle_master_sku_id": 10, "component_master_sku_id": 21, "quantity_per": 1},
+    ]
+    deduped = dedupe_link_rows(rows)
+    pairs = {
+        (r["bundle_master_sku_id"], r["component_master_sku_id"]): r["quantity_per"]
+        for r in deduped
+    }
+    assert pairs == {(10, 20): 2, (10, 21): 1}  # last wins for the dup pair
 
 
 @pytest.mark.unit
