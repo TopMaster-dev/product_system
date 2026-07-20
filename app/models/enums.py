@@ -31,6 +31,7 @@ class InventoryEventTypeEnum(StrEnum):
 
 class MappingAlertStatusEnum(StrEnum):
     OPEN = "open"
+    IN_PROGRESS = "in_progress"
     RESOLVED = "resolved"
     IGNORED = "ignored"
 

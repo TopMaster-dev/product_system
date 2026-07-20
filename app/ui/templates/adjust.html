@@ -4,56 +4,147 @@
 
 <div class="mb-5">
   <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">手動在庫調整</h1>
-  <p class="text-sm text-ink-500 mt-1">理由と操作者を記録した上で在庫数を増減します</p>
+  <p class="text-sm text-ink-500 mt-1">理由と操作者を記録した上で在庫数を増減します（確認画面を挟みます）</p>
 </div>
 
-<form method="post" action="/admin/adjust"
-      class="bg-white rounded-xl border border-ink-200 p-5 sm:p-6 max-w-2xl space-y-5">
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+  <form method="post" action="/admin/adjust/confirm"
+        class="lg:col-span-2 bg-white rounded-xl border border-ink-200 p-5 sm:p-6 space-y-5">
 
-  <div>
-    <label class="block text-sm font-medium text-ink-700 mb-1.5">マスター SKU <span class="text-red-500">*</span></label>
-    <select name="master_sku_id" required
-            class="w-full px-3 py-2.5 border border-ink-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
-      <option value="">— 選択してください —</option>
-      {% for s in master_skus %}
-        <option value="{{ s.id }}" {% if preselect == s.id %}selected{% endif %}>
-          {{ s.sku_code }} — {{ s.name }} (現在: {{ s.on_hand_qty }})
-        </option>
-      {% endfor %}
-    </select>
-  </div>
-
-  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
     <div>
-      <label class="block text-sm font-medium text-ink-700 mb-1.5">調整数 <span class="text-red-500">*</span></label>
-      <input name="quantity_delta" type="number" required placeholder="例: +5 or -3"
-             class="w-full px-3 py-2.5 border border-ink-300 rounded-md text-sm font-mono focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
-      <div class="text-xs text-ink-500 mt-1.5 flex items-center gap-1">
-        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        正の数で増加、負の数で減少
+      <label class="block text-sm font-medium text-ink-700 mb-1.5">マスター SKU <span class="text-red-500">*</span></label>
+      <select id="skuSelect" name="master_sku_id" required
+              class="w-full px-3 py-2.5 border border-ink-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
+        <option value="" data-qty="">— 選択してください —</option>
+        {% for s in master_skus %}
+          <option value="{{ s.id }}" data-qty="{{ s.on_hand_qty }}" {% if preselect == s.id %}selected{% endif %}>
+            {{ s.sku_code }} — {{ s.name }} (現在: {{ s.on_hand_qty }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-ink-700 mb-1.5">調整数 <span class="text-red-500">*</span></label>
+        <input id="deltaInput" name="quantity_delta" type="number" required placeholder="例: +5 or -3"
+               class="w-full px-3 py-2.5 border border-ink-300 rounded-md text-sm font-mono focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
+        <div class="text-xs text-ink-500 mt-1.5 flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          正の数で増加、負の数で減少
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-ink-700 mb-1.5">理由テンプレート</label>
+        <select id="reasonTemplate"
+                class="w-full px-3 py-2.5 border border-ink-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
+          <option value="">— 選択で理由欄に入力 —</option>
+          {% for t in reason_templates %}
+            <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
       </div>
     </div>
+
     <div>
       <label class="block text-sm font-medium text-ink-700 mb-1.5">理由 <span class="text-red-500">*</span></label>
-      <input name="reason" required maxlength="255" placeholder="棚卸 / 破損 / 検品差異 など"
+      <input id="reasonInput" name="reason" required maxlength="255" placeholder="テンプレートを選ぶか、自由入力"
              class="w-full px-3 py-2.5 border border-ink-300 rounded-md text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
     </div>
-  </div>
 
-  <div class="rounded-md bg-ink-50 border border-ink-200 px-3 py-2 text-xs text-ink-600 flex items-center gap-2">
-    <svg class="w-4 h-4 text-ink-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-    <span>操作者は <span class="font-mono font-semibold text-ink-900">{{ operator }}</span> として記録されます</span>
-  </div>
+    <!-- Before / after preview -->
+    <div id="previewBox" class="hidden rounded-lg border border-brand-200 bg-brand-50/50 px-4 py-3">
+      <div class="text-xs text-ink-500 mb-1">変更プレビュー</div>
+      <div class="flex items-center gap-3 text-lg font-semibold tabular-nums">
+        <span class="text-ink-600">現在 <span id="previewBefore" class="text-ink-900">—</span></span>
+        <svg class="w-4 h-4 text-ink-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <span class="text-ink-600">変更後 <span id="previewAfter" class="text-ink-900 font-bold">—</span></span>
+      </div>
+    </div>
 
-  <div class="flex flex-col sm:flex-row sm:justify-end gap-2 pt-4 border-t border-ink-100">
-    <a href="/admin/inventory"
-       class="inline-flex items-center justify-center rounded-md border border-ink-300 bg-white text-ink-700 text-sm font-medium px-5 py-2 hover:bg-ink-50 transition">
-      キャンセル
-    </a>
-    <button class="inline-flex items-center justify-center gap-1.5 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-5 py-2 transition">
-      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-      調整を適用
-    </button>
+    <div class="rounded-md bg-ink-50 border border-ink-200 px-3 py-2 text-xs text-ink-600 flex items-center gap-2">
+      <svg class="w-4 h-4 text-ink-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span>操作者は <span class="font-mono font-semibold text-ink-900">{{ operator }}</span> として記録されます</span>
+    </div>
+
+    <div class="flex flex-col sm:flex-row sm:justify-end gap-2 pt-4 border-t border-ink-100">
+      <a href="/admin/inventory"
+         class="inline-flex items-center justify-center rounded-md border border-ink-300 bg-white text-ink-700 text-sm font-medium px-5 py-2 hover:bg-ink-50 transition">
+        キャンセル
+      </a>
+      <button class="inline-flex items-center justify-center gap-1.5 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-5 py-2 transition">
+        確認画面へ
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+    </div>
+  </form>
+
+  <!-- Recent adjustments (immediate history visibility) -->
+  <div class="bg-white rounded-xl border border-ink-200 overflow-hidden self-start">
+    <div class="px-4 py-3 border-b border-ink-100 flex items-center gap-2">
+      <svg class="w-4 h-4 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+      <h2 class="text-sm font-semibold text-ink-900">最近の手動調整</h2>
+    </div>
+    <ul class="divide-y divide-ink-100 max-h-96 overflow-y-auto scroll-area">
+      {% for e in recent %}
+        <li class="px-4 py-2.5 text-xs">
+          <div class="flex items-center justify-between gap-2 mb-0.5">
+            <span class="font-mono font-medium text-ink-800">{{ e.sku_code }}</span>
+            {% if e.quantity_delta < 0 %}
+              <span class="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200 font-mono font-semibold tabular-nums">{{ '%+d' % e.quantity_delta }}</span>
+            {% else %}
+              <span class="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 font-mono font-semibold tabular-nums">{{ '%+d' % e.quantity_delta }}</span>
+            {% endif %}
+          </div>
+          <div class="text-ink-600">{{ e.reason or '—' }}</div>
+          <div class="text-ink-400 font-mono">{{ e.occurred_at.strftime('%m-%d %H:%M') }} · {{ e.operator }}</div>
+        </li>
+      {% else %}
+        <li class="px-4 py-8 text-center text-xs text-ink-400">まだ手動調整はありません</li>
+      {% endfor %}
+    </ul>
+    <div class="px-4 py-2.5 border-t border-ink-100">
+      <a href="/admin/events?event_type=manual_adjust" class="text-xs text-brand-600 hover:text-brand-700 font-medium">すべての調整履歴を見る →</a>
+    </div>
   </div>
-</form>
+</div>
+
+<script>
+  (function () {
+    const sel = document.getElementById('skuSelect');
+    const deltaIn = document.getElementById('deltaInput');
+    const box = document.getElementById('previewBox');
+    const beforeEl = document.getElementById('previewBefore');
+    const afterEl = document.getElementById('previewAfter');
+    const tmpl = document.getElementById('reasonTemplate');
+    const reasonIn = document.getElementById('reasonInput');
+
+    function currentQty() {
+      const opt = sel.options[sel.selectedIndex];
+      const raw = opt ? opt.dataset.qty : '';
+      if (raw === '' || raw === undefined) return null;
+      const n = parseInt(raw, 10);
+      return isNaN(n) ? null : n;
+    }
+    function update() {
+      const cur = currentQty();
+      if (cur === null) { box.classList.add('hidden'); return; }
+      beforeEl.textContent = cur;
+      const delta = parseInt(deltaIn.value, 10);
+      if (isNaN(delta)) {
+        afterEl.textContent = '—';
+        afterEl.className = 'text-ink-900 font-bold';
+      } else {
+        const after = cur + delta;
+        afterEl.textContent = after;
+        afterEl.className = after < 0 ? 'text-red-600 font-bold' : 'text-ink-900 font-bold';
+      }
+      box.classList.remove('hidden');
+    }
+    sel.addEventListener('change', update);
+    deltaIn.addEventListener('input', update);
+    tmpl.addEventListener('change', function () { if (tmpl.value) reasonIn.value = tmpl.value; });
+    update();
+  })();
+</script>
 {% endblock %}

@@ -42,6 +42,8 @@ class MappingAlert(Base, TimestampMixin):
     )
     occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", index=True)
+    # Operator who took the alert into 対応中 (in_progress). Nullable.
+    assignee: Mapped[str | None] = mapped_column(String(128), nullable=True)
     resolved_master_sku_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("master_skus.id", ondelete="RESTRICT"),

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}調整の確認 · Product System{% endblock %}
+{% block content %}
+
+<div class="mb-5">
+  <div class="flex items-center gap-2 text-xs text-ink-500 mb-1">
+    <a href="/admin/adjust" class="hover:text-ink-700">手動調整</a>
+    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    <span>確認</span>
+  </div>
+  <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">この内容で調整しますか？</h1>
+  <p class="text-sm text-ink-500 mt-1">確定すると在庫が変更され、履歴に記録されます</p>
+</div>
+
+<div class="bg-white rounded-xl border border-ink-200 p-5 sm:p-6 max-w-xl">
+  <dl class="divide-y divide-ink-100 text-sm">
+    <div class="flex justify-between py-2.5">
+      <dt class="text-ink-500">SKU</dt>
+      <dd class="font-mono font-medium text-ink-900">{{ sku_code }} <span class="text-ink-400 font-sans">· {{ name }}</span></dd>
+    </div>
+    <div class="flex items-center justify-between py-2.5">
+      <dt class="text-ink-500">在庫の変化</dt>
+      <dd class="flex items-center gap-3 tabular-nums">
+        <span class="text-ink-600 font-semibold">{{ current }}</span>
+        <svg class="w-4 h-4 text-ink-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <span class="{% if after < 0 %}text-red-600{% else %}text-ink-900{% endif %} font-bold text-lg">{{ after }}</span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded font-mono font-semibold
+          {% if quantity_delta < 0 %}bg-red-50 text-red-700 ring-1 ring-red-200{% else %}bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200{% endif %}">{{ '%+d' % quantity_delta }}</span>
+      </dd>
+    </div>
+    <div class="flex justify-between py-2.5">
+      <dt class="text-ink-500">理由</dt>
+      <dd class="text-ink-900 text-right">{{ reason or '（未入力）' }}</dd>
+    </div>
+    <div class="flex justify-between py-2.5">
+      <dt class="text-ink-500">操作者</dt>
+      <dd class="font-mono text-ink-900">{{ operator }}</dd>
+    </div>
+  </dl>
+
+  <form method="post" action="/admin/adjust" class="flex flex-col sm:flex-row sm:justify-end gap-2 pt-5 mt-2 border-t border-ink-100">
+    <input type="hidden" name="master_sku_id" value="{{ master_sku_id }}" />
+    <input type="hidden" name="quantity_delta" value="{{ quantity_delta }}" />
+    <input type="hidden" name="reason" value="{{ reason }}" />
+    <a href="/admin/adjust"
+       class="inline-flex items-center justify-center rounded-md border border-ink-300 bg-white text-ink-700 text-sm font-medium px-5 py-2 hover:bg-ink-50 transition">
+      戻る（修正する）
+    </a>
+    <button class="inline-flex items-center justify-center gap-1.5 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-6 py-2 transition">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      確定して適用
+    </button>
+  </form>
+</div>
+{% endblock %}

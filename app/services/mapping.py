@@ -132,7 +132,9 @@ class MappingService:
                 MappingAlert.channel == channel,
                 MappingAlert.channel_sku == channel_sku,
                 MappingAlert.marketplace_id.is_(marketplace_id),
-                MappingAlert.status == MappingAlertStatusEnum.OPEN,
+                MappingAlert.status.in_(
+                    [MappingAlertStatusEnum.OPEN, MappingAlertStatusEnum.IN_PROGRESS]
+                ),
             )
             .values(
                 status=MappingAlertStatusEnum.RESOLVED,

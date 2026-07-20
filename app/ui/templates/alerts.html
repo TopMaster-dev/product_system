@@ -7,20 +7,104 @@
   <p class="text-sm text-ink-500 mt-1 max-w-2xl">未マッピング SKU の検知一覧。マスター SKU を選んで解決すると保留中の注文が自動再処理されます</p>
 </div>
 
+<!-- Summary -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">未解決（未対応+対応中）</div>
+    <div class="text-2xl font-semibold tabular-nums {% if counts.open + counts.in_progress %}text-red-600{% else %}text-ink-900{% endif %}">{{ counts.open + counts.in_progress }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">直近7日の新規</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ summary.recent_new }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1.5">チャネル別（未解決）</div>
+    {% if summary.by_channel %}
+      <div class="flex flex-wrap gap-1.5">
+        {% for ch, n in summary.by_channel %}
+          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-ink-50 ring-1 ring-ink-200 text-ink-700">{{ ch }} <span class="font-semibold tabular-nums">{{ n }}</span></span>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-sm text-emerald-600">未解決なし</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Tabs -->
+{% set tabs = [('open', '未対応', counts.open), ('in_progress', '対応中', counts.in_progress), ('resolved', '解決済み', counts.resolved)] %}
+<div class="flex items-center gap-1 border-b border-ink-200 mb-4 overflow-x-auto scroll-area">
+  {% for key, label, count in tabs %}
+    <a href="?status={{ key }}&channel={{ channel_filter }}&q={{ q|urlencode }}"
+       class="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition
+              {% if status == key %}border-brand-600 text-brand-700{% else %}border-transparent text-ink-500 hover:text-ink-800{% endif %}">
+      {{ label }}
+      <span class="inline-flex items-center justify-center min-w-[1.25rem] px-1.5 py-0.5 rounded-full text-xs font-semibold tabular-nums
+                   {% if key == 'open' and count %}bg-red-100 text-red-700
+                   {% elif key == 'in_progress' and count %}bg-amber-100 text-amber-700
+                   {% else %}bg-ink-100 text-ink-600{% endif %}">{{ count }}</span>
+    </a>
+  {% endfor %}
+</div>
+
+<!-- Filter -->
+<form method="get" class="flex flex-col sm:flex-row gap-2 mb-4">
+  <input type="hidden" name="status" value="{{ status }}" />
+  <select name="channel" class="sm:w-44 px-3 py-2 border border-ink-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
+    <option value="">全チャネル</option>
+    {% for c in channels %}
+      <option value="{{ c }}" {% if c == channel_filter %}selected{% endif %}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <input name="q" value="{{ q or '' }}" placeholder="チャネルSKUで絞り込み"
+         class="flex-1 px-3 py-2 border border-ink-300 rounded-md text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition bg-white" />
+  <button type="submit" class="rounded-md bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2 transition whitespace-nowrap">絞り込み</button>
+  {% if channel_filter or q %}
+    <a href="?status={{ status }}" class="rounded-md border border-ink-300 bg-white hover:bg-ink-50 text-ink-700 text-sm font-medium px-3 py-2 transition whitespace-nowrap">クリア</a>
+  {% endif %}
+</form>
+
 {% macro channel_badge(channel) -%}
   <span class="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded ring-1
                {% if channel == 'shopify' %}bg-emerald-50 text-emerald-700 ring-emerald-200
                {% elif channel == 'rakuten' %}bg-rose-50 text-rose-700 ring-rose-200
                {% elif channel == 'amazon' %}bg-amber-50 text-amber-700 ring-amber-200
-               {% else %}bg-sky-50 text-sky-700 ring-sky-200{% endif %}">
-    {{ channel }}
-  </span>
+               {% else %}bg-sky-50 text-sky-700 ring-sky-200{% endif %}">{{ channel }}</span>
 {%- endmacro %}
+
+{% macro status_badge(st) -%}
+  {% if st == 'open' %}
+    <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200"><span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> 未対応</span>
+  {% elif st == 'in_progress' %}
+    <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-amber-50 text-amber-700 ring-1 ring-amber-200"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> 対応中</span>
+  {% else %}
+    <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 解決済</span>
+  {% endif %}
+{%- endmacro %}
+
+{% macro resolve_form(a) %}
+  <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="flex gap-1.5 items-center">
+    <select name="master_sku_id" required
+            class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 outline-none" style="max-width: 200px;">
+      <option value="">— SKU 選択 —</option>
+      {% for s in master_skus %}<option value="{{ s.id }}">{{ s.sku_code }}</option>{% endfor %}
+    </select>
+    <button class="flex-shrink-0 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium px-3 py-1.5 transition">解決</button>
+  </form>
+{% endmacro %}
+
+{% macro start_form(a) %}
+  <form method="post" action="/admin/alerts/{{ a.id }}/start" class="flex gap-1.5 items-center">
+    <input name="assignee" placeholder="担当者（任意）"
+           class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 outline-none" style="max-width: 130px;" />
+    <button class="flex-shrink-0 rounded-md border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1.5 transition whitespace-nowrap">対応中にする</button>
+  </form>
+{% endmacro %}
 
 <!-- Desktop / tablet table -->
 <div class="hidden md:block bg-white rounded-xl border border-ink-200 overflow-hidden">
   <div class="scroll-area overflow-x-auto">
-    <table class="data-table w-full text-sm" style="min-width: 720px;">
+    <table class="data-table w-full text-sm" style="min-width: 760px;">
       <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
         <tr>
           <th class="px-4 py-3 text-left font-semibold whitespace-nowrap">初回検知</th>
@@ -28,42 +112,25 @@
           <th class="px-4 py-3 text-left font-semibold">チャネル SKU</th>
           <th class="px-4 py-3 text-right font-semibold whitespace-nowrap">発生回数</th>
           <th class="px-4 py-3 text-left font-semibold">状態</th>
-          <th class="px-4 py-3 text-left font-semibold" style="width: 280px;">解決</th>
+          <th class="px-4 py-3 text-left font-semibold" style="width: 300px;">対応</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for a in alerts %}
-          <tr class="hover:bg-ink-50/60 transition {% if a.status == 'open' %}bg-red-50/20{% endif %}">
+          <tr class="hover:bg-ink-50/60 transition align-top">
             <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ a.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</td>
             <td class="px-4 py-3">{{ channel_badge(a.channel) }}</td>
             <td class="px-4 py-3 font-mono text-xs">{{ a.channel_sku }}</td>
             <td class="px-4 py-3 text-right tabular-nums font-medium text-ink-800">{{ a.occurrence_count }}</td>
             <td class="px-4 py-3">
-              {% if a.status == 'open' %}
-                <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200">
-                  <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> 未解決
-                </span>
-              {% else %}
-                <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 解決済
-                </span>
-              {% endif %}
+              {{ status_badge(a.status) }}
+              {% if a.status == 'in_progress' and a.assignee %}<div class="text-[11px] text-ink-500 mt-1">担当: {{ a.assignee }}</div>{% endif %}
             </td>
-            <td class="px-4 py-3" style="width: 280px;">
+            <td class="px-4 py-3" style="width: 300px;">
               {% if a.status == 'open' %}
-                <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="flex gap-1.5 items-center">
-                  <select name="master_sku_id" required
-                          class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition"
-                          style="max-width: 200px;">
-                    <option value="">— SKU 選択 —</option>
-                    {% for s in master_skus %}
-                      <option value="{{ s.id }}">{{ s.sku_code }}</option>
-                    {% endfor %}
-                  </select>
-                  <button class="flex-shrink-0 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium px-3 py-1.5 transition">
-                    解決
-                  </button>
-                </form>
+                <div class="space-y-1.5">{{ start_form(a) }}{{ resolve_form(a) }}</div>
+              {% elif a.status == 'in_progress' %}
+                {{ resolve_form(a) }}
               {% else %}
                 <span class="text-xs text-ink-400">—</span>
               {% endif %}
@@ -74,8 +141,7 @@
             <td colspan="6" class="px-4 py-16 text-center">
               <div class="flex flex-col items-center gap-2 text-ink-500">
                 <svg class="w-10 h-10 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
-                <div class="text-sm font-medium text-ink-700">すべてのアラートが解決されています</div>
-                <div class="text-xs">新しい未マッピング SKU が検知されると、ここに表示されます</div>
+                <div class="text-sm font-medium text-ink-700">このタブに該当するアラートはありません</div>
               </div>
             </td>
           </tr>
@@ -89,7 +155,7 @@
 <div class="md:hidden space-y-2">
   {% for a in alerts %}
     <div class="bg-white rounded-xl border border-ink-200 p-4
-                {% if a.status == 'open' %}border-l-4 border-l-red-500{% endif %}">
+                {% if a.status == 'open' %}border-l-4 border-l-red-500{% elif a.status == 'in_progress' %}border-l-4 border-l-amber-500{% endif %}">
       <div class="flex items-start justify-between gap-3 mb-3">
         <div class="min-w-0">
           <div class="text-xs text-ink-500 font-mono mb-1">{{ a.first_seen_at.strftime('%Y-%m-%d %H:%M') }}</div>
@@ -99,35 +165,21 @@
           </div>
         </div>
         <div class="text-right flex flex-col items-end gap-1 flex-shrink-0">
-          {% if a.status == 'open' %}
-            <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200">
-              <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span> 未解決
-            </span>
-          {% else %}
-            <span class="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">解決済</span>
-          {% endif %}
+          {{ status_badge(a.status) }}
           <div class="text-xs text-ink-500 font-mono">{{ a.occurrence_count }} 回</div>
         </div>
       </div>
+      {% if a.status == 'in_progress' and a.assignee %}<div class="text-xs text-ink-500 mb-2">担当: {{ a.assignee }}</div>{% endif %}
       {% if a.status == 'open' %}
-        <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="space-y-2 pt-3 border-t border-ink-100">
-          <select name="master_sku_id" required
-                  class="w-full border border-ink-300 rounded-md px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
-            <option value="">— マスター SKU を選択 —</option>
-            {% for s in master_skus %}
-              <option value="{{ s.id }}">{{ s.sku_code }} — {{ s.name }}</option>
-            {% endfor %}
-          </select>
-          <button class="w-full rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium py-2 transition">
-            解決して再処理
-          </button>
-        </form>
+        <div class="space-y-2 pt-3 border-t border-ink-100">{{ start_form(a) }}{{ resolve_form(a) }}</div>
+      {% elif a.status == 'in_progress' %}
+        <div class="pt-3 border-t border-ink-100">{{ resolve_form(a) }}</div>
       {% endif %}
     </div>
   {% else %}
     <div class="bg-white rounded-xl border border-ink-200 p-8 text-center">
       <svg class="w-10 h-10 text-emerald-500 mx-auto mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
-      <div class="text-sm font-medium text-ink-700">すべてのアラートが解決されています</div>
+      <div class="text-sm font-medium text-ink-700">このタブに該当するアラートはありません</div>
     </div>
   {% endfor %}
 </div>
