@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import glob
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -29,6 +30,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from app.cli.build_channel_mapping import (
+    build_rakuten_index,
+    load_crossmall,
+    load_rakuten_rows,
+    product_token,
+)
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import BundleComponent, ChannelSkuMapping, MasterSku
@@ -166,6 +173,40 @@ def build_plan(
     return plan
 
 
+def crossmall_key(code: str, color: str, size: str) -> str:
+    """The channel_sku for a channel='crossmall' mapping — a stable key the
+    reconcile CLI reconstructs from the stock CSV's (商品コード, color, size)."""
+    return f"{code}|{color}|{size}"
+
+
+def build_crossmall_mappings(
+    masters: dict[str, MasterSpec],
+    xm_var: dict[str, list[dict[str, str]]],
+    code2token: dict[str, str | None],
+) -> list[MappingSpec]:
+    """A channel='crossmall' mapping per CROSS MALL (商品コード, color, size)
+    variant -> its NON-bundle variant master, so daily reconcile can match by a
+    single stock CSV. Covers ALL alias codes (006c & N23 both -> the same
+    master). is_bundle masters are skipped — their stock is derived, not
+    reconciled, so their CROSS MALL rows stay unmapped (reconcile ignores them)."""
+    tcs_to_sku: dict[tuple[str, str, str], str] = {}
+    for m in masters.values():
+        if not m.is_bundle:
+            tcs_to_sku.setdefault((m.token, m.color, m.size), m.sku_code)
+    out: list[MappingSpec] = []
+    for code, variants in xm_var.items():
+        token = code2token.get(code)
+        if not token:
+            continue
+        for v in variants:
+            sku = tcs_to_sku.get((token, v["color"], v["size"]))
+            if sku:
+                out.append(
+                    MappingSpec("crossmall", crossmall_key(code, v["color"], v["size"]), sku)
+                )
+    return out
+
+
 # ---------- DB apply (idempotent upsert) ----------
 
 
@@ -256,7 +297,7 @@ async def apply_plan(plan: ImportPlan, *, dry_run: bool) -> dict[str, int]:
     return counts
 
 
-async def run(base: Path, *, dry_run: bool) -> int:
+async def run(base: Path, crossmall_base: Path, *, dry_run: bool) -> int:
     # Sellable variant rows = confirmed mapping PLUS the confirm sheet, so that a
     # bundle component that resolved on Shopify but still awaits Rakuten (e.g. N61)
     # still gets a master. Rows with no channel sku at all are skipped in build_plan.
@@ -266,6 +307,16 @@ async def run(base: Path, *, dry_run: bool) -> int:
         _load(base / "bundle_groups.csv"),
         _load(base / "shared_stock_groups.csv"),
     )
+    # crossmall mappings (alias-safe) from the raw CROSS MALL structure, so daily
+    # reconcile stays single-CSV (Option B).
+    prod = Path(glob.glob(str(crossmall_base / "item_[0-9]*.csv"))[0])
+    skus = Path(glob.glob(str(crossmall_base / "item_sku_*.csv"))[0])
+    stock = Path(glob.glob(str(crossmall_base / "stock_*.csv"))[0])
+    rak = Path(glob.glob(str(crossmall_base / "dl-normal-item_*.csv"))[0])
+    xm_name, xm_var, _ = load_crossmall(prod, skus, stock)
+    rk = build_rakuten_index(load_rakuten_rows(rak))
+    code2token = {c: product_token(c, xm_name, rk) for c in xm_var}
+    plan.mappings.extend(build_crossmall_mappings(plan.masters, xm_var, code2token))
     await apply_plan(plan, dry_run=dry_run)
     return 0
 
@@ -277,10 +328,17 @@ def main() -> None:
     p.add_argument(
         "--base", type=Path, default=Path("csv_file/phase1-B"), help="dir with the CSV artifacts"
     )
+    p.add_argument(
+        "--crossmall-base",
+        type=Path,
+        default=Path("csv_file/phase1-B/latest_version"),
+        dest="crossmall_base",
+        help="dir with raw CROSS MALL item/item_sku/stock/Rakuten (for crossmall mappings)",
+    )
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
     configure_logging("INFO")
-    sys.exit(asyncio.run(run(args.base, dry_run=args.dry_run)))
+    sys.exit(asyncio.run(run(args.base, args.crossmall_base, dry_run=args.dry_run)))
 
 
 if __name__ == "__main__":

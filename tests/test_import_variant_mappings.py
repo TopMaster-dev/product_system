@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.cli.import_variant_mappings import build_plan, canonical_sku
+from app.cli.import_variant_mappings import (
+    MasterSpec,
+    build_crossmall_mappings,
+    build_plan,
+    canonical_sku,
+)
 
 
 @pytest.mark.unit
@@ -83,6 +88,28 @@ def test_rakuten_only_row_uses_rakuten_sku_as_code() -> None:
     plan = build_plan([_m("R99", "gold", "", "", "9999")], [], [])
     assert "9999" in plan.masters
     assert plan.masters["9999"].is_bundle is False
+
+
+@pytest.mark.unit
+def test_crossmall_mappings_cover_aliases_and_skip_bundles() -> None:
+    masters = {
+        "N23gold": MasterSpec("N23gold", "N23 gold", "N23", "gold", "", is_bundle=False),
+        "N29gold": MasterSpec(
+            "N29gold", "N29 gold", "N29", "gold", "", is_bundle=True
+        ),  # set parent
+    }
+    xm_var = {
+        "006c": [{"sku": "x", "color": "gold", "size": ""}],  # alias of N23
+        "N23": [{"sku": "y", "color": "gold", "size": ""}],  # alias of N23
+        "056c": [{"sku": "z", "color": "gold", "size": ""}],  # -> N29 (bundle) -> skipped
+    }
+    code2token = {"006c": "N23", "N23": "N23", "056c": "N29"}
+    out = build_crossmall_mappings(masters, xm_var, code2token)
+    keys = {(m.channel_sku, m.sku_code) for m in out}
+    assert ("006c|gold|", "N23gold") in keys  # alias 1 -> master
+    assert ("N23|gold|", "N23gold") in keys  # alias 2 -> same master
+    assert all(m.sku_code != "N29gold" for m in out)  # bundle parent skipped
+    assert all(m.channel == "crossmall" for m in out)
 
 
 @pytest.mark.unit

@@ -97,9 +97,9 @@ def test_write_csv_overwrites_existing(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_csv_is_compatible_with_aggregate_csv_by_product(tmp_path: Path) -> None:
-    """The output must be readable by app.cli.reconcile_inventory's
-    aggregator without any further transformation."""
+def test_csv_is_compatible_with_aggregate_csv_variants(tmp_path: Path) -> None:
+    """The output must be readable by app.cli.reconcile_inventory's aggregator.
+    The dummy writer emits empty attrs, so keys are '{code}||' (variant-level)."""
     out = tmp_path / "dummy.csv"
     write_csv(
         [
@@ -109,10 +109,10 @@ def test_csv_is_compatible_with_aggregate_csv_by_product(tmp_path: Path) -> None
         ],
         out,
     )
-    from app.cli.reconcile_inventory import aggregate_csv_by_product
+    from app.cli.reconcile_inventory import aggregate_csv_variants
 
-    agg = aggregate_csv_by_product(out)
-    assert agg == {"ABC": 15, "XYZ": 7}
+    agg = aggregate_csv_variants(out)
+    assert agg == {"ABC||": 15, "XYZ||": 7}
 
 
 # ---------- main() ----------
