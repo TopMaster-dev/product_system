@@ -98,6 +98,15 @@ async def test_home_renders(admin_client, _test_engine) -> None:
     assert r.status_code == 200
     assert "ダッシュボード" in r.text
     assert "operator:" in r.text
+    assert "/admin/manual" in r.text  # header book-icon link to the manual
+
+
+async def test_manual_page_renders(admin_client, _test_engine) -> None:
+    r = await admin_client.get("/admin/manual", headers=_auth_header())
+    assert r.status_code == 200
+    assert "管理画面 操作手順書" in r.text
+    assert "リコンサイル" in r.text
+    assert "困ったときは" in r.text
 
 
 async def test_inventory_list_filters_and_paginates(admin_client, _test_engine) -> None:

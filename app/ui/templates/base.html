@@ -120,6 +120,10 @@
         </nav>
 
         <div class="flex items-center gap-2 flex-shrink-0">
+          <a href="/admin/manual" title="操作手順書" aria-label="操作手順書"
+             class="p-2 rounded-md transition {% if current_path.startswith('/admin/manual') %}text-brand-700 bg-brand-50/60{% else %}text-ink-500 hover:text-brand-700 hover:bg-ink-100{% endif %}">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          </a>
           <span class="hidden lg:inline-flex items-center gap-1.5 text-xs bg-ink-50 ring-1 ring-ink-200 px-2.5 py-1 rounded-full">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
             <span class="text-ink-700 font-mono">{{ operator }}</span>
@@ -150,6 +154,12 @@
             {% endif %}
           </a>
         {% endfor %}
+        <a href="/admin/manual"
+           class="flex items-center justify-between px-3 py-2.5 rounded-md text-sm transition
+                  {% if current_path.startswith('/admin/manual') %}bg-brand-50 text-brand-700 font-semibold{% else %}text-ink-700 hover:bg-ink-100{% endif %}">
+          操作手順書
+          <svg class="w-4 h-4 text-ink-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        </a>
         <div class="border-t border-ink-100 mt-2 pt-2 px-3 pb-2 text-xs text-ink-500">
           <span>operator: </span><span class="font-mono text-ink-800">{{ operator }}</span>
         </div>
