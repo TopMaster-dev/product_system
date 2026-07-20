@@ -106,3 +106,50 @@ async def test_zeroes_only_migrated_legacy_snapshots(_test_engine) -> None:
             .all()
         )
         assert len(events) == 1
+
+
+async def test_all_negative_zeroes_every_negative_regardless_of_scope(_test_engine) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session, session.begin():
+        # An UN-migrated master (no crossmall mapping) with a negative snapshot —
+        # out of legacy scope, but --all-negative must clear it.
+        orphan = MasterSku(sku_code="H1", name="giftbox", attributes={})
+        positive = MasterSku(sku_code="N23gold", name="v", attributes={"token": "N23"})
+        session.add_all([orphan, positive])
+        await session.flush()
+        orphan_id, positive_id = orphan.id, positive.id
+        session.add_all(
+            [
+                InventorySnapshot(master_sku_id=orphan.id, on_hand_qty=-12509),
+                InventorySnapshot(master_sku_id=positive.id, on_hand_qty=27),
+            ]
+        )
+
+    # Legacy mode leaves the orphan (no crossmall mapping => not in scope).
+    await run(dry_run=False, session_factory=factory)
+    async with factory() as session:
+        assert (
+            await session.execute(
+                select(InventorySnapshot.on_hand_qty).where(
+                    InventorySnapshot.master_sku_id == orphan_id
+                )
+            )
+        ).scalar_one() == -12509
+
+    # --all-negative clears the orphan; the positive snapshot is untouched.
+    await run(dry_run=False, all_negative=True, session_factory=factory)
+    async with factory() as session:
+        assert (
+            await session.execute(
+                select(InventorySnapshot.on_hand_qty).where(
+                    InventorySnapshot.master_sku_id == orphan_id
+                )
+            )
+        ).scalar_one() == 0
+        assert (
+            await session.execute(
+                select(InventorySnapshot.on_hand_qty).where(
+                    InventorySnapshot.master_sku_id == positive_id
+                )
+            )
+        ).scalar_one() == 27

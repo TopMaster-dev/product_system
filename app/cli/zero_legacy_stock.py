@@ -66,25 +66,32 @@ async def legacy_master_ids(session: AsyncSession) -> list[int]:
     return [mid for (mid,) in old.all() if mid not in variant_ids]
 
 
-async def run(*, dry_run: bool, session_factory: SessionFactory | None = None) -> int:
+async def run(
+    *,
+    dry_run: bool,
+    all_negative: bool = False,
+    session_factory: SessionFactory | None = None,
+) -> int:
     factory = session_factory or async_session_factory
     async with factory() as session, session.begin():
-        ids = await legacy_master_ids(session)
-        rows: list[tuple[int, int, str]] = []
-        if ids:
-            result = await session.execute(
-                select(
-                    InventorySnapshot.master_sku_id,
-                    InventorySnapshot.on_hand_qty,
-                    MasterSku.sku_code,
-                )
-                .join(MasterSku, MasterSku.id == InventorySnapshot.master_sku_id)
-                .where(
-                    InventorySnapshot.master_sku_id.in_(ids),
-                    InventorySnapshot.on_hand_qty != 0,
-                )
+        base = select(
+            InventorySnapshot.master_sku_id,
+            InventorySnapshot.on_hand_qty,
+            MasterSku.sku_code,
+        ).join(MasterSku, MasterSku.id == InventorySnapshot.master_sku_id)
+        ids: list[int] = []
+        if all_negative:
+            # Clear EVERY remaining negative snapshot (retired duplicates,
+            # non-inventory add-ons, real out-of-stock oversells) — physical
+            # stock can't be negative, so the correct floor is 0.
+            stmt = base.where(InventorySnapshot.on_hand_qty < 0)
+        else:
+            ids = await legacy_master_ids(session)
+            stmt = base.where(
+                InventorySnapshot.master_sku_id.in_(ids or [-1]),
+                InventorySnapshot.on_hand_qty != 0,
             )
-            rows = [(mid, qty, code) for mid, qty, code in result.all()]
+        rows = [(mid, qty, code) for mid, qty, code in (await session.execute(stmt)).all()]
 
         zeroed = 0
         now = datetime.now(UTC)
@@ -99,7 +106,7 @@ async def run(*, dry_run: bool, session_factory: SessionFactory | None = None) -
                 source_channel=_SRC_CHANNEL,
                 source_order_id=_SRC_ORDER,
                 source_line_id=sku_code,
-                reason="Zero legacy product-level stock after variant cutover",
+                reason="Zero legacy/negative stock after variant cutover",
                 occurred_at=now,
             )
             try:
@@ -121,19 +128,26 @@ async def run(*, dry_run: bool, session_factory: SessionFactory | None = None) -
 
         log.info(
             "zero_legacy.dry_run" if dry_run else "zero_legacy.done",
+            mode="all_negative" if all_negative else "legacy",
             legacy_masters=len(ids),
-            nonzero_snapshots=len(rows),
+            target_snapshots=len(rows),
             zeroed=zeroed,
+            items=[f"{code}={qty}" for _, qty, code in rows][:60],
         )
     return 0
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Zero legacy product-level snapshots after cutover")
+    p = argparse.ArgumentParser(description="Zero legacy/negative snapshots after cutover")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument(
+        "--all-negative",
+        action="store_true",
+        help="Zero EVERY negative snapshot (not just migrated legacy masters).",
+    )
     args = p.parse_args()
     configure_logging("INFO")
-    sys.exit(asyncio.run(run(dry_run=args.dry_run)))
+    sys.exit(asyncio.run(run(dry_run=args.dry_run, all_negative=args.all_negative)))
 
 
 if __name__ == "__main__":
