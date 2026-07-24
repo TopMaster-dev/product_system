@@ -30,6 +30,7 @@ class NormalizedOrderLine(BaseModel):
     line_id: str
     channel_sku: str
     channel_product_id: str | None = None
+    product_name: str | None = None  # channel's own product/item name (for alerts)
     quantity: int = Field(gt=0)
     unit_price: Decimal
     currency: str = "JPY"

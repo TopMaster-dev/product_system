@@ -270,6 +270,7 @@ class RakutenAdapter(ChannelAdapter):
                         line_id=str(ln.get("itemDetailId") or ln.get("itemNumber")),
                         channel_sku=str(ln.get("manageNumber") or ln.get("itemNumber") or ""),
                         channel_product_id=str(ln.get("itemNumber") or ""),
+                        product_name=(str(ln.get("itemName") or "") or None),
                         quantity=int(ln.get("units") or 0),
                         unit_price=Decimal(str(ln.get("price") or "0")),
                         currency="JPY",

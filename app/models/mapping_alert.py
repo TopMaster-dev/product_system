@@ -34,6 +34,9 @@ class MappingAlert(Base, TimestampMixin):
     channel: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     channel_sku: Mapped[str] = mapped_column(String(128), nullable=False)
     channel_product_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Channel's own product/item name at time of order, to identify the SKU in
+    # the alerts screen (楽天=itemName / Shopify=line name). Nullable.
+    product_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     marketplace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

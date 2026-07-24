@@ -218,6 +218,7 @@ class OrderIngestService:
             channel=payload.channel,
             channel_sku=line.channel_sku,
             channel_product_id=line.channel_product_id,
+            product_name=line.product_name,
             marketplace_id=payload.marketplace_id,
             status=MappingAlertStatusEnum.OPEN,
             first_seen_at=datetime.now(UTC),
@@ -237,6 +238,11 @@ class OrderIngestService:
             )
             row = existing.scalar_one()
             row.occurrence_count += 1
+            # Backfill identifying info if an earlier alert lacked it.
+            if not row.product_name and line.product_name:
+                row.product_name = line.product_name
+            if not row.channel_product_id and line.channel_product_id:
+                row.channel_product_id = line.channel_product_id
             if row.status == MappingAlertStatusEnum.RESOLVED:
                 # A previously-resolved alert came back unmapped — reopen it.
                 row.status = MappingAlertStatusEnum.OPEN

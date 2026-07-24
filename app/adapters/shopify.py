@@ -52,6 +52,7 @@ query Orders($first: Int!, $query: String!, $cursor: String) {
           edges {
             node {
               id
+              name
               sku
               quantity
               variant { id product { id } }
@@ -452,6 +453,7 @@ class ShopifyAdapter(ChannelAdapter):
                     line_id=str(ln["id"]),
                     channel_sku=ln.get("sku") or "",
                     channel_product_id=str(ln.get("variant_id") or ""),
+                    product_name=(ln.get("name") or ln.get("title") or None),
                     quantity=int(ln.get("quantity") or 0),
                     unit_price=Decimal(str(price)),
                     currency=currency,
@@ -490,6 +492,7 @@ class ShopifyAdapter(ChannelAdapter):
                     line_id=_strip_gid(ln["id"]),
                     channel_sku=ln.get("sku") or "",
                     channel_product_id=_strip_gid((ln.get("variant") or {}).get("id")),
+                    product_name=(ln.get("name") or None),
                     quantity=int(ln["quantity"]),
                     unit_price=Decimal(str(money.get("amount", "0"))),
                     currency=money.get("currencyCode", "JPY"),

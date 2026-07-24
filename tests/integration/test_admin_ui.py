@@ -822,3 +822,24 @@ async def test_reconcile_export_csv(admin_client, _test_engine) -> None:
     assert "text/csv" in r.headers["content-type"]
     assert "006cV" in r.text
     assert "sku_code,name,current_qty,target_qty,delta,decision" in r.text
+
+
+async def test_alerts_show_product_name_and_management_number(admin_client, _test_engine) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_sku(factory, "N23gold", "N23 ネックレス gold")  # master carries a Shopify-side name
+    async with factory() as session, session.begin():
+        session.add(
+            MappingAlert(
+                channel="rakuten",
+                channel_sku="10113",
+                channel_product_id="itm-10113",
+                product_name="馬蹄ネックレス gold",
+                status="open",
+            )
+        )
+
+    r = await admin_client.get("/admin/alerts?status=open", headers=_auth_header())
+    assert r.status_code == 200
+    assert "馬蹄ネックレス gold" in r.text  # product name identifies the alert
+    assert "itm-10113" in r.text  # 商品管理番号 shown (differs from SKU)
+    assert "N23 ネックレス gold" in r.text  # master name shown in the resolve dropdown
