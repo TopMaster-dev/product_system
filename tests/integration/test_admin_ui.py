@@ -867,3 +867,21 @@ async def test_shopify_images_render_in_inventory_and_alert_preview(
     assert r.status_code == 200
     assert 'id="skuImages"' in r.text
     assert url in r.text
+
+
+async def test_thumbnails_are_click_to_enlarge(admin_client, _test_engine) -> None:
+    """Thumbnails are too small to identify a product, so they open a lightbox."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session, session.begin():
+        sku = MasterSku(
+            sku_code="ZOOM-1", name="拡大できる商品", image_url="https://cdn.shopify.com/z.jpg"
+        )
+        session.add(sku)
+        await session.flush()
+        session.add(InventorySnapshot(master_sku_id=sku.id, on_hand_qty=1))
+
+    r = await admin_client.get("/admin/inventory", headers=_auth_header())
+    assert r.status_code == 200
+    assert "data-zoom" in r.text  # thumbnail opts into the lightbox
+    assert 'data-caption="ZOOM-1 — 拡大できる商品"' in r.text  # caption identifies it
+    assert 'id="imgLightbox"' in r.text  # the shared lightbox is present (base.html)

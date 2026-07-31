@@ -195,6 +195,21 @@
     </div>
   </footer>
 
+  <!-- Image lightbox: any <img data-zoom> enlarges on click (thumbnails are too
+       small to identify a product at a glance). -->
+  <div id="imgLightbox" role="dialog" aria-modal="true" aria-label="商品画像の拡大"
+       class="hidden fixed inset-0 z-50 items-center justify-center bg-ink-900/80 backdrop-blur-sm p-4">
+    <button id="imgLightboxClose" type="button" aria-label="閉じる"
+            class="absolute top-4 right-4 p-2.5 rounded-full bg-white/90 hover:bg-white text-ink-800 shadow-lg transition">
+      <svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <figure class="flex flex-col items-center gap-3 max-w-2xl w-full pointer-events-none">
+      <img id="imgLightboxImg" src="" alt=""
+           class="max-h-[75vh] max-w-full w-auto rounded-xl bg-white object-contain shadow-2xl" />
+      <figcaption id="imgLightboxCap" class="text-white text-sm text-center font-medium px-4"></figcaption>
+    </figure>
+  </div>
+
   <script>
     (function () {
       const btn = document.getElementById('navToggle');
@@ -206,6 +221,47 @@
         nav.classList.toggle('hidden');
         open.classList.toggle('hidden', wasHidden);
         close.classList.toggle('hidden', !wasHidden);
+      });
+    })();
+
+    (function () {
+      const box = document.getElementById('imgLightbox');
+      const big = document.getElementById('imgLightboxImg');
+      const cap = document.getElementById('imgLightboxCap');
+      const closeBtn = document.getElementById('imgLightboxClose');
+      if (!box) return;
+      let lastFocus = null;
+
+      function openBox(src, caption) {
+        lastFocus = document.activeElement;
+        big.src = src;
+        big.alt = caption || '';
+        cap.textContent = caption || '';
+        box.classList.remove('hidden');
+        box.classList.add('flex');
+        document.body.style.overflow = 'hidden';
+        closeBtn.focus();
+      }
+      function closeBox() {
+        box.classList.add('hidden');
+        box.classList.remove('flex');
+        big.removeAttribute('src');
+        document.body.style.overflow = '';
+        if (lastFocus && lastFocus.focus) lastFocus.focus();
+      }
+
+      document.addEventListener('click', function (e) {
+        if (!(e.target instanceof Element)) return;
+        const thumb = e.target.closest('img[data-zoom]');
+        if (thumb && thumb.getAttribute('src')) {
+          e.preventDefault();
+          openBox(thumb.getAttribute('src'), thumb.dataset.caption);
+          return;
+        }
+        if (e.target === box || e.target.closest('#imgLightboxClose')) closeBox();
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !box.classList.contains('hidden')) closeBox();
       });
     })();
   </script>

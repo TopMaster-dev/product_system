@@ -50,13 +50,13 @@
 <!-- Filter -->
 <form method="get" class="flex flex-col sm:flex-row gap-2 mb-4">
   <input type="hidden" name="status" value="{{ status }}" />
-  <select name="channel" class="sm:w-44 px-3 py-2 border border-ink-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
+  <select name="channel" aria-label="チャネルで絞り込み" class="sm:w-44 px-3 py-2 border border-ink-300 rounded-md text-sm bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition">
     <option value="">全チャネル</option>
     {% for c in channels %}
       <option value="{{ c }}" {% if c == channel_filter %}selected{% endif %}>{{ c }}</option>
     {% endfor %}
   </select>
-  <input name="q" value="{{ q or '' }}" placeholder="チャネルSKUで絞り込み"
+  <input name="q" value="{{ q or '' }}" placeholder="チャネルSKUで絞り込み" aria-label="チャネルSKUで絞り込み"
          class="flex-1 px-3 py-2 border border-ink-300 rounded-md text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition bg-white" />
   <button type="submit" class="rounded-md bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2 transition whitespace-nowrap">絞り込み</button>
   {% if channel_filter or q %}
@@ -85,8 +85,8 @@
 {% macro resolve_form(a) %}
   <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="flex gap-1.5 items-center">
     <img id="prev-{{ a.id }}" src="" alt="" referrerpolicy="no-referrer" style="display:none"
-         title="選択中のShopify商品"
-         class="w-9 h-9 rounded-lg object-cover bg-ink-100 ring-1 ring-ink-200 flex-shrink-0" />
+         data-zoom title="選択中のShopify商品（クリックで拡大）"
+         class="w-9 h-9 rounded-lg object-cover bg-ink-100 ring-1 ring-ink-200 flex-shrink-0 cursor-zoom-in hover:ring-brand-400 hover:ring-2 transition" />
     <select name="master_sku_id" required data-preview="prev-{{ a.id }}" aria-label="紐付ける社内SKU"
             class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 outline-none" style="max-width: 200px;">
       <option value="">— SKU 選択 —</option>

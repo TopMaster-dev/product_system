@@ -112,8 +112,9 @@
 
 {% macro thumb(row, size) %}
   {% if row.image_url %}
-    <img src="{{ row.image_url }}" alt="" loading="lazy" referrerpolicy="no-referrer"
-         class="{{ size }} rounded-lg object-cover bg-ink-100 ring-1 ring-ink-200 flex-shrink-0"
+    <img src="{{ row.image_url }}" alt="{{ row.name }}" loading="lazy" referrerpolicy="no-referrer"
+         data-zoom data-caption="{{ row.sku_code }} — {{ row.name }}" title="クリックで拡大"
+         class="{{ size }} rounded-lg object-cover bg-ink-100 ring-1 ring-ink-200 flex-shrink-0 cursor-zoom-in hover:ring-brand-400 hover:ring-2 transition"
          onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
     <span class="{{ size }} rounded-lg bg-ink-100 ring-1 ring-ink-200 flex-shrink-0 items-center justify-center text-ink-300" style="display:none">
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
