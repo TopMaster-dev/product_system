@@ -83,6 +83,7 @@ def _base_query(q: str) -> Select[Any]:
             MasterSku.sku_code,
             MasterSku.name,
             MasterSku.jan_code,
+            MasterSku.image_url,
             _QTY.label("on_hand_qty"),
             InventorySnapshot.updated_at,
         )

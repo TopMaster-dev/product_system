@@ -106,7 +106,15 @@ _LIST_VARIANTS_QUERY = """
 query ListVariants($first: Int!, $cursor: String) {
   productVariants(first: $first, after: $cursor) {
     pageInfo { hasNextPage endCursor }
-    edges { node { sku title product { title } inventoryItem { id } } }
+    edges {
+      node {
+        sku
+        title
+        image { url }
+        product { title featuredImage { url } }
+        inventoryItem { id }
+      }
+    }
   }
 }
 """
@@ -311,11 +319,18 @@ class ShopifyAdapter(ChannelAdapter):
             conn = ((body.get("data") or {}).get("productVariants")) or {}
             for edge in conn.get("edges") or []:
                 node = edge.get("node") or {}
+                product = node.get("product") or {}
+                # Prefer the variant's own image; fall back to the product's
+                # featured image (most variants inherit it).
+                image = (node.get("image") or {}).get("url") or (
+                    product.get("featuredImage") or {}
+                ).get("url")
                 out.append(
                     {
                         "sku": node.get("sku") or "",
                         "variant_title": node.get("title") or "",
-                        "product_title": (node.get("product") or {}).get("title") or "",
+                        "product_title": product.get("title") or "",
+                        "image_url": image or "",
                         "inventory_item_id": (node.get("inventoryItem") or {}).get("id") or "",
                     }
                 )

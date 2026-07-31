@@ -84,7 +84,10 @@
 
 {% macro resolve_form(a) %}
   <form method="post" action="/admin/alerts/{{ a.id }}/resolve" class="flex gap-1.5 items-center">
-    <select name="master_sku_id" required
+    <img id="prev-{{ a.id }}" src="" alt="" referrerpolicy="no-referrer" style="display:none"
+         title="選択中のShopify商品"
+         class="w-9 h-9 rounded-lg object-cover bg-ink-100 ring-1 ring-ink-200 flex-shrink-0" />
+    <select name="master_sku_id" required data-preview="prev-{{ a.id }}" aria-label="紐付ける社内SKU"
             class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 outline-none" style="max-width: 200px;">
       <option value="">— SKU 選択 —</option>
       {% for s in master_skus %}<option value="{{ s.id }}">{{ s.sku_code }}{% if s.name %} — {{ s.name }}{% endif %}</option>{% endfor %}
@@ -95,7 +98,7 @@
 
 {% macro start_form(a) %}
   <form method="post" action="/admin/alerts/{{ a.id }}/start" class="flex gap-1.5 items-center">
-    <input name="assignee" placeholder="担当者（任意）"
+    <input name="assignee" placeholder="担当者（任意）" aria-label="担当者（任意）"
            class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 outline-none" style="max-width: 130px;" />
     <button class="flex-shrink-0 rounded-md border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium px-3 py-1.5 transition whitespace-nowrap">対応中にする</button>
   </form>
@@ -191,4 +194,26 @@
     </div>
   {% endfor %}
 </div>
+
+<!-- master_sku_id -> Shopify image URL, emitted once and looked up by JS so the
+     per-row SKU selects stay small. -->
+<script id="skuImages" type="application/json">{{ sku_images | tojson }}</script>
+<script>
+  (function () {
+    var el = document.getElementById('skuImages');
+    var images = {};
+    try { images = JSON.parse(el.textContent || '{}'); } catch (e) { images = {}; }
+    function sync(sel) {
+      var preview = document.getElementById(sel.dataset.preview);
+      if (!preview) return;
+      var url = images[sel.value];
+      if (url) { preview.src = url; preview.style.display = ''; }
+      else { preview.removeAttribute('src'); preview.style.display = 'none'; }
+    }
+    document.querySelectorAll('select[data-preview]').forEach(function (sel) {
+      sel.addEventListener('change', function () { sync(sel); });
+      sync(sel);
+    });
+  })();
+</script>
 {% endblock %}

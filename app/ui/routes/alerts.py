@@ -87,6 +87,9 @@ async def alerts_list(
     master_skus = (
         (await session.execute(select(MasterSku).order_by(MasterSku.sku_code))).scalars().all()
     )
+    # Emitted once as JSON (not as a data- attribute on every option) so the
+    # per-row SKU selects stay small even with hundreds of masters.
+    sku_images = {str(s.id): s.image_url for s in master_skus if s.image_url}
     return templates.TemplateResponse(
         request,
         "alerts.html",
@@ -95,6 +98,7 @@ async def alerts_list(
             "version": __version__,
             "alerts": alerts,
             "master_skus": master_skus,
+            "sku_images": sku_images,
             "status": status,
             "counts": counts,
             "summary": {"by_channel": by_channel, "recent_new": recent_new},

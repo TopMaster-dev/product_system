@@ -843,3 +843,27 @@ async def test_alerts_show_product_name_and_management_number(admin_client, _tes
     assert "馬蹄ネックレス gold" in r.text  # product name identifies the alert
     assert "itm-10113" in r.text  # 商品管理番号 shown (differs from SKU)
     assert "N23 ネックレス gold" in r.text  # master name shown in the resolve dropdown
+
+
+async def test_shopify_images_render_in_inventory_and_alert_preview(
+    admin_client, _test_engine
+) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    url = "https://cdn.shopify.com/s/files/1/test/n23gold.jpg"
+    async with factory() as session, session.begin():
+        sku = MasterSku(sku_code="IMG-1", name="画像つき商品", image_url=url)
+        session.add(sku)
+        await session.flush()
+        session.add(InventorySnapshot(master_sku_id=sku.id, on_hand_qty=5))
+        session.add(MappingAlert(channel="rakuten", channel_sku="IMG-A", status="open"))
+
+    # Inventory list renders the thumbnail.
+    r = await admin_client.get("/admin/inventory", headers=_auth_header())
+    assert r.status_code == 200
+    assert url in r.text
+
+    # Alerts page ships the id->image map used by the resolve preview.
+    r = await admin_client.get("/admin/alerts?status=open", headers=_auth_header())
+    assert r.status_code == 200
+    assert 'id="skuImages"' in r.text
+    assert url in r.text
