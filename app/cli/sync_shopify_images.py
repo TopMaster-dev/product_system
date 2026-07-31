@@ -23,7 +23,7 @@ import argparse
 import asyncio
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.shopify import ShopifyAdapter
@@ -91,6 +91,15 @@ async def run(*, dry_run: bool, session_factory: SessionFactory | None = None) -
         code_rows = (await session.execute(select(MasterSku.sku_code, MasterSku.id))).all()
         code_to_master = {code: mid for code, mid in code_rows}  # noqa: C416
 
+        # Current DB state, so one dry-run answers "did a previous sync write?".
+        total_masters = await session.scalar(select(func.count()).select_from(MasterSku)) or 0
+        already_set = (
+            await session.scalar(
+                select(func.count()).select_from(MasterSku).where(MasterSku.image_url.isnot(None))
+            )
+            or 0
+        )
+
         wanted = resolve_images(variants, mapping_sku_to_master, code_to_master)
         updated = 0
         if wanted and not dry_run:
@@ -113,9 +122,12 @@ async def run(*, dry_run: bool, session_factory: SessionFactory | None = None) -
 
         log.info(
             "sync_images.dry_run" if dry_run else "sync_images.done",
+            total_masters=total_masters,
+            image_url_already_set=already_set,
             matched_masters=len(wanted),
             updated=updated,
             unmatched_variants=with_image - len(wanted),
+            sample=[f"{c}" for c, _ in list(mapping_sku_to_master.items())[:3]],
         )
     return 0
 
