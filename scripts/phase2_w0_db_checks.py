@@ -66,8 +66,17 @@ async def main() -> int:
             print("   [全期間]")
             for a in alltime:
                 print(f"     {a.status:10} runs={a.runs:<5} {a.first} .. {a.last}")
-            if not any(a.status == "succeeded" for a in alltime):
-                print("     -> 一度も成功していません(初期IAM設定の漏れが濃厚)。")
+            # NOTE: the service writes status="success" (app/services/bigquery_export.py:152),
+            # NOT "succeeded". Matching the wrong literal here previously reported
+            # "never succeeded" for a job that had in fact worked for its first days.
+            ok = next((a for a in alltime if a.status == "success"), None)
+            if ok is None:
+                print("     -> 一度も成功していません。")
+            else:
+                print(f"     -> 最後の成功: {ok.last}")
+                bad = next((a for a in alltime if a.status == "failed"), None)
+                if bad is not None and bad.last > ok.last:
+                    print(f"        以降ずっと失敗しています(直近 {bad.last})。")
             failed = [r for r in rows if r.status == "failed"]
             for r in rows:
                 mark = "  [FAILED]" if r.status == "failed" else ""
