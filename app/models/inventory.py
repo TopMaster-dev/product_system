@@ -25,6 +25,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +44,25 @@ class InventoryEvent(Base):
             name="uq_inventory_event_source",
         ),
         Index("ix_inventory_events_sku_time", "master_sku_id", "occurred_at"),
+        # --- Phase 2 hot-path indexes (created in migration 0009 ONLY) -------
+        # ix_inventory_events_sku_time leads with master_sku_id, so it cannot
+        # serve the occurred_at-only predicates used by best-seller / velocity /
+        # rollup aggregation (PG15 has no index skip scan). These partial
+        # covering indexes make those queries index-only.
+        Index(
+            "ix_inventory_events_consumed_time",
+            "occurred_at",
+            postgresql_include=["master_sku_id", "quantity_delta"],
+            postgresql_where=text("event_type = 'order_consumed'"),
+        ),
+        Index(
+            "ix_inventory_events_returned_time",
+            "occurred_at",
+            postgresql_include=["master_sku_id", "quantity_delta"],
+            postgresql_where=text("event_type = 'cancellation_returned'"),
+        ),
+        # Rollup rebuild detects backdated events by insertion time, not occurred_at.
+        Index("ix_inventory_events_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

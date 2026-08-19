@@ -38,9 +38,9 @@ async def main() -> int:
                         SELECT table_name,
                                status,
                                count(*) AS runs,
-                               max(created_at) AS latest
+                               max(started_at) AS latest
                         FROM bigquery_export_runs
-                        WHERE created_at > now() - interval '7 days'
+                        WHERE started_at > now() - interval '7 days'
                         GROUP BY table_name, status
                         ORDER BY table_name, status
                         """
@@ -49,6 +49,25 @@ async def main() -> int:
             ).all()
             if not rows:
                 print("   直近7日の実行記録がありません(スケジューラ未実行の可能性)。")
+
+            # 全期間の成否 — 「一度でも成功したことがあるか」を確定させる
+            alltime = (
+                await conn.execute(
+                    text(
+                        """
+                        SELECT status, count(*) AS runs,
+                               min(started_at) AS first, max(started_at) AS last
+                        FROM bigquery_export_runs
+                        GROUP BY status ORDER BY status
+                        """
+                    )
+                )
+            ).all()
+            print("   [全期間]")
+            for a in alltime:
+                print(f"     {a.status:10} runs={a.runs:<5} {a.first} .. {a.last}")
+            if not any(a.status == "succeeded" for a in alltime):
+                print("     -> 一度も成功していません(初期IAM設定の漏れが濃厚)。")
             failed = [r for r in rows if r.status == "failed"]
             for r in rows:
                 mark = "  [FAILED]" if r.status == "failed" else ""
@@ -64,17 +83,18 @@ async def main() -> int:
                     await conn.execute(
                         text(
                             """
-                            SELECT table_name, error, created_at
+                            SELECT table_name, error, started_at
                             FROM bigquery_export_runs
                             WHERE status = 'failed'
-                            ORDER BY created_at DESC
-                            LIMIT 3
+                            ORDER BY started_at DESC
+                            LIMIT 5
                             """
                         )
                     )
                 ).all()
                 for e in err:
-                    print(f"     - {e.table_name} @ {e.created_at}: {str(e.error)[:160]}")
+                    print(f"     - {e.table_name} @ {e.started_at}:")
+                    print(f"       {str(e.error)[:400]}")
             else:
                 print("   [OK] 直近7日に失敗はありません。")
 

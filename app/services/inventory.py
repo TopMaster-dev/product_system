@@ -158,9 +158,27 @@ class InventoryService:
         unit ordered of this master. A bundle/shared-stock parent fans out to its
         components; a normal SKU is itself with quantity_per=1.
 
+        Returns an EMPTY list for a master with `is_stock_managed = false` (gift
+        boxes, coupons, made-to-order items), so no inventory event is written at
+        all. This is deliberately the ONLY place that check lives: both the
+        consume path (`OrderIngestService._ingest_new`) and the cancellation
+        compensation path (`_compensate_lines`) route through here, so they stop
+        together. Guarding only the consume side would let a later cancellation
+        ADD phantom stock for an item that never had any.
+
+        The behaviour is NOT retroactive: an order consumed before the flag was
+        set is not compensated on a cancellation after it. Deploy the code first,
+        then run the cleanup CLI.
+
         The fan-out reuses one EventSource for every component — master_sku_id is
         part of uq_inventory_event_source, so the component events don't collide.
         """
+        managed = await self._session.execute(
+            select(MasterSku.is_stock_managed).where(MasterSku.id == master_sku_id)
+        )
+        if managed.scalar_one_or_none() is False:
+            return []
+
         result = await self._session.execute(
             select(
                 BundleComponent.component_master_sku_id,

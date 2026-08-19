@@ -821,7 +821,12 @@ async def test_reconcile_export_csv(admin_client, _test_engine) -> None:
     assert r.status_code == 200
     assert "text/csv" in r.headers["content-type"]
     assert "006cV" in r.text
-    assert "sku_code,name,current_qty,target_qty,delta,decision" in r.text
+    # The audit export distinguishes the scan-time proposal from what approval
+    # actually wrote to inventory_events (they differ when stock moved between).
+    assert (
+        "sku_code,name,current_qty,target_qty,delta_at_scan,applied_delta,decision,decided_by"
+        in r.text
+    )
 
 
 async def test_alerts_show_product_name_and_management_number(admin_client, _test_engine) -> None:

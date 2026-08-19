@@ -138,7 +138,12 @@ class OrderIngestService:
             order.raw_payload = payload.raw_payload
 
         if now_cancelled and not prev_cancelled:
-            cancelled = await self._compensate_lines(order, payload.ordered_at)
+            # Stamp the compensation at CANCELLATION time, not the original order
+            # time. Backdating writes an event at T-60 for a 60-day-old order,
+            # which silently corrupts every daily aggregate from that date
+            # forward — a forward running sum never revisits it, and no fixed
+            # rebuild window can see it.
+            cancelled = await self._compensate_lines(order, datetime.now(UTC))
 
         order.status = payload.status
 

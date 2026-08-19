@@ -71,3 +71,19 @@ class ReconcileDiffDecisionEnum(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     SKIPPED = "skipped"
+
+
+class NonInventoryKindEnum(StrEnum):
+    """Why a master SKU carries no physical stock.
+
+    Set together with `master_skus.is_stock_managed = false`; a CHECK constraint
+    keeps the two in lockstep. Such SKUs never produce inventory events, so they
+    cannot accumulate the runaway negatives seen in Phase 1-B (gift boxes reached
+    -12509), and they are excluded from analytics and reorder.
+    """
+
+    PACKAGING = "packaging"  # ギフトボックス・ラッピング材
+    COUPON = "coupon"  # クーポン・値引き行
+    MADE_TO_ORDER = "made_to_order"  # 受注生産・長さ変更等
+    SERVICE = "service"  # 役務・手数料
+    OTHER = "other"

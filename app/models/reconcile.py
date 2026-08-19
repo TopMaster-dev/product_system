@@ -89,6 +89,10 @@ class ReconcileDiff(Base, TimestampMixin):
     current_qty: Mapped[int] = mapped_column(Integer, nullable=False)
     target_qty: Mapped[int] = mapped_column(Integer, nullable=False)
     delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The delta actually written to inventory_events at approval time. It differs
+    # from `delta` whenever stock moved between the scan and the approval, and it
+    # is the number an auditor must see — `delta` is only the scan-time proposal.
+    applied_delta: Mapped[int | None] = mapped_column(Integer, nullable=True)
     decision: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     applied_event_id: Mapped[int | None] = mapped_column(
         BigInteger,

@@ -10,6 +10,14 @@ This happened in production: `master_skus.is_bundle` (migration 0005) and
 master_skus export.
 
 These tests make that class of drift a CI failure instead of a silent prod defect.
+
+RULE when adding a column to an ALREADY-DEPLOYED table: the new field MUST be
+`"mode": "NULLABLE"`, even when the ORM column is `nullable=False`. BigQuery only
+permits adding NULLABLE/REPEATED columns to an existing table, so a REQUIRED field
+makes Terraform plan a destroy+create of the table — i.e. it silently proposes
+deleting every exported row. `test_schema_nullability_matches_orm` therefore only
+rejects the unsafe direction (JSON REQUIRED while the ORM allows NULL); JSON
+NULLABLE against a NOT NULL ORM column is correct and expected.
 """
 
 from __future__ import annotations

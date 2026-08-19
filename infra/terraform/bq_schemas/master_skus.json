@@ -5,7 +5,11 @@
   { "name": "jan_code", "type": "STRING", "mode": "NULLABLE" },
   { "name": "image_url", "type": "STRING", "mode": "NULLABLE" },
   { "name": "attributes", "type": "JSON", "mode": "NULLABLE" },
-  { "name": "is_bundle", "type": "BOOLEAN", "mode": "REQUIRED" },
+  { "name": "is_bundle", "type": "BOOLEAN", "mode": "NULLABLE" },
+  { "name": "is_stock_managed", "type": "BOOLEAN", "mode": "NULLABLE" },
+  { "name": "non_inventory_kind", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "archived_at", "type": "TIMESTAMP", "mode": "NULLABLE" },
+  { "name": "archived_reason", "type": "STRING", "mode": "NULLABLE" },
   { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" },
   { "name": "updated_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
 ]

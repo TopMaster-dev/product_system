@@ -26,6 +26,9 @@ class Order(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("channel", "channel_order_id", name="uq_order_channel_orderid"),
         Index("ix_orders_ordered_at", "ordered_at"),
+        # Phase 2 (migration 0009): channel-scoped period aggregation for the
+        # sales dashboards; ix_orders_ordered_at alone cannot filter by channel.
+        Index("ix_orders_channel_ordered_at", "channel", "ordered_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

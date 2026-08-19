@@ -140,11 +140,48 @@ class ReconcileService:
         *,
         diff_id: int,
         approved_by: str,
+        run_id: int | None = None,
     ) -> DiffApplyResult:
         """Approve a single diff, generating a stocktake event and updating
         the snapshot. Idempotent: re-approving an already-approved diff is a
-        no-op that returns the existing applied event."""
-        diff = await self._get_diff(diff_id)
+        no-op that returns the existing applied event.
+
+        Two correctness properties this method must hold:
+
+        1. `snapshot.on_hand_qty == SUM(inventory_events.quantity_delta)`.
+           The scan-time `diff.delta` is stale by the time a human approves —
+           Rakuten polls every 5 minutes — so writing it as the event delta while
+           setting the snapshot absolutely to `target_qty` leaves the log and the
+           projection permanently disagreeing. The delta is therefore recomputed
+           from the CURRENT on-hand value, under the snapshot row lock.
+           `target_qty` still wins (that is the stocktake semantic); only the
+           event's delta changes, so the two stay reconcilable.
+
+        2. Lock order is run -> diff -> snapshot on EVERY path. The owning run is
+           resolved with a NON-locking read first, so the run row is always the
+           first `FOR UPDATE` taken regardless of whether the caller supplied
+           `run_id`. Taking the run lock only when `run_id` was passed would
+           leave two opposite orders live at once (the admin UI passes it, the
+           `scripts/reconcile_admin.py` CLI does not) — which is the very ABBA
+           deadlock this ordering exists to prevent.
+
+        `run_id` is optional and, when given, only asserts that the diff really
+        belongs to that run; it does not decide the lock order.
+        """
+        # Resolve the owning run WITHOUT locking, so the run is always locked first.
+        resolved_run_id = (
+            await self._session.execute(
+                select(ReconcileDiff.reconcile_run_id).where(ReconcileDiff.id == diff_id)
+            )
+        ).scalar_one_or_none()
+        if resolved_run_id is None:
+            raise ValueError(f"reconcile diff id={diff_id} not found")
+        if run_id is not None and run_id != resolved_run_id:
+            raise ValueError(
+                f"reconcile diff id={diff_id} belongs to run {resolved_run_id}, not {run_id}"
+            )
+        run = await self._get_run(resolved_run_id)  # 1. run
+        diff = await self._get_diff(diff_id)  # 2. diff
         if diff.decision == ReconcileDiffDecisionEnum.APPROVED.value:
             existing_event = (
                 (
@@ -166,10 +203,13 @@ class ReconcileService:
         # inventory_events UNIQUE prevents double-application across
         # accidental re-approvals.
         snapshot = await self._lock_or_create_snapshot(diff.master_sku_id)
+        # Recompute against the CURRENT quantity, not the scan-time delta, so the
+        # event log and the snapshot cannot drift apart (see the docstring).
+        applied_delta = diff.target_qty - snapshot.on_hand_qty
         event = InventoryEvent(
             master_sku_id=diff.master_sku_id,
             event_type=InventoryEventTypeEnum.STOCKTAKE,
-            quantity_delta=diff.delta,
+            quantity_delta=applied_delta,
             source_channel=_RECONCILE_SOURCE_CHANNEL,
             source_order_id=f"run-{diff.reconcile_run_id}",
             source_line_id=f"diff-{diff.id}",
@@ -184,13 +224,14 @@ class ReconcileService:
         snapshot.last_event_id = event.id
 
         diff.decision = ReconcileDiffDecisionEnum.APPROVED.value
+        diff.applied_delta = applied_delta
         diff.applied_event_id = event.id
         diff.decided_by = approved_by
         diff.decided_at = datetime.now(UTC)
         await self._session.flush()
 
-        # Tally on the run for the admin UI counter.
-        run = await self._get_run(diff.reconcile_run_id)
+        # Tally on the run for the admin UI counter — `run` is the row already
+        # locked at the top, so no second (out-of-order) lock is taken here.
         run.applied_count = (run.applied_count or 0) + 1
         await self._session.flush()
 
@@ -199,7 +240,8 @@ class ReconcileService:
             diff_id=diff.id,
             run_id=diff.reconcile_run_id,
             master_sku_id=diff.master_sku_id,
-            delta=diff.delta,
+            scan_delta=diff.delta,
+            applied_delta=applied_delta,
             event_id=event.id,
             approved_by=approved_by,
         )

@@ -54,6 +54,51 @@ jobs:
       - name: Integration tests
         run: pytest -m integration
 
+  # The test job builds its schema with Base.metadata.create_all and never runs
+  # alembic, so a broken migration passes CI green and only fails on the
+  # production migration run — that is exactly how Phase 1-B shipped a prod
+  # schema two revisions behind. This job exercises the real migration path.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: product_system_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@localhost:5432/product_system_migrations
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Single head (no divergent branches)
+        run: |
+          heads=$(alembic heads | grep -c '(head)')
+          echo "alembic heads -> $heads"
+          test "$heads" -eq 1
+      - name: Upgrade to head
+        run: alembic upgrade head
+      - name: Downgrade one revision
+        run: alembic downgrade -1
+      - name: Upgrade back to head
+        run: alembic upgrade head
+      - name: Migrated schema matches the ORM
+        run: python scripts/check_migration_parity.py
+
   terraform:
     runs-on: ubuntu-latest
     defaults:

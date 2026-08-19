@@ -50,8 +50,13 @@ class TableSpec:
 
 
 TABLE_SPECS: tuple[TableSpec, ...] = (
-    TableSpec("master_skus", "incremental"),
-    TableSpec("channel_sku_mappings", "incremental"),
+    # Dimension tables are exported as SNAPSHOTs, not incrementally. An
+    # incremental export watermarks on updated_at, and ADD COLUMN does not touch
+    # updated_at — so a schema change silently leaves the new column NULL in
+    # BigQuery forever for every row that is not subsequently edited. Both tables
+    # are small (~1k and ~2k rows), so a full reload is cheap and self-healing.
+    TableSpec("master_skus", "snapshot"),
+    TableSpec("channel_sku_mappings", "snapshot"),
     TableSpec("orders", "incremental", partition_field="ordered_at"),
     TableSpec("order_items", "incremental"),
     TableSpec("inventory_events", "incremental", partition_field="occurred_at"),

@@ -42,6 +42,7 @@ from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ChannelSkuMapping, InventorySnapshot, MasterSku
 from app.services.reconcile import DiffInput, ReconcileService
+from app.services.sku_scope import analysable_conditions
 
 GS_PREFIX = "gs://"
 
@@ -144,7 +145,12 @@ async def collect_diffs(
         "csv_keys": len(csv_aggregates),
         "unmapped_keys": 0,
         "matched_masters": 0,
+        # Reported separately: collapsing them into one counter labelled
+        # "bundles" would hide the far more surprising cases (a SKU silently
+        # dropped because it was archived or flagged non-stock-managed).
         "excluded_bundles": 0,
+        "excluded_unmanaged": 0,
+        "excluded_archived": 0,
         "actual_diffs": 0,
     }
     if not csv_aggregates:
@@ -168,18 +174,35 @@ async def collect_diffs(
         if master_id is not None:
             target_by_master[master_id] += qty
 
-    # Defensively drop any is_bundle master (crossmall mappings already skip
-    # them, but never reconcile a derived-availability parent).
+    # Drop everything outside the analysable population: bundle parents (their
+    # stock is derived), non-stock-managed items, and archived masters. Each
+    # cause is counted separately so the log says WHY a SKU was skipped.
     if target_by_master:
-        bundle_result = await session.execute(
+        in_scope = await session.execute(
             select(MasterSku.id).where(
                 MasterSku.id.in_(list(target_by_master.keys())),
-                MasterSku.is_bundle.is_(True),
+                *analysable_conditions(include_archived=False),
             )
         )
-        for (bundle_id,) in bundle_result.all():
-            target_by_master.pop(bundle_id, None)
-            summary["excluded_bundles"] += 1
+        keep = {mid for (mid,) in in_scope.all()}
+        excluded_ids = [mid for mid in target_by_master if mid not in keep]
+        if excluded_ids:
+            reasons = await session.execute(
+                select(
+                    MasterSku.id,
+                    MasterSku.is_bundle,
+                    MasterSku.is_stock_managed,
+                    MasterSku.archived_at,
+                ).where(MasterSku.id.in_(excluded_ids))
+            )
+            for mid, is_bundle, is_managed, archived_at in reasons.all():
+                target_by_master.pop(mid, None)
+                if is_bundle:
+                    summary["excluded_bundles"] += 1
+                elif not is_managed:
+                    summary["excluded_unmanaged"] += 1
+                elif archived_at is not None:
+                    summary["excluded_archived"] += 1
     summary["matched_masters"] = len(target_by_master)
 
     diffs: list[DiffInput] = []

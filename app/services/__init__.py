@@ -11,6 +11,7 @@ from app.services.exceptions import (
 from app.services.ingest import IngestResult, OrderIngestService
 from app.services.inventory import EventSource, InventoryService
 from app.services.mapping import MappingService
+from app.services.sku_scope import analysable_conditions, operational_conditions
 
 __all__ = [
     "BigQueryExportService",
@@ -25,4 +26,6 @@ __all__ = [
     "MasterSkuNotFoundError",
     "OrderIngestService",
     "ServiceError",
+    "analysable_conditions",
+    "operational_conditions",
 ]

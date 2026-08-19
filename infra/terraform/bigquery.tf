@@ -57,13 +57,20 @@ resource "google_bigquery_table" "inventory_snapshots" {
   schema              = file("${path.module}/bq_schemas/inventory_snapshots.json")
 }
 
-# NOTE: BigQuery Dataset IAM binding is performed by the dataset OWNER
-# (the client) manually via:
+# NOTE: BigQuery needs TWO grants, both performed by the project/dataset OWNER
+# (the client) — the developer account cannot set IAM. BOTH are required; the
+# second was missing until 2026-08-19, so the daily export had never succeeded
+# (every run failed with "does not have bigquery.jobs.create permission", and the
+# job endpoint used to swallow that as HTTP 200). See docs/25.
 #
+# 1) dataset-level: permission to WRITE rows
 #   bq add-iam-policy-binding \
 #       --project_id=inventory-496204 \
 #       --member=serviceAccount:product-system-app@inventory-496204.iam.gserviceaccount.com \
 #       --role=roles/bigquery.dataEditor \
 #       product_system
 #
-# This avoids needing dataset-owner permissions on the developer account.
+# 2) project-level: permission to CREATE the load job (NOT implied by dataEditor)
+#   gcloud projects add-iam-policy-binding inventory-496204 \
+#       --member=serviceAccount:product-system-app@inventory-496204.iam.gserviceaccount.com \
+#       --role=roles/bigquery.jobUser

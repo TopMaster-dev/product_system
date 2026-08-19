@@ -288,6 +288,7 @@ async def reconcile_detail(
                     ReconcileDiff.current_qty,
                     ReconcileDiff.target_qty,
                     ReconcileDiff.delta,
+                    ReconcileDiff.applied_delta,
                     ReconcileDiff.decision,
                     ReconcileDiff.decided_by,
                     MasterSku.sku_code,
@@ -347,7 +348,7 @@ async def _diff_action(
         async with session.begin():
             svc = ReconcileService(session)
             if approve:
-                await svc.approve_diff(diff_id=diff_id, approved_by=operator)
+                await svc.approve_diff(run_id=run_id, diff_id=diff_id, approved_by=operator)
             else:
                 await svc.skip_diff(diff_id=diff_id, approved_by=operator)
     except (RuntimeError, ValueError):
@@ -404,6 +405,7 @@ async def reconcile_export(
                 ReconcileDiff.current_qty,
                 ReconcileDiff.target_qty,
                 ReconcileDiff.delta,
+                ReconcileDiff.applied_delta,
                 ReconcileDiff.decision,
                 ReconcileDiff.decided_by,
             )
@@ -414,11 +416,25 @@ async def reconcile_export(
     ).all()
     buf = io.StringIO()
     writer = csv.writer(buf)
+    # `delta` is the scan-time proposal; `applied_delta` is what was actually
+    # written to inventory_events at approval. They differ when stock moved in
+    # between, and an audit needs both.
     writer.writerow(
-        ["sku_code", "name", "current_qty", "target_qty", "delta", "decision", "decided_by"]
+        [
+            "sku_code",
+            "name",
+            "current_qty",
+            "target_qty",
+            "delta_at_scan",
+            "applied_delta",
+            "decision",
+            "decided_by",
+        ]
     )
     for r in rows:
-        writer.writerow([r[0], r[1], r[2], r[3], r[4], r[5], r[6] or ""])
+        writer.writerow(
+            [r[0], r[1], r[2], r[3], r[4], "" if r[5] is None else r[5], r[6], r[7] or ""]
+        )
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),

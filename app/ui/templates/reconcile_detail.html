@@ -72,6 +72,11 @@
             <td class="px-4 py-3 text-right">
               <span class="inline-flex items-center px-2 py-0.5 rounded font-mono font-semibold tabular-nums ring-1
                 {% if d.delta < 0 %}bg-red-50 text-red-700 ring-red-200{% else %}bg-emerald-50 text-emerald-700 ring-emerald-200{% endif %}">{{ '%+d' % d.delta }}</span>
+              {% if d.applied_delta is not none and d.applied_delta != d.delta %}
+                <div class="text-[11px] text-ink-500 mt-1 whitespace-nowrap" title="照合時から在庫が動いたため、実際にはこの数量で補正されました">
+                  実適用 <span class="font-mono font-semibold">{{ '%+d' % d.applied_delta }}</span>
+                </div>
+              {% endif %}
             </td>
             <td class="px-4 py-3">
               {% if d.decision == 'approved' %}
@@ -122,6 +127,9 @@
         <span class="inline-flex items-center px-2 py-0.5 rounded font-mono font-semibold tabular-nums ring-1
           {% if d.delta < 0 %}bg-red-50 text-red-700 ring-red-200{% else %}bg-emerald-50 text-emerald-700 ring-emerald-200{% endif %}">{{ '%+d' % d.delta }}</span>
       </div>
+      {% if d.applied_delta is not none and d.applied_delta != d.delta %}
+        <div class="text-[11px] text-ink-500 mb-1">実適用 <span class="font-mono font-semibold">{{ '%+d' % d.applied_delta }}</span>（照合後に在庫が動いたため）</div>
+      {% endif %}
       <div class="text-xs text-ink-600 mb-2">現在庫 {{ d.current_qty }} → CSV在庫 <span class="font-semibold text-ink-900">{{ d.target_qty }}</span></div>
       {% if is_open and d.decision == 'pending' %}
         <div class="flex gap-1.5">
