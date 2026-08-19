@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, HTTPException
 from app.cli import export_to_bq, poll_channels, push_bundle_availability, reconcile_inventory
 from app.config import get_settings
 from app.logging import get_logger
+from app.notifications.slack import get_slack_notifier
 from app.services.handlers import dispatch
 
 log = get_logger(__name__)
@@ -23,9 +24,33 @@ router = APIRouter(prefix="/internal/jobs", tags=["internal"])
 
 @router.post("/bq-export")
 async def trigger_bq_export() -> dict[str, str]:
-    code = await export_to_bq.run()
-    log.info("internal.bq_export.done", exit_code=code)
-    return {"status": "ok" if code == 0 else "partial", "exit_code": str(code)}
+    """Daily BigQuery export.
+
+    A per-table failure MUST surface: the load runs with `autodetect=False`
+    against Terraform-pinned schemas, so an ORM column the JSON lacks fails the
+    load. Returning HTTP 200 here made that invisible to Cloud Scheduler — the
+    `master_skus` export was broken in production from migration 0005 until it
+    was found by the schema-parity test. Failures now return 500 (Scheduler
+    records/retries the job) and fire a Slack critical.
+    """
+    results = await export_to_bq.run_export()
+    failed = [r for r in results if r.error]
+    if not failed:
+        log.info("internal.bq_export.done", tables=len(results))
+        return {"status": "ok", "tables": str(len(results))}
+
+    detail = "; ".join(f"{r.table_name}: {r.error}" for r in failed)
+    log.error("internal.bq_export.failed", failed=len(failed), detail=detail)
+    await get_slack_notifier().notify(
+        level="critical",
+        title="BigQuery エクスポート失敗",
+        message=(
+            f"{len(failed)}/{len(results)} テーブルのエクスポートに失敗しました。"
+            " スキーマ不一致の場合は infra/terraform/bq_schemas/*.json を修正してください。"
+        ),
+        fields=[(r.table_name, (r.error or "")[:200]) for r in failed],
+    )
+    raise HTTPException(status_code=500, detail=f"bq-export failed: {detail}")
 
 
 @router.post("/poll-shopify")

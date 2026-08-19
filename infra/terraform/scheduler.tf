@@ -6,6 +6,16 @@ resource "google_cloud_scheduler_job" "bq_export_daily" {
   time_zone   = "Etc/UTC"
   region      = var.region
 
+  # The endpoint now returns 500 on a per-table failure (it used to return 200
+  # "partial", which hid a broken master_skus export for weeks). Without an
+  # explicit retry_config Cloud Scheduler's HTTP default is retry_count = 0, so
+  # a transient BigQuery error would otherwise wait a full day for the next run.
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "30s"
+    max_backoff_duration = "300s"
+  }
+
   http_target {
     http_method = "POST"
     uri         = "${google_cloud_run_v2_service.app.uri}/internal/jobs/bq-export"
