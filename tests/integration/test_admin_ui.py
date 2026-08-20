@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -1160,3 +1160,52 @@ async def test_thumbnails_are_click_to_enlarge(admin_client, _test_engine) -> No
     assert "data-zoom" in r.text  # thumbnail opts into the lightbox
     assert 'data-caption="ZOOM-1 — 拡大できる商品"' in r.text  # caption identifies it
     assert 'id="imgLightbox"' in r.text  # the shared lightbox is present (base.html)
+
+
+async def _seed_event(factory, code: str, *, occurred: datetime, delta: int = -1) -> int:
+    async with factory() as session, session.begin():
+        sku = MasterSku(sku_code=code, name=code)
+        session.add(sku)
+        await session.flush()
+        session.add(
+            InventoryEvent(
+                master_sku_id=sku.id,
+                event_type=InventoryEventTypeEnum.CANCELLATION_RETURNED,
+                quantity_delta=delta,
+                source_channel="shopify",
+                source_order_id=f"BD-{code}",
+                source_line_id="L1",
+                occurred_at=occurred,
+            )
+        )
+        return sku.id
+
+
+async def test_events_log_exposes_backdated_rows(admin_client, _test_engine) -> None:
+    """Until 2026-08-20 a cancellation was stamped with the ORIGINAL ORDER's
+    time, so a credit written in August carries a June date. With only
+    occurred_at on screen such a row is indistinguishable from a genuine June
+    movement — which is the one question this screen exists to answer."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    # created_at defaults to now; an occurred_at two months back is backdated.
+    await _seed_event(factory, "BD-OLD", occurred=datetime.now(UTC) - timedelta(days=60))
+    await _seed_event(factory, "BD-NOW", occurred=datetime.now(UTC))
+
+    # Match the BADGE, not the bare word — the filter label also says 遡及.
+    badge = ">遡及</span>"
+
+    r = await admin_client.get("/admin/events", headers=_auth_header())
+    assert r.status_code == 200
+    assert "記録日時" in r.text  # the insertion time is on screen at all
+    assert badge in r.text
+
+    # The filter isolates exactly the backdated population, for auditing the
+    # pre-fix damage across the whole table.
+    r = await admin_client.get("/admin/events?backdated=1", headers=_auth_header())
+    assert "BD-OLD" in r.text
+    assert "BD-NOW" not in r.text
+
+    # A same-day event is never flagged, so the badge stays meaningful.
+    r = await admin_client.get("/admin/events?sku_code=BD-NOW", headers=_auth_header())
+    assert "BD-NOW" in r.text
+    assert badge not in r.text
