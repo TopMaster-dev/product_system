@@ -46,11 +46,11 @@ from app.models import (
 )
 from app.services.reconcile import ReconcileService
 from app.ui.auth import OperatorDep
+from app.ui.csv_intake import ColumnSpec, CsvSpec, inspect, int_validator
 from app.ui.deps import templates
 
 router = APIRouter(prefix="/reconcile")
 
-REQUIRED_COLUMNS = (COL_PRODUCT_CODE, COL_QTY)
 MAX_ROW_ISSUES = 50
 
 
@@ -59,57 +59,41 @@ MAX_ROW_ISSUES = 50
 # ---------------------------------------------------------------------------
 
 
-def inspect_csv(data: bytes) -> dict[str, Any]:
-    """Validate a CROSS MALL stock CSV without touching the DB. Returns
-    `fatal` (blocking errors), `row_issues` (skippable rows w/ line numbers),
-    and row counts for the preview."""
-    result: dict[str, Any] = {"fatal": [], "row_issues": [], "total_rows": 0, "valid_rows": 0}
-    if not data:
-        result["fatal"].append("ファイルが空です。")
-        return result
-    try:
-        text = data.decode(ENC)
-    except UnicodeDecodeError:
-        result["fatal"].append(
-            "文字コードが Shift-JIS(CP932) ではありません。"
-            "CROSS MALL の元ファイルをそのままアップロードしてください。"
-        )
-        return result
-    reader = csv.reader(io.StringIO(text))
-    try:
-        header = next(reader)
-    except StopIteration:
-        result["fatal"].append("ヘッダー行がありません。")
-        return result
-    missing = [c for c in REQUIRED_COLUMNS if c not in header]
-    if missing:
-        result["fatal"].append("必須列がありません: " + " / ".join(missing))
-        return result
+# The CROSS MALL stock CSV, expressed against the shared intake helper. The
+# message strings are byte-identical to the previous hand-rolled implementation
+# so tests/test_reconcile_ui_pure.py keeps passing unedited.
+_STOCK_CSV_SPEC = CsvSpec(
+    columns=(
+        ColumnSpec(
+            canonical=COL_PRODUCT_CODE,
+            aliases=("商品CD", "sku_code"),
+            required=True,
+            empty_message="商品コードが空です",
+        ),
+        ColumnSpec(
+            canonical=COL_QTY,
+            aliases=("在庫数", "数量"),
+            required=True,
+            # An empty quantity skips the row silently — CROSS MALL exports rows
+            # with no stock figure and they are not an operator error.
+            allow_empty=True,
+            validator=int_validator("在庫数量が数値ではありません: '{value}'"),
+        ),
+    ),
+    # CROSS MALL exports CP932 only; accepting UTF-8 here would let a re-saved
+    # file through and silently mis-key every 商品コード.
+    encodings=(ENC,),
+    encoding_message=(
+        "文字コードが Shift-JIS(CP932) ではありません。"
+        "CROSS MALL の元ファイルをそのままアップロードしてください。"
+    ),
+    max_row_issues=MAX_ROW_ISSUES,
+)
 
-    code_idx = header.index(COL_PRODUCT_CODE)
-    qty_idx = header.index(COL_QTY)
-    for lineno, row in enumerate(reader, start=2):
-        if not row or len(row) <= max(code_idx, qty_idx):
-            continue
-        result["total_rows"] += 1
-        code = row[code_idx].strip()
-        raw = row[qty_idx].strip()
-        if not code:
-            if len(result["row_issues"]) < MAX_ROW_ISSUES:
-                result["row_issues"].append({"line": lineno, "reason": "商品コードが空です"})
-            continue
-        if not raw:
-            continue
-        try:
-            int(raw)
-        except ValueError:
-            if len(result["row_issues"]) < MAX_ROW_ISSUES:
-                result["row_issues"].append(
-                    {"line": lineno, "reason": f"在庫数量が数値ではありません: '{raw}'"}
-                )
-            continue
-        result["valid_rows"] += 1
-    return result
+
+def inspect_csv(data: bytes) -> dict[str, Any]:
+    """Validate a CROSS MALL stock CSV without touching the DB."""
+    return inspect(data, _STOCK_CSV_SPEC).as_dict()
 
 
 def _aggregate_uploaded_csv(data: bytes) -> dict[str, int]:

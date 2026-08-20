@@ -33,9 +33,21 @@ class BundlePushService:
         self._push = InventoryPushService(session, notifier)
 
     async def all_bundle_ids(self) -> list[int]:
-        """Every is_bundle master (set parents + shared-stock brackets)."""
+        """Every LIVE is_bundle master (set parents + shared-stock brackets).
+
+        Archived and 在庫管理対象外 parents are skipped: pushing availability for
+        a retired set overwrites whatever the channel currently holds for a
+        product the shop no longer sells, and every such push burns a channel API
+        call in a job that is already rate-limited. This is the one place that
+        SELECTS `is_bundle` rather than excluding it, so the scope predicate is
+        spelled out here instead of coming from `sku_scope`.
+        """
         result = await self._session.execute(
-            select(MasterSku.id).where(MasterSku.is_bundle.is_(True))
+            select(MasterSku.id).where(
+                MasterSku.is_bundle.is_(True),
+                MasterSku.is_stock_managed.is_(True),
+                MasterSku.archived_at.is_(None),
+            )
         )
         return list(result.scalars().all())
 

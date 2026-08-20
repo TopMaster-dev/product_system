@@ -44,6 +44,14 @@ class IngestResult:
     pending_mapping_count: int
     consumed_count: int
     cancelled_count: int
+    #: Mapped lines whose master is 在庫管理対象外 (gift boxes, coupons,
+    #: made-to-order). No inventory event is written for them, on the consume
+    #: path or the cancellation path. Reported separately from
+    #: `pending_mapping_count` because "deliberately not stocked" and "we don't
+    #: know what this is" are opposite situations: one needs no action, the other
+    #: needs an operator. Collapsing them is how the Phase 1-B ingest logs made a
+    #: healthy run look like a backlog.
+    unmanaged_skipped: int = 0
 
 
 _CANCEL_STATUSES = {"cancelled", "returned"}
@@ -77,6 +85,7 @@ class OrderIngestService:
 
         pending = 0
         consumed = 0
+        unmanaged = 0
         for line in payload.items:
             mapped_id = await self._lookup_mapping(payload.channel, line, payload.marketplace_id)
             item = OrderItem(
@@ -106,8 +115,13 @@ class OrderIngestService:
             )
             # A bundle/shared-stock line fans out to its components; a normal SKU
             # consumes itself. All component events share one source — master_sku_id
-            # is in the event UNIQUE, so they don't collide.
-            for comp_id, qty_per in await self._inventory.resolve_consumption(mapped_id):
+            # is in the event UNIQUE, so they don't collide. An empty list means
+            # the master is 在庫管理対象外: no event, by design.
+            targets = await self._inventory.resolve_consumption(mapped_id)
+            if not targets:
+                unmanaged += 1
+                continue
+            for comp_id, qty_per in targets:
                 await self._inventory.consume_for_order_line(
                     master_sku_id=comp_id,
                     quantity=line.quantity * qty_per,
@@ -125,12 +139,14 @@ class OrderIngestService:
             pending_mapping_count=pending,
             consumed_count=consumed,
             cancelled_count=0,
+            unmanaged_skipped=unmanaged,
         )
 
     # ---------- existing orders ----------
 
     async def _ingest_update(self, order: Order, payload: NormalizedOrder) -> IngestResult:
         cancelled = 0
+        unmanaged = 0
         prev_cancelled = order.status in _CANCEL_STATUSES
         now_cancelled = payload.status in _CANCEL_STATUSES
 
@@ -143,7 +159,7 @@ class OrderIngestService:
             # which silently corrupts every daily aggregate from that date
             # forward — a forward running sum never revisits it, and no fixed
             # rebuild window can see it.
-            cancelled = await self._compensate_lines(order, datetime.now(UTC))
+            cancelled, unmanaged = await self._compensate_lines(order, datetime.now(UTC))
 
         order.status = payload.status
 
@@ -153,9 +169,11 @@ class OrderIngestService:
             pending_mapping_count=0,
             consumed_count=0,
             cancelled_count=cancelled,
+            unmanaged_skipped=unmanaged,
         )
 
-    async def _compensate_lines(self, order: Order, occurred_at: datetime) -> int:
+    async def _compensate_lines(self, order: Order, occurred_at: datetime) -> tuple[int, int]:
+        """Returns (compensated_lines, unmanaged_lines_skipped)."""
         result = await self._session.execute(
             select(OrderItem).where(
                 OrderItem.order_id == order.id,
@@ -163,6 +181,7 @@ class OrderIngestService:
             ),
         )
         compensated = 0
+        unmanaged = 0
         for item in result.scalars().all():
             assert item.master_sku_id is not None  # narrowed by WHERE
             source = EventSource(
@@ -172,8 +191,15 @@ class OrderIngestService:
             )
             # Mirror the consume fan-out: re-expand the (possibly bundle) parent
             # into components and return each. The OrderItem holds the parent id.
+            # An empty expansion is the 在庫管理対象外 case — it must skip here
+            # exactly as it skipped on consume, or the cancellation would credit
+            # stock the order never took.
+            targets = await self._inventory.resolve_consumption(item.master_sku_id)
+            if not targets:
+                unmanaged += 1
+                continue
             line_applied = False
-            for comp_id, qty_per in await self._inventory.resolve_consumption(item.master_sku_id):
+            for comp_id, qty_per in targets:
                 applied = await self._inventory.cancel_order_line(
                     master_sku_id=comp_id,
                     quantity=item.quantity * qty_per,
@@ -184,7 +210,7 @@ class OrderIngestService:
                     line_applied = True
             if line_applied:
                 compensated += 1
-        return compensated
+        return compensated, unmanaged
 
     # ---------- helpers ----------
 

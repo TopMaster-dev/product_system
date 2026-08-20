@@ -151,6 +151,11 @@ async def collect_diffs(
         "excluded_bundles": 0,
         "excluded_unmanaged": 0,
         "excluded_archived": 0,
+        # Roll-up of the three above, for the preview screen: an operator needs
+        # one number ("18 rows in your CSV were skipped") before they need the
+        # breakdown, and computing it in the template would put the same sum in
+        # two places.
+        "excluded_out_of_scope": 0,
         "actual_diffs": 0,
     }
     if not csv_aggregates:
@@ -203,6 +208,9 @@ async def collect_diffs(
                     summary["excluded_unmanaged"] += 1
                 elif archived_at is not None:
                     summary["excluded_archived"] += 1
+    summary["excluded_out_of_scope"] = (
+        summary["excluded_bundles"] + summary["excluded_unmanaged"] + summary["excluded_archived"]
+    )
     summary["matched_masters"] = len(target_by_master)
 
     diffs: list[DiffInput] = []

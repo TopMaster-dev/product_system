@@ -8,13 +8,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse, Response
-from sqlalchemy import RowMapping, func, select
+from sqlalchemy import RowMapping, and_, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
 from app.db import get_session
 from app.models import InventoryEvent, InventoryEventTypeEnum, InventorySnapshot, MasterSku
 from app.services import InventoryInsufficientError, InventoryService, MasterSkuNotFoundError
+from app.services.sku_scope import operational_conditions
 from app.ui.auth import OperatorDep
 from app.ui.deps import templates
 
@@ -26,7 +27,18 @@ router = APIRouter()
 REASON_TEMPLATES = ["不良品", "破損", "検品NG", "紛失", "棚卸差異", "POPUP戻り在庫"]
 
 
-async def _sku_rows(session: AsyncSession) -> Sequence[RowMapping]:
+async def _sku_rows(
+    session: AsyncSession, *, include_id: int | None = None
+) -> Sequence[RowMapping]:
+    """The選択肢 for the adjust dropdown — the same population the inventory list
+    shows, so a SKU an operator cannot see cannot be silently adjusted either.
+
+    `include_id` keeps an explicitly requested master in the list even when it is
+    archived or 在庫管理対象外: arriving from a deep link with a preselected SKU
+    that is missing from the dropdown looks like the screen is broken, and the
+    genuine case (zeroing a retired SKU's leftover stock) needs it.
+    """
+    scope = and_(*operational_conditions()) if operational_conditions() else true()
     stmt = (
         select(
             MasterSku.id,
@@ -35,6 +47,7 @@ async def _sku_rows(session: AsyncSession) -> Sequence[RowMapping]:
             func.coalesce(InventorySnapshot.on_hand_qty, 0).label("on_hand_qty"),
         )
         .outerjoin(InventorySnapshot, InventorySnapshot.master_sku_id == MasterSku.id)
+        .where(scope if include_id is None else or_(scope, MasterSku.id == include_id))
         .order_by(MasterSku.sku_code)
     )
     return (await session.execute(stmt)).mappings().all()
@@ -47,7 +60,7 @@ async def adjust_form(
     session: AsyncSession = Depends(get_session),
     master_sku_id: int | None = None,
 ) -> Response:
-    rows = await _sku_rows(session)
+    rows = await _sku_rows(session, include_id=master_sku_id)
     recent = (
         (
             await session.execute(

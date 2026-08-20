@@ -8,6 +8,7 @@ to the underlying services.
 from __future__ import annotations
 
 import base64
+import re
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -107,6 +108,41 @@ async def test_manual_page_renders(admin_client, _test_engine) -> None:
     assert "管理画面 操作手順書" in r.text
     assert "リコンサイル" in r.text
     assert "困ったときは" in r.text
+
+
+#: Every destination the flat Phase 1-B nav bar offered. Regrouping the nav must
+#: not strand any of them — this list is the contract, not the markup.
+LEGACY_NAV_HREFS = [
+    "/admin/",
+    "/admin/inventory",
+    "/admin/reconcile",
+    "/admin/sync-errors",
+    "/admin/mappings",
+    "/admin/alerts",
+    "/admin/adjust",
+    "/admin/events",
+]
+
+
+async def test_grouped_nav_keeps_every_legacy_destination_reachable(
+    admin_client, _test_engine
+) -> None:
+    r = await admin_client.get("/admin/", headers=_auth_header())
+    for href in LEGACY_NAV_HREFS:
+        assert f'href="{href}"' in r.text, f"{href} disappeared from the navigation"
+
+
+async def test_grouped_nav_renders_on_desktop_and_mobile(admin_client, _test_engine) -> None:
+    r = await admin_client.get("/admin/", headers=_auth_header())
+    # Group headings appear twice: once in the desktop bar, once in the drawer.
+    for label in ("在庫", "運用", "設定"):
+        assert r.text.count(f">{label}") >= 2 or r.text.count(label) >= 2
+
+    # Desktop dropdowns are CSS-only; no new JS may be required to open them.
+    assert "group-hover:block" in r.text
+    assert "group-focus-within:block" in r.text  # keyboard users get the same menu
+    # 分析 has no screens until W4 — an empty group must not render a dead button.
+    assert "分析メニュー" not in r.text
 
 
 async def test_inventory_list_filters_and_paginates(admin_client, _test_engine) -> None:
@@ -211,6 +247,240 @@ async def test_inventory_bestseller_flag_and_risk(admin_client, _test_engine) ->
     # The bestseller filter narrows to just the hot SKU.
     r = await admin_client.get("/admin/inventory?filter=bestseller", headers=_auth_header())
     assert "HOT-1" in r.text and "COLD-1" not in r.text
+
+
+def _badge_count(html: str, key: str) -> int:
+    """Read a status badge's number straight out of the rendered page."""
+    match = re.search(rf'filter={key}&(?:amp;)?sort=.*?tabular-nums">(\d+)<', html, re.DOTALL)
+    assert match is not None, f"badge {key!r} not found in the page"
+    return int(match.group(1))
+
+
+def _csv_rows(text: str) -> list[str]:
+    return [line for line in text.splitlines()[1:] if line.strip()]
+
+
+@pytest.mark.parametrize(("bucket", "qty"), [("negative", -4), ("zero", 0), ("low", 6)])
+async def test_inventory_badge_count_equals_its_filtered_view(
+    admin_client, _test_engine, bucket: str, qty: int
+) -> None:
+    """The invariant this screen is built around: a badge number IS the row count
+    of the view it links to. They were previously computed by two separately
+    written queries, so any divergence in scope silently made the badges lie."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    for i in range(3):
+        await _seed_stock(factory, f"BC-{bucket}-{i}", qty)
+    # Noise in the other buckets, plus rows the scope must exclude.
+    await _seed_stock(factory, "BC-NOISE-1", -9)
+    await _seed_stock(factory, "BC-NOISE-2", 0)
+    await _seed_stock(factory, "BC-NOISE-3", 3)
+    await _seed_stock(factory, "BC-NOISE-4", 77)
+    await _seed_hidden(factory, "BC-HIDDEN-UNMANAGED", qty, unmanaged=True)
+    await _seed_hidden(factory, "BC-HIDDEN-ARCHIVED", qty, archived=True)
+
+    page = await admin_client.get("/admin/inventory", headers=_auth_header())
+    badge = _badge_count(page.text, bucket)
+
+    csv_view = await admin_client.get(
+        f"/admin/inventory/export.csv?filter={bucket}", headers=_auth_header()
+    )
+    assert badge == len(_csv_rows(csv_view.text))
+    # And the excluded rows are excluded from BOTH, not just one of them.
+    assert "BC-HIDDEN-UNMANAGED" not in page.text
+    assert "BC-HIDDEN-ARCHIVED" not in csv_view.text
+
+
+async def _seed_hidden(
+    factory, code: str, qty: int, *, unmanaged: bool = False, archived: bool = False
+) -> int:
+    async with factory() as session, session.begin():
+        sku = MasterSku(
+            sku_code=code,
+            name=code,
+            is_stock_managed=not unmanaged,
+            # The CHECK constraint keeps flag and kind in lockstep.
+            non_inventory_kind="packaging" if unmanaged else None,
+            archived_at=datetime.now(UTC) if archived else None,
+            archived_reason="variant cutover" if archived else None,
+        )
+        session.add(sku)
+        await session.flush()
+        session.add(InventorySnapshot(master_sku_id=sku.id, on_hand_qty=qty))
+        return sku.id
+
+
+async def test_inventory_hides_unmanaged_and_archived_until_asked(
+    admin_client, _test_engine
+) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_stock(factory, "VIS-NORMAL", 5)
+    await _seed_hidden(factory, "VIS-GIFTBOX", -12509, unmanaged=True)
+    await _seed_hidden(factory, "VIS-LEGACY", 0, archived=True)
+
+    r = await admin_client.get("/admin/inventory", headers=_auth_header())
+    assert "VIS-NORMAL" in r.text
+    assert "VIS-GIFTBOX" not in r.text  # the -12509 runaway must not scare operators
+    assert "VIS-LEGACY" not in r.text
+
+    r = await admin_client.get("/admin/inventory?include_hidden=1", headers=_auth_header())
+    assert "VIS-GIFTBOX" in r.text and "VIS-LEGACY" in r.text
+    assert "在庫管理対象外" in r.text and "アーカイブ済" in r.text
+
+    # The toggle survives paging/sorting links so it cannot be lost mid-navigation.
+    assert "include_hidden=1" in r.text
+
+
+async def test_inventory_bestseller_ranking_ignores_non_merchandise(
+    admin_client, _test_engine
+) -> None:
+    """A gift box "sells" with every order and topped the Phase 1-B ranking.
+    Ranking is scoped to the analysable population, so it cannot any more."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    box = await _seed_hidden(factory, "RANK-BOX", 0, unmanaged=True)
+    real = await _seed_stock(factory, "RANK-REAL", 40, "RealProduct")
+
+    async with factory() as session, session.begin():
+        for i in range(20):  # the box "sells" far more than the real product
+            session.add(
+                InventoryEvent(
+                    master_sku_id=box,
+                    event_type=InventoryEventTypeEnum.ORDER_CONSUMED,
+                    quantity_delta=-9,
+                    source_channel="shopify",
+                    source_order_id=f"RK-BOX-{i}",
+                    source_line_id="L1",
+                    occurred_at=datetime.now(UTC),
+                )
+            )
+        session.add(
+            InventoryEvent(
+                master_sku_id=real,
+                event_type=InventoryEventTypeEnum.ORDER_CONSUMED,
+                quantity_delta=-1,
+                source_channel="shopify",
+                source_order_id="RK-REAL-1",
+                source_line_id="L1",
+                occurred_at=datetime.now(UTC),
+            )
+        )
+
+    r = await admin_client.get("/admin/inventory?filter=bestseller", headers=_auth_header())
+    assert "RANK-REAL" in r.text
+    assert "RANK-BOX" not in r.text
+
+
+async def test_inventory_export_reports_lifecycle_state(admin_client, _test_engine) -> None:
+    """New CSV columns are appended, never inserted: operators have saved Excel
+    filters keyed to the Phase 1-B column positions."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_stock(factory, "LC-PLAIN", 12, "PlainItem")
+    await _seed_hidden(factory, "LC-BOX", 0, unmanaged=True)
+
+    r = await admin_client.get(
+        "/admin/inventory/export.csv?include_hidden=1", headers=_auth_header()
+    )
+    header = r.text.splitlines()[0]
+    assert header.startswith("sku_code,name,jan_code,on_hand_qty,status,best_seller,updated_at")
+    assert header.endswith("stock_managed,archived")
+    assert "LC-BOX" in r.text and "対象外" in r.text
+
+
+async def test_stock_managed_toggle_flips_the_flag_and_keeps_filters(
+    admin_client, _test_engine
+) -> None:
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    sku_id = await _seed_stock(factory, "TG-1", 5, "Toggle")
+
+    r = await admin_client.post(
+        f"/admin/inventory/{sku_id}/stock-managed?q=Toggle&filter=all",
+        data={"kind": "coupon"},
+        headers=_auth_header(),
+    )
+    assert r.status_code == 303
+    # The operator is returned to the list they were on, not a reset one.
+    assert "q=Toggle" in r.headers["location"]
+
+    async with factory() as session:
+        master = (
+            await session.execute(select(MasterSku).where(MasterSku.id == sku_id))
+        ).scalar_one()
+    assert master.is_stock_managed is False
+    assert master.non_inventory_kind == "coupon"
+
+    # And back again — the CHECK constraint requires the pair to move together.
+    await admin_client.post(f"/admin/inventory/{sku_id}/stock-managed", headers=_auth_header())
+    async with factory() as session:
+        master = (
+            await session.execute(select(MasterSku).where(MasterSku.id == sku_id))
+        ).scalar_one()
+    assert master.is_stock_managed is True
+    assert master.non_inventory_kind is None
+
+
+async def test_archive_toggle_refuses_a_sku_still_in_use(admin_client, _test_engine) -> None:
+    """Archiving hides a SKU from every current-state screen. Doing that while a
+    channel can still order it means stock drains from something nobody watches."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    held = await _seed_stock(factory, "AR-STOCK", 4)
+    mapped = await _seed_stock(factory, "AR-MAPPED", 0)
+    free = await _seed_stock(factory, "AR-FREE", 0)
+    async with factory() as session, session.begin():
+        session.add(
+            ChannelSkuMapping(
+                master_sku_id=mapped, channel="shopify", channel_sku="AR-MAPPED", is_active=True
+            )
+        )
+
+    for blocked in (held, mapped):
+        r = await admin_client.post(f"/admin/inventory/{blocked}/archive", headers=_auth_header())
+        assert r.status_code == 303
+        assert "flash=archive_blocked" in r.headers["location"]
+
+    r = await admin_client.post(f"/admin/inventory/{free}/archive", headers=_auth_header())
+    assert "flash=archived" in r.headers["location"]
+
+    async with factory() as session:
+        rows = (
+            (await session.execute(select(MasterSku).where(MasterSku.id.in_([held, mapped, free]))))
+            .scalars()
+            .all()
+        )
+    by_id = {m.id: m for m in rows}
+    assert by_id[held].archived_at is None
+    assert by_id[mapped].archived_at is None
+    assert by_id[free].archived_at is not None
+
+    # Un-archiving is always allowed — the guards protect the hide, not the show.
+    r = await admin_client.post(f"/admin/inventory/{free}/archive", headers=_auth_header())
+    assert "flash=unarchived" in r.headers["location"]
+
+
+async def test_lifecycle_toggle_on_a_missing_sku_flashes_instead_of_500(
+    admin_client, _test_engine
+) -> None:
+    r = await admin_client.post("/admin/inventory/999999/archive", headers=_auth_header())
+    assert r.status_code == 303
+    assert "flash=notfound" in r.headers["location"]
+
+
+async def test_adjust_dropdown_matches_the_inventory_list_population(
+    admin_client, _test_engine
+) -> None:
+    """A SKU an operator cannot see on the list must not be silently adjustable
+    from the dropdown either — otherwise archiving moves work somewhere the
+    operator is not looking."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_stock(factory, "ADJ-LIVE", 5)
+    hidden = await _seed_hidden(factory, "ADJ-ARCHIVED", 0, archived=True)
+
+    r = await admin_client.get("/admin/adjust", headers=_auth_header())
+    assert "ADJ-LIVE" in r.text
+    assert "ADJ-ARCHIVED" not in r.text
+
+    # ...but a deep link with that SKU preselected still finds it, so the genuine
+    # case (zeroing a retired SKU) does not hit an empty-looking form.
+    r = await admin_client.get(f"/admin/adjust?master_sku_id={hidden}", headers=_auth_header())
+    assert "ADJ-ARCHIVED" in r.text
 
 
 async def test_adjust_form_shows_reason_templates(admin_client, _test_engine) -> None:

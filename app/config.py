@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     best_seller_window_days: int = 30
     best_seller_top_percent: int = 20
 
+    # 低在庫バッジ/絞り込みの境界。1〜(閾値-1) が「低在庫」。W6 で SKU ごとの
+    # 販売速度から算出した値に置き換わるが、その時もこの値が「速度データが
+    # まだ無い SKU」のフォールバックとして残る。
+    low_stock_threshold: int = 10
+
     # Phase 1-B: daily reconcile CSV source. gs:// URI of the CROSS MALL stock
     # export that the scheduled reconcile job reads. Empty disables the
     # scheduled job (it logs and no-ops); the admin-UI CSV upload path is

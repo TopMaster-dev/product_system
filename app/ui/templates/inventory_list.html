@@ -2,6 +2,13 @@
 {% block title %}在庫一覧 · Product System{% endblock %}
 {% block content %}
 
+{#
+  在庫状態の閾値はテンプレートに直書きしない。route が settings.low_stock_threshold
+  を `threshold` として渡す。W6 で SKU ごとの販売速度から算出した値に変わっても、
+  ここは書き換え不要。
+#}
+{% set hidden_q = '&include_hidden=1' if include_hidden else '' %}
+
 <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
   <div>
     <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">在庫一覧</h1>
@@ -21,15 +28,16 @@
   </div>
 </div>
 
-<!-- Status count badges (click to filter) -->
-<div class="flex flex-wrap gap-2 mb-4">
+<!-- Status count badges (click to filter). 件数は一覧と同じ述語で数えているため、
+     バッジの数字とリンク先の行数は必ず一致する。 -->
+<div class="flex flex-wrap items-center gap-2 mb-4">
   {% set badge = [
     ('negative', 'マイナス', counts.negative, 'bg-red-50 text-red-700 ring-red-200', 'ring-red-400'),
     ('zero', 'ゼロ', counts.zero, 'bg-ink-100 text-ink-600 ring-ink-300', 'ring-ink-500'),
     ('low', '低在庫', counts.low, 'bg-amber-50 text-amber-700 ring-amber-200', 'ring-amber-400'),
   ] %}
   {% for key, label, count, cls, active_ring in badge %}
-    <a href="?q={{ q|urlencode }}&filter={{ key }}&sort={{ sort }}&dir={{ dir }}"
+    <a href="?q={{ q|urlencode }}&filter={{ key }}&sort={{ sort }}&dir={{ dir }}{{ hidden_q }}"
        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ring-1 text-xs font-medium transition
               {{ cls }} {% if filter_mode == key %}ring-2 {{ active_ring }}{% endif %}">
       {{ label }}
@@ -37,11 +45,24 @@
     </a>
   {% endfor %}
   {% if filter_mode != 'all' %}
-    <a href="?q={{ q|urlencode }}&filter=all&sort={{ sort }}&dir={{ dir }}"
+    <a href="?q={{ q|urlencode }}&filter=all&sort={{ sort }}&dir={{ dir }}{{ hidden_q }}"
        class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium text-ink-500 hover:text-ink-800 hover:bg-ink-100 transition">
       絞り込み解除
     </a>
   {% endif %}
+
+  <span class="flex-1"></span>
+
+  <!-- 非表示SKU(在庫管理対象外・アーカイブ済)の表示切替 -->
+  <a href="?q={{ q|urlencode }}&filter={{ filter_mode }}&sort={{ sort }}&dir={{ dir }}{% if not include_hidden %}&include_hidden=1{% endif %}"
+     class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ring-1 text-xs font-medium transition
+            {% if include_hidden %}bg-ink-800 text-white ring-ink-800{% else %}bg-white text-ink-600 ring-ink-300 hover:bg-ink-50{% endif %}">
+    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      {% if include_hidden %}<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+      {% else %}<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>{% endif %}
+    </svg>
+    対象外・アーカイブも表示
+  </a>
 </div>
 
 <!-- Filter -->
@@ -50,6 +71,7 @@
              flex flex-col sm:flex-row sm:items-end gap-3">
   <input type="hidden" name="sort" value="{{ sort }}" />
   <input type="hidden" name="dir" value="{{ dir }}" />
+  {% if include_hidden %}<input type="hidden" name="include_hidden" value="1" />{% endif %}
   <div class="flex-1">
     <label class="block text-xs font-medium text-ink-600 mb-1.5">SKUコード / 商品名</label>
     <div class="relative">
@@ -64,8 +86,8 @@
       <option value="all" {% if filter_mode == 'all' %}selected{% endif %}>すべて</option>
       <option value="negative" {% if filter_mode == 'negative' %}selected{% endif %}>マイナス</option>
       <option value="zero" {% if filter_mode == 'zero' %}selected{% endif %}>ゼロ</option>
-      <option value="low" {% if filter_mode == 'low' %}selected{% endif %}>低在庫 (1〜9)</option>
-      <option value="normal" {% if filter_mode == 'normal' %}selected{% endif %}>正常 (10以上)</option>
+      <option value="low" {% if filter_mode == 'low' %}selected{% endif %}>低在庫 (1〜{{ threshold - 1 }})</option>
+      <option value="normal" {% if filter_mode == 'normal' %}selected{% endif %}>正常 ({{ threshold }}以上)</option>
       <option value="bestseller" {% if filter_mode == 'bestseller' %}selected{% endif %}>売れ筋（直近の販売上位）</option>
     </select>
   </div>
@@ -74,7 +96,7 @@
             class="rounded-md bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2 transition whitespace-nowrap">
       検索
     </button>
-    {% if q or filter_mode != 'all' %}
+    {% if q or filter_mode != 'all' or include_hidden %}
       <a href="/admin/inventory"
          class="rounded-md border border-ink-300 bg-white hover:bg-ink-50 text-ink-700 text-sm font-medium px-3 py-2 transition whitespace-nowrap">
         クリア
@@ -86,7 +108,7 @@
 {% macro sort_th(col, label, align='left') %}
   {% set nextdir = 'desc' if (sort == col and dir == 'asc') else 'asc' %}
   <th class="px-4 py-3 text-{{ align }} font-semibold whitespace-nowrap">
-    <a href="?q={{ q|urlencode }}&filter={{ filter_mode }}&sort={{ col }}&dir={{ nextdir }}"
+    <a href="?q={{ q|urlencode }}&filter={{ filter_mode }}&sort={{ col }}&dir={{ nextdir }}{{ hidden_q }}"
        class="inline-flex items-center gap-1 hover:text-ink-900 transition {% if sort == col %}text-ink-900{% endif %}">
       {{ label }}
       {% if sort == col %}
@@ -103,11 +125,49 @@
     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-50 text-red-700 ring-1 ring-red-200">マイナス</span>
   {% elif qty == 0 %}
     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-ink-100 text-ink-600 ring-1 ring-ink-300">ゼロ</span>
-  {% elif qty < 10 %}
+  {% elif qty < threshold %}
     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-amber-200">低在庫</span>
   {% else %}
     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-emerald-600">正常</span>
   {% endif %}
+{% endmacro %}
+
+{% macro lifecycle_pills(row) %}
+  {% if not row.is_stock_managed %}
+    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-700 ring-1 ring-violet-200"
+          title="在庫を持たない商品。受注時に在庫を消費しません。">在庫管理対象外</span>
+  {% endif %}
+  {% if row.archived_at %}
+    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-ink-100 text-ink-500 ring-1 ring-ink-300"
+          title="アーカイブ済。通常の一覧には表示されません。">アーカイブ済</span>
+  {% endif %}
+{% endmacro %}
+
+{#
+  行単位のライフサイクル操作。<details> なので追加のJSは不要。
+  一括処理は CLI (mark_non_inventory / archive_legacy_skus) が担当し、
+  ここは運用開始後に後から見つかる少数の SKU 用。
+#}
+{% macro lifecycle_menu(row) %}
+  <details class="relative inline-block text-left">
+    <summary class="list-none cursor-pointer px-2 py-1 rounded text-ink-400 hover:text-ink-700 hover:bg-ink-100 transition select-none"
+             title="この商品の設定">
+      <svg class="w-4 h-4 inline-block" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+    </summary>
+    <div class="absolute right-0 mt-1 w-56 bg-white rounded-lg border border-ink-200 shadow-lg py-1 z-30 text-left">
+      <form method="post" action="/admin/inventory/{{ row.id }}/stock-managed?{{ base_qs }}">
+        {% if row.is_stock_managed %}<input type="hidden" name="kind" value="other" />{% endif %}
+        <button type="submit" class="w-full text-left px-3 py-2 text-xs text-ink-700 hover:bg-ink-100 transition">
+          {% if row.is_stock_managed %}在庫管理対象外にする{% else %}在庫管理対象に戻す{% endif %}
+        </button>
+      </form>
+      <form method="post" action="/admin/inventory/{{ row.id }}/archive?{{ base_qs }}">
+        <button type="submit" class="w-full text-left px-3 py-2 text-xs text-ink-700 hover:bg-ink-100 transition">
+          {% if row.archived_at %}アーカイブを解除{% else %}アーカイブする{% endif %}
+        </button>
+      </form>
+    </div>
+  </details>
 {% endmacro %}
 
 {% macro thumb(row, size) %}
@@ -131,7 +191,7 @@
     <span class="inline-flex items-center px-2 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200 font-semibold tabular-nums">{{ qty }}</span>
   {% elif qty == 0 %}
     <span class="inline-flex items-center px-2 py-0.5 rounded bg-ink-100 text-ink-600 ring-1 ring-ink-300 font-semibold tabular-nums">{{ qty }}</span>
-  {% elif qty < 10 %}
+  {% elif qty < threshold %}
     <span class="inline-flex items-center px-2 py-0.5 rounded bg-amber-50 text-amber-700 ring-1 ring-amber-200 font-semibold tabular-nums">{{ qty }}</span>
   {% else %}
     <span class="font-semibold tabular-nums text-ink-900">{{ qty }}</span>
@@ -156,7 +216,7 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for row in rows %}
-          <tr class="hover:bg-ink-50/60 transition">
+          <tr class="hover:bg-ink-50/60 transition {% if row.archived_at %}opacity-60{% endif %}">
             <td class="px-4 py-3">{{ thumb(row, 'w-10 h-10') }}</td>
             <td class="px-4 py-3 font-mono text-xs font-medium text-ink-800">{{ row.sku_code }}</td>
             <td class="px-4 py-3 text-ink-800">
@@ -168,8 +228,9 @@
                     売れ筋
                   </span>
                 {% endif %}
+                {{ lifecycle_pills(row) }}
               </div>
-              {% if row.id in best_sellers and row.on_hand_qty < 10 %}
+              {% if row.id in best_sellers and row.on_hand_qty < threshold %}
                 <div class="mt-1 inline-flex items-center gap-1 text-[11px] text-red-600 font-medium">
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                   売れ筋商品が在庫不足です（補充を検討）
@@ -182,8 +243,10 @@
             <td class="px-4 py-3 text-xs text-ink-500 font-mono whitespace-nowrap">
               {% if row.updated_at %}{{ row.updated_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
             </td>
-            <td class="px-4 py-3 text-right">
+            <td class="px-4 py-3 text-right whitespace-nowrap">
               <a class="text-brand-600 hover:text-brand-700 text-xs font-medium" href="/admin/events?master_sku_id={{ row.id }}">履歴 →</a>
+              <a class="text-ink-500 hover:text-ink-800 text-xs font-medium ml-2" href="/admin/adjust?master_sku_id={{ row.id }}">調整</a>
+              {{ lifecycle_menu(row) }}
             </td>
           </tr>
         {% else %}
@@ -207,10 +270,10 @@
 <!-- Mobile cards -->
 <div class="md:hidden space-y-2">
   {% for row in rows %}
-    <div class="bg-white rounded-xl border border-ink-200 p-4
+    <div class="bg-white rounded-xl border border-ink-200 p-4 {% if row.archived_at %}opacity-60{% endif %}
                 {% if row.on_hand_qty < 0 %}border-l-4 border-l-red-500
                 {% elif row.on_hand_qty == 0 %}border-l-4 border-l-ink-400
-                {% elif row.on_hand_qty < 10 %}border-l-4 border-l-amber-500{% endif %}">
+                {% elif row.on_hand_qty < threshold %}border-l-4 border-l-amber-500{% endif %}">
       <div class="flex items-start justify-between gap-3 mb-1">
         <div class="flex items-center gap-2.5 min-w-0">
           {{ thumb(row, 'w-9 h-9') }}
@@ -223,8 +286,9 @@
         {% if row.id in best_sellers %}
           <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-50 text-orange-700 ring-1 ring-orange-200">売れ筋</span>
         {% endif %}
+        {{ lifecycle_pills(row) }}
       </div>
-      {% if row.id in best_sellers and row.on_hand_qty < 10 %}
+      {% if row.id in best_sellers and row.on_hand_qty < threshold %}
         <div class="mb-2 inline-flex items-center gap-1 text-[11px] text-red-600 font-medium">
           <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           売れ筋商品が在庫不足です（補充を検討）
@@ -235,7 +299,10 @@
           {{ status_pill(row.on_hand_qty) }}
           <span class="text-ink-400 font-mono">{{ row.jan_code or '—' }}</span>
         </div>
-        <a class="text-brand-600 font-medium" href="/admin/events?master_sku_id={{ row.id }}">履歴 →</a>
+        <div class="flex items-center gap-1">
+          <a class="text-brand-600 font-medium" href="/admin/events?master_sku_id={{ row.id }}">履歴 →</a>
+          {{ lifecycle_menu(row) }}
+        </div>
       </div>
     </div>
   {% else %}

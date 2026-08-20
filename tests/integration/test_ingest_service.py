@@ -251,3 +251,88 @@ async def test_order_payload_persisted_as_jsonb(db_session) -> None:
         await db_session.execute(select(Order).where(Order.channel_order_id == "O-10"))
     ).scalar_one()
     assert order.raw_payload == {"sample": True}
+
+
+async def _seed_unmanaged_mapping(session, *, sku: str, kind: str = "packaging") -> int:
+    """A mapped master that holds no stock — gift box, coupon, made-to-order."""
+    master = MasterSku(
+        sku_code=f"MASTER-{sku}",
+        name=sku,
+        is_stock_managed=False,
+        non_inventory_kind=kind,
+    )
+    session.add(master)
+    await session.flush()
+    session.add(
+        ChannelSkuMapping(
+            master_sku_id=master.id, channel="shopify", channel_sku=sku, is_active=True
+        )
+    )
+    await session.flush()
+    return master.id
+
+
+async def test_unmanaged_sku_writes_no_event_on_order_or_cancellation(db_session) -> None:
+    """The whole point of the flag: a gift box neither consumes nor is credited.
+
+    Guarding only the consume path would be worse than not guarding at all — the
+    cancellation would then ADD stock the order never took, and the gift box
+    would climb positive instead of falling to -12509.
+    """
+    master_id = await _seed_unmanaged_mapping(db_session, sku="GIFTBOX")
+    inv = InventoryService(db_session)
+    svc = OrderIngestService(db_session)
+
+    result = await svc.ingest(_normalized(channel_order_id="UM-1", sku="GIFTBOX", quantity=4))
+    assert result.consumed_count == 0
+    assert result.unmanaged_skipped == 1
+    assert result.pending_mapping_count == 0  # it IS mapped; nothing for an operator to do
+    assert result.order.status == "confirmed"
+
+    cancelled = await svc.ingest(
+        _normalized(channel_order_id="UM-1", sku="GIFTBOX", quantity=4, status="cancelled")
+    )
+    assert cancelled.cancelled_count == 0
+    assert cancelled.unmanaged_skipped == 1
+
+    events = (
+        (
+            await db_session.execute(
+                select(InventoryEvent).where(InventoryEvent.master_sku_id == master_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert events == []
+    assert await inv.get_current_stock(master_id) == 0
+
+
+async def test_unmanaged_line_does_not_block_its_neighbours(db_session) -> None:
+    """A mixed order still consumes the real merchandise on the same order."""
+    box = await _seed_unmanaged_mapping(db_session, sku="BOX2")
+    real = await _seed_mapping(db_session, channel="shopify", sku="REAL2")
+    svc = OrderIngestService(db_session)
+
+    order = NormalizedOrder(
+        channel="shopify",
+        channel_order_id="UM-2",
+        status="confirmed",  # type: ignore[arg-type]
+        ordered_at=datetime(2026, 5, 11, 12, 0, tzinfo=UTC),
+        items=[
+            NormalizedOrderLine(
+                line_id="L-1", channel_sku="BOX2", quantity=1, unit_price=Decimal("0")
+            ),
+            NormalizedOrderLine(
+                line_id="L-2", channel_sku="REAL2", quantity=2, unit_price=Decimal("1000")
+            ),
+        ],
+        raw_payload={},
+    )
+    result = await svc.ingest(order)
+
+    assert result.consumed_count == 1
+    assert result.unmanaged_skipped == 1
+    inv = InventoryService(db_session)
+    assert await inv.get_current_stock(box) == 0
+    assert await inv.get_current_stock(real) == -2

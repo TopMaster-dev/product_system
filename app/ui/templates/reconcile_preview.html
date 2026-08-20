@@ -60,6 +60,19 @@
     </div>
   </div>
 
+  {% if summary.excluded_out_of_scope %}
+    {# CSV行が黙って消えたように見えるのを防ぐ。除外は仕様であって欠損ではない。 #}
+    <div class="mb-4 rounded-xl border border-ink-200 bg-ink-50 px-5 py-3 text-sm text-ink-700">
+      <span class="font-medium">照合対象外として {{ summary.excluded_out_of_scope }} 件を除外しました。</span>
+      <span class="text-ink-500 text-xs ml-1">
+        （セット商品 {{ summary.excluded_bundles or 0 }} 件 ／ 在庫管理対象外 {{ summary.excluded_unmanaged or 0 }} 件 ／ アーカイブ済 {{ summary.excluded_archived or 0 }} 件）
+      </span>
+      <div class="text-xs text-ink-500 mt-1">
+        セット商品の在庫は構成品から自動計算されるため、CSVの値では上書きしません。
+      </div>
+    </div>
+  {% endif %}
+
   {% if inspection.row_issues %}
     <details class="mb-4 rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
       <summary class="cursor-pointer px-5 py-3 text-sm font-medium text-amber-800 select-none">

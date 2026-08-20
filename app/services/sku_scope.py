@@ -40,11 +40,21 @@ Usage:
 
 from __future__ import annotations
 
-from sqlalchemy import ColumnElement
+from collections.abc import Sequence
+from dataclasses import dataclass
 
-from app.models import MasterSku
+from sqlalchemy import ColumnElement, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-__all__ = ["analysable_conditions", "operational_conditions"]
+from app.models import BundleComponent, ChannelSkuMapping, InventorySnapshot, MasterSku
+
+__all__ = [
+    "ArchiveBlockers",
+    "analysable_conditions",
+    "archive_blockers",
+    "operational_conditions",
+]
 
 
 def analysable_conditions(*, include_archived: bool) -> list[ColumnElement[bool]]:
@@ -90,3 +100,74 @@ def operational_conditions(
     if not include_unmanaged:
         conditions.append(MasterSku.is_stock_managed.is_(True))
     return conditions
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveBlockers:
+    """Which of the given masters must NOT be archived, and why.
+
+    Archiving is a VISIBILITY change: an archived master disappears from every
+    current-state screen while orders keep consuming it. That is exactly right
+    for a retired master and exactly wrong for a live one, so the same three
+    questions are asked by the bulk CLI (`app.cli.archive_legacy_skus`) and by
+    the per-row toggle in the admin UI. They live here, once, because two
+    implementations of "is this SKU still in use?" would eventually disagree —
+    and the one that says "no" wins by hiding the SKU.
+    """
+
+    with_stock: set[int]
+    with_active_mapping: set[int]
+    component_of_live_bundle: set[int]
+
+    def blocked(self) -> set[int]:
+        return self.with_stock | self.with_active_mapping | self.component_of_live_bundle
+
+    def reasons_for(self, master_sku_id: int) -> list[str]:
+        """Operator-facing Japanese explanations, all of them — not just the
+        first. Reporting one at a time makes a repeat attempt look like a new
+        problem each time."""
+        reasons: list[str] = []
+        if master_sku_id in self.with_stock:
+            reasons.append("在庫が残っています")
+        if master_sku_id in self.with_active_mapping:
+            reasons.append("有効なチャネルマッピングがあります")
+        if master_sku_id in self.component_of_live_bundle:
+            reasons.append("有効なセット商品の構成品です")
+        return reasons
+
+
+async def archive_blockers(session: AsyncSession, master_sku_ids: Sequence[int]) -> ArchiveBlockers:
+    """Three set-based queries, so one master and four hundred cost the same."""
+    ids = list(master_sku_ids)
+    if not ids:
+        return ArchiveBlockers(set(), set(), set())
+
+    stock = await session.execute(
+        select(InventorySnapshot.master_sku_id).where(
+            InventorySnapshot.master_sku_id.in_(ids),
+            InventorySnapshot.on_hand_qty != 0,
+        )
+    )
+    mapping = await session.execute(
+        select(ChannelSkuMapping.master_sku_id).where(
+            ChannelSkuMapping.master_sku_id.in_(ids),
+            ChannelSkuMapping.is_active.is_(True),
+        )
+    )
+    # "Live" parent = not itself archived. Archiving a set first therefore
+    # releases its components on the next pass, so a cleanup can converge
+    # instead of deadlocking on its own guard.
+    parent = aliased(MasterSku)
+    component = await session.execute(
+        select(BundleComponent.component_master_sku_id)
+        .join(parent, parent.id == BundleComponent.bundle_master_sku_id)
+        .where(
+            BundleComponent.component_master_sku_id.in_(ids),
+            parent.archived_at.is_(None),
+        )
+    )
+    return ArchiveBlockers(
+        with_stock={mid for (mid,) in stock.all()},
+        with_active_mapping={mid for (mid,) in mapping.all()},
+        component_of_live_bundle={mid for (mid,) in component.all()},
+    )
