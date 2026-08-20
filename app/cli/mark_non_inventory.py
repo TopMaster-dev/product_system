@@ -80,6 +80,8 @@ class MarkResult:
     zeroed_qty: int = 0
     not_found: list[str] = field(default_factory=list)
     items: list[str] = field(default_factory=list)
+    #: "H1=-12509" per master whose snapshot the stocktake will erase.
+    zeroed_items: list[str] = field(default_factory=list)
 
 
 def read_csv(path: pathlib.Path) -> dict[str, str]:
@@ -117,14 +119,17 @@ async def run(
                 continue
             result.flagged += 1
             result.items.append(f"{sku_code}({kind})")
+            # Record the quantity the stocktake will erase, on BOTH paths. The
+            # runbook requires reviewing the dry-run before the real run, and a
+            # bare "zeroed: 2" is not something anyone can review — it hides
+            # whether the correction is -3 or -12509.
+            qty = 0 if unmark else await _snapshot_qty(session, master.id)
+            if qty != 0:
+                result.zeroed_items.append(f"{sku_code}={qty}")
+                result.zeroed_qty += qty
             if dry_run:
-                # Still report what the stocktake WOULD zero, so the reviewer
-                # sees the full effect before agreeing to it.
-                if not unmark:
-                    qty = await _snapshot_qty(session, master.id)
-                    if qty != 0:
-                        result.zeroed += 1
-                        result.zeroed_qty += qty
+                if qty != 0:
+                    result.zeroed += 1
                 continue
 
             # The CHECK constraint keeps flag and kind in lockstep; set both.
@@ -142,6 +147,8 @@ async def run(
             flagged=result.flagged,
             already_in_state=result.already,
             zeroed=result.zeroed,
+            zeroed_qty=result.zeroed_qty,
+            zeroed_items=result.zeroed_items[:60],
             not_found=result.not_found[:30],
             items=result.items[:60],
         )

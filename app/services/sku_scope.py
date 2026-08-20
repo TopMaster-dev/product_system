@@ -41,7 +41,7 @@ Usage:
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,6 +118,11 @@ class ArchiveBlockers:
     with_stock: set[int]
     with_active_mapping: set[int]
     component_of_live_bundle: set[int]
+    #: on-hand quantity for each master in `with_stock`. Carried because "4 SKUs
+    #: were skipped" is not a reviewable number — whether the blocker is a
+    #: leftover -3 or a real +120 on the shelf decides whether the fix is a
+    #: stocktake or a conversation with the client.
+    stock_qty: dict[int, int] = field(default_factory=dict)
 
     def blocked(self) -> set[int]:
         return self.with_stock | self.with_active_mapping | self.component_of_live_bundle
@@ -128,7 +133,10 @@ class ArchiveBlockers:
         problem each time."""
         reasons: list[str] = []
         if master_sku_id in self.with_stock:
-            reasons.append("在庫が残っています")
+            qty = self.stock_qty.get(master_sku_id)
+            reasons.append(
+                f"在庫が {qty} 残っています" if qty is not None else "在庫が残っています"
+            )
         if master_sku_id in self.with_active_mapping:
             reasons.append("有効なチャネルマッピングがあります")
         if master_sku_id in self.component_of_live_bundle:
@@ -143,7 +151,7 @@ async def archive_blockers(session: AsyncSession, master_sku_ids: Sequence[int])
         return ArchiveBlockers(set(), set(), set())
 
     stock = await session.execute(
-        select(InventorySnapshot.master_sku_id).where(
+        select(InventorySnapshot.master_sku_id, InventorySnapshot.on_hand_qty).where(
             InventorySnapshot.master_sku_id.in_(ids),
             InventorySnapshot.on_hand_qty != 0,
         )
@@ -166,8 +174,10 @@ async def archive_blockers(session: AsyncSession, master_sku_ids: Sequence[int])
             parent.archived_at.is_(None),
         )
     )
+    stock_qty: dict[int, int] = {mid: qty for mid, qty in stock.all()}  # noqa: C416
     return ArchiveBlockers(
-        with_stock={mid for (mid,) in stock.all()},
+        with_stock=set(stock_qty),
         with_active_mapping={mid for (mid,) in mapping.all()},
         component_of_live_bundle={mid for (mid,) in component.all()},
+        stock_qty=stock_qty,
     )

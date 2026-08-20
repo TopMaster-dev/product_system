@@ -203,8 +203,11 @@ async def test_ui_and_cli_ask_the_same_question(_test_engine) -> None:
     assert ids["with_mapping"] in blockers.with_active_mapping
     assert ids["component"] in blockers.component_of_live_bundle
     assert ids["inert"] not in blockers.blocked()
-    # Every reason is reported, not just the first one found.
-    assert blockers.reasons_for(ids["with_stock"]) == ["在庫が残っています"]
+    # Every reason is reported, not just the first one found — and the stock
+    # reason carries the quantity, because "still in use" and "still has 6 on the
+    # shelf" lead to different next actions.
+    assert blockers.reasons_for(ids["with_stock"]) == ["在庫が 6 残っています"]
+    assert blockers.stock_qty[ids["with_stock"]] == 6
     assert blockers.reasons_for(ids["inert"]) == []
 
 

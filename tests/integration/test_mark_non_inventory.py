@@ -162,3 +162,29 @@ async def test_header_aliases_from_the_clients_sheet_are_accepted(_test_engine, 
 
     assert (await _master(factory, mid)).is_stock_managed is False
     assert await _qty(factory, mid) == 0
+
+
+async def test_dry_run_reports_the_quantities_it_would_erase(_test_engine, tmp_path) -> None:
+    """The runbook requires reviewing the dry-run before the real run. "zeroed: 2"
+    is not reviewable — it hides whether the correction is -3 or -12509."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed(factory, "RQ-BIG", -12509)
+    await _seed(factory, "RQ-ZERO", 0)
+
+    from app.cli import mark_non_inventory as mod
+
+    captured: dict[str, object] = {}
+    original = mod.log.info
+    mod.log.info = lambda event, **kw: captured.update(kw)  # type: ignore[method-assign]
+    try:
+        await run(
+            csv_path=_csv(tmp_path, "sku_code,kind\nRQ-BIG,packaging\nRQ-ZERO,coupon\n"),
+            dry_run=True,
+            session_factory=factory,
+        )
+    finally:
+        mod.log.info = original  # type: ignore[method-assign]
+
+    assert captured["zeroed"] == 1  # only the one with a non-zero snapshot
+    assert captured["zeroed_qty"] == -12509
+    assert captured["zeroed_items"] == ["RQ-BIG=-12509"]

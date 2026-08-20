@@ -110,7 +110,10 @@ async def run(
                 # the operator cannot tell how much work is really left.
                 blocked = False
                 if mid in blockers.with_stock:
-                    result.skipped_stock.append(master.sku_code)
+                    # Carry the quantity: "4 skipped" is not reviewable, but
+                    # "B09=-3" vs "B09=120" is the difference between running a
+                    # stocktake and asking the client where the stock went.
+                    result.skipped_stock.append(f"{master.sku_code}={blockers.stock_qty[mid]}")
                     blocked = True
                 if mid in blockers.with_active_mapping:
                     result.skipped_mapping.append(master.sku_code)
