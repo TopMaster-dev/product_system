@@ -107,3 +107,44 @@ def test_header_only_file_has_no_rows() -> None:
     result = inspect(_csv("sku_code,実数\n"), SPEC)
     assert result.fatal == []
     assert result.total_rows == 0
+
+
+def test_leading_comment_lines_are_skipped() -> None:
+    """Every template we hand the client opens with `#` guidance lines, and the
+    client edits and returns THAT file. Treating line 1 as the header rejected
+    the upload with "必須列がありません" — an error whose real fix ("delete the
+    instructions") the message gave no way to guess."""
+    result = inspect(
+        _csv("# これは説明行です\n# kind の選択肢: packaging / coupon\nsku_code,実数\nH1,3\n"),
+        SPEC,
+    )
+    assert result.fatal == []
+    assert result.valid_rows == 1
+
+
+def test_line_numbers_still_point_at_the_excel_row() -> None:
+    """Skipping comments must not shift the reported line number — an operator
+    fixes the file by line number, so an off-by-two sends them to the wrong row."""
+    result = inspect(
+        _csv("# 説明1\n# 説明2\nsku_code,実数\nOK,1\n,5\nB09,abc\n"),
+        SPEC,
+    )
+    reasons = {i["line"]: i["reason"] for i in result.row_issues}
+    assert reasons[5] == "sku_codeが空です"  # physical line 5 in the file
+    assert reasons[6] == "実数が数値ではありません: 'abc'"
+
+
+def test_a_hash_inside_data_is_not_a_comment() -> None:
+    """Only rows BEFORE the header are guidance; after it, `#` is content."""
+    spec = CsvSpec(columns=(ColumnSpec(canonical="備考"), ColumnSpec(canonical="sku_code")))
+    rows = list(iter_rows(_csv("備考,sku_code\n#1 人気,N23gold\n"), spec))
+    assert rows == [{"備考": "#1 人気", "sku_code": "N23gold"}]
+
+
+def test_comment_skipping_can_be_disabled() -> None:
+    spec = CsvSpec(columns=SPEC.columns, comment_prefix="")
+    assert inspect(_csv("# not a comment\nsku_code,実数\nH1,3\n"), spec).fatal
+
+
+def test_file_of_only_comments_reports_no_header() -> None:
+    assert inspect(_csv("# just guidance\n# and more\n"), SPEC).fatal

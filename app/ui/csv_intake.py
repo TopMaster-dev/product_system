@@ -74,6 +74,13 @@ class CsvSpec:
     encodings: tuple[str, ...] = DEFAULT_ENCODINGS
     encoding_message: str = "文字コードを判別できませんでした。"
     max_row_issues: int = 50
+    #: Leading lines starting with this are guidance, not data. Every template
+    #: we hand the client opens with `#` lines explaining what to fill in, and
+    #: the client edits and returns THAT file — so the header is not line 1.
+    #: Without this the upload is rejected as "必須列がありません" and the
+    #: operator has no way to tell that the fix is "delete the instructions".
+    #: Set to "" to treat every line as data.
+    comment_prefix: str = "#"
 
 
 class CsvDecodeError(ValueError):
@@ -88,6 +95,34 @@ def decode_csv(data: bytes, spec: CsvSpec) -> str:
         except UnicodeDecodeError:
             continue
     raise CsvDecodeError(spec.encoding_message)
+
+
+def _is_comment(row: list[str], spec: CsvSpec) -> bool:
+    if not spec.comment_prefix or not row:
+        return False
+    return row[0].lstrip().startswith(spec.comment_prefix)
+
+
+def _read_header(reader: Iterator[list[str]], spec: CsvSpec) -> tuple[list[str] | None, int]:
+    """Return the header row and the 1-based file line it was found on.
+
+    Only lines BEFORE the header are treated as guidance. Filtering `#` globally
+    would silently drop a data row whose first cell legitimately starts with one
+    (a 備考 column, say) — and a silently dropped row in a stocktake means the
+    stock is wrong and nobody knows. A stray `#` further down instead surfaces as
+    a normal row issue with its line number, which someone can see and fix. Every
+    template we ship puts its guidance at the top, so nothing is lost.
+
+    The line number is tracked so row issues keep pointing at the line the
+    operator sees in Excel — the whole point of reporting line numbers.
+    """
+    lineno = 0
+    for row in reader:
+        lineno += 1
+        if _is_comment(row, spec):
+            continue
+        return row, lineno
+    return None, lineno
 
 
 def resolve_header(header: list[str], spec: CsvSpec) -> tuple[dict[str, int], list[str]]:
@@ -141,9 +176,8 @@ def inspect(data: bytes, spec: CsvSpec) -> Inspection:
         return result
 
     reader = csv.reader(io.StringIO(text))
-    try:
-        header = next(reader)
-    except StopIteration:
+    header, header_line = _read_header(reader, spec)
+    if header is None:
         result.fatal.append(NO_HEADER_MESSAGE)
         return result
 
@@ -153,7 +187,8 @@ def inspect(data: bytes, spec: CsvSpec) -> Inspection:
         return result
 
     widest = max(index.values(), default=-1)
-    for lineno, row in enumerate(reader, start=2):
+    for offset, row in enumerate(reader):
+        lineno = header_line + 1 + offset
         if not row or len(row) <= widest:
             continue
         result.total_rows += 1
@@ -200,17 +235,17 @@ def iter_rows(data: bytes, spec: CsvSpec) -> Iterator[dict[str, str]]:
     conditions `inspect` reports as fatal, so callers should inspect first."""
     text = decode_csv(data, spec)
     reader = csv.reader(io.StringIO(text))
-    try:
-        header = next(reader)
-    except StopIteration:
-        raise ValueError(NO_HEADER_MESSAGE) from None
+    header, header_line = _read_header(reader, spec)
+    if header is None:
+        raise ValueError(NO_HEADER_MESSAGE)
     index, missing = resolve_header(header, spec)
     if missing:
         raise ValueError(MISSING_COLUMNS_PREFIX + " / ".join(missing))
 
     widest = max(index.values(), default=-1)
     throwaway = Inspection()
-    for lineno, row in enumerate(reader, start=2):
+    for offset, row in enumerate(reader):
+        lineno = header_line + 1 + offset
         if not row or len(row) <= widest:
             continue
         if _row_issue(row, index, spec, lineno, throwaway):
