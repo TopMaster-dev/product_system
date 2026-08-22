@@ -55,6 +55,13 @@ try {
     $env:DATABASE_URL = "postgresql+asyncpg://postgres:${DB_PASSWORD}@127.0.0.1:${LOCAL_PORT}/$DB"
     $env:DATABASE_URL_SYNC = "postgresql+psycopg2://postgres:${DB_PASSWORD}@127.0.0.1:${LOCAL_PORT}/$DB"
 
+    # BigQuery 系CLIは GCP_PROJECT_ID / BIGQUERY_DATASET が未設定だと
+    # in-memory クライアントにフォールバックし「成功したのに何も書かれない」
+    # 状態になる。プロジェクトとデータセットは秘密情報ではないため常に設定する。
+    $env:GCP_PROJECT_ID = $PROJECT_ID
+    $env:BIGQUERY_DATASET = ([regex]'bigquery_dataset\s*=\s*"([^"]+)"').Match($tfvars).Groups[1].Value
+    if (-not $env:BIGQUERY_DATASET) { $env:BIGQUERY_DATASET = "product_system" }
+
     if ($WithShopify) {
         Section "Shopify 認証情報を Secret Manager から取得"
         # ローカルの .env はプレースホルダ (local.myshopify.com) なので本番値で上書きする。
@@ -67,6 +74,7 @@ try {
 
     Section "接続先の確認"
     Write-Host ("  DB -> " + ($env:DATABASE_URL -replace ':[^:@]+@', ':***@'))
+    Write-Host ("  BQ -> " + $env:GCP_PROJECT_ID + ":" + $env:BIGQUERY_DATASET)
     py -m alembic current
 
     $cmd = "py -m app.cli.$Cli"

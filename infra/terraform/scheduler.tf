@@ -6,13 +6,20 @@ resource "google_cloud_scheduler_job" "bq_export_daily" {
   time_zone   = "Etc/UTC"
   region      = var.region
 
-  # The endpoint now returns 500 on a per-table failure (it used to return 200
-  # "partial", which hid a broken master_skus export for weeks). Without an
-  # explicit retry_config Cloud Scheduler's HTTP default is retry_count = 0, so
-  # a transient BigQuery error would otherwise wait a full day for the next run.
+  # The endpoint returns 500 on a per-table failure (it used to return 200
+  # "partial", which hid a broken master_skus export for weeks), so a retry is
+  # worth having: without retry_config, Cloud Scheduler's HTTP default is 0 and
+  # a transient BigQuery error would wait a full day.
+  #
+  # But retries are not free here. Incremental tables load with WRITE_APPEND,
+  # and a process killed between BigQuery accepting a window and Postgres
+  # committing it will re-append that window. Windowed exports cap the exposure
+  # at one day (it was three months on 2026-08-21, times four attempts), and
+  # dropping 3 -> 1 halves what is left. Raise this again only once the loads
+  # are idempotent via a staging table + MERGE.
   retry_config {
-    retry_count          = 3
-    min_backoff_duration = "30s"
+    retry_count          = 1
+    min_backoff_duration = "60s"
     max_backoff_duration = "300s"
   }
 

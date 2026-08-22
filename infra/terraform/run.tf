@@ -133,6 +133,20 @@ resource "google_cloud_run_v2_service" "app" {
         value = var.admin_password
       }
 
+      # This block was absent, so the service silently ran on Cloud Run v2's
+      # 512Mi default — not a sizing decision anyone made. The BigQuery export
+      # runs in this same container and was OOM-killed on 2026-08-21 while
+      # catching up an 82-day backlog. The export is now windowed per day
+      # (app/cli/export_to_bq.py), which is the actual fix; 2Gi is the headroom
+      # that stops a single large day from being fatal.
+      resources {
+        limits = {
+          memory = "2Gi"
+          cpu    = "1"
+        }
+        cpu_idle = true
+      }
+
       volume_mounts {
         name       = "cloudsql"
         mount_path = "/cloudsql"

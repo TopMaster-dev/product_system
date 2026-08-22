@@ -219,3 +219,146 @@ async def test_failed_export_does_not_advance_watermark(db_session) -> None:
         )
     ).scalar_one_or_none()
     assert last_success is None  # watermark NOT advanced
+
+
+async def _seed_watermarks(factory, until: datetime) -> None:
+    """Give every incremental table a prior SUCCESSFUL run, exactly as
+    production has one dated 2026-05-31. Without this the planner falls back to
+    the oldest source row, whose updated_at defaults to now — which would make
+    every test window collapse to one and prove nothing."""
+    async with factory() as session, session.begin():
+        for name in ("orders", "order_items", "inventory_events"):
+            session.add(
+                BigQueryExportRun(
+                    table_name=name,
+                    mode="incremental",
+                    since=None,
+                    until=until,
+                    status="success",
+                    row_count=0,
+                    completed_at=until,
+                )
+            )
+
+
+class _CountingClient(InMemoryBigQueryClient):
+    """Counts loads per table so a test can fail a specific window."""
+
+    def __init__(self, *, fail_table: str | None = None, fail_on_load: int = 0) -> None:
+        super().__init__()
+        self.loads: dict[str, int] = {}
+        self._fail_table = fail_table
+        self._fail_on_load = fail_on_load
+
+    async def load_rows(self, table, rows, *, write_mode):  # type: ignore[no-untyped-def]
+        self.loads[table.name] = self.loads.get(table.name, 0) + 1
+        if table.name == self._fail_table and self.loads[table.name] >= self._fail_on_load:
+            raise MemoryError("simulated OOM kill")
+        return await super().load_rows(table, rows, write_mode=write_mode)
+
+
+async def _run_with_client(factory, client, *, until, max_windows):  # type: ignore[no-untyped-def]
+    import app.cli.export_to_bq as mod
+
+    original = mod.get_bigquery_client
+    mod.get_bigquery_client = lambda: client  # type: ignore[assignment]
+    try:
+        return await mod.run_export(factory, until=until, max_windows=max_windows)
+    finally:
+        mod.get_bigquery_client = original  # type: ignore[assignment]
+
+
+async def test_incremental_export_is_split_into_daily_windows(_test_engine) -> None:
+    """One load per day, not one load for the whole backlog — the property that
+    bounds memory however far behind the export has fallen."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    t0 = datetime(2026, 5, 31, tzinfo=UTC)
+    await _seed_watermarks(factory, t0)
+
+    client = _CountingClient()
+    await _run_with_client(factory, client, until=t0 + timedelta(days=5), max_windows=0)
+
+    assert client.loads["orders"] == 5
+    assert client.loads["inventory_events"] == 5
+    assert client.loads["master_skus"] == 1  # snapshots are never windowed
+
+
+async def test_a_kill_mid_export_keeps_every_finished_window(_test_engine) -> None:
+    """The property the 2026-08-21 incident turned on.
+
+    The old shape wrapped all six tables in ONE transaction, so a SIGKILL
+    discarded every run record while BigQuery kept the rows it had accepted —
+    and the next attempt re-appended them from the same unmoved watermark.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    t0 = datetime(2026, 5, 31, tzinfo=UTC)
+    await _seed_watermarks(factory, t0)
+
+    client = _CountingClient(fail_table="inventory_events", fail_on_load=3)
+    results = await _run_with_client(factory, client, until=t0 + timedelta(days=5), max_windows=0)
+
+    assert any(r.error for r in results), "the simulated kill did not surface"
+
+    async with factory() as session:
+        runs = (
+            (
+                await session.execute(
+                    select(BigQueryExportRun).where(
+                        BigQueryExportRun.table_name == "inventory_events",
+                        BigQueryExportRun.status == "success",
+                        BigQueryExportRun.until > t0,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    # Windows 1 and 2 committed before window 3 died, and they stay committed.
+    assert len(runs) == 2
+
+    async with factory() as session:
+        service = BigQueryExportService(session, client)
+        watermark = await service.last_success_watermark("inventory_events")
+    # A resumed run starts from day 2, not from the beginning — which is what
+    # stops the re-append that produced duplicates in production.
+    assert watermark == t0 + timedelta(days=2)
+
+
+async def test_a_failed_window_stops_that_table_without_skipping_ahead(_test_engine) -> None:
+    """A gap would be worse than a delay: the watermark would advance past data
+    that was never exported, and nothing would ever go back for it."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    t0 = datetime(2026, 5, 31, tzinfo=UTC)
+    await _seed_watermarks(factory, t0)
+
+    client = _CountingClient(fail_table="orders", fail_on_load=2)
+    await _run_with_client(factory, client, until=t0 + timedelta(days=5), max_windows=0)
+
+    # Stopped at the failure instead of grinding through windows 3-5.
+    assert client.loads["orders"] == 2
+    # Other tables are unaffected — one table's failure is not a global halt.
+    assert client.loads["inventory_events"] == 5
+
+
+async def test_capped_run_reports_the_remaining_backlog(_test_engine) -> None:
+    """ "Nothing failed" and "the export is current" are different claims.
+    Conflating them is what let a three-month outage look healthy."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    t0 = datetime(2026, 5, 31, tzinfo=UTC)
+    await _seed_watermarks(factory, t0)
+
+    results = await _run_with_client(
+        factory, _CountingClient(), until=t0 + timedelta(days=30), max_windows=3
+    )
+
+    assert not any(r.error for r in results)
+    behind = {r.table_name: r.remaining_windows for r in results if r.remaining_windows}
+    assert behind == {"orders": 27, "order_items": 27, "inventory_events": 27}

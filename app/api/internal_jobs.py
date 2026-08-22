@@ -35,7 +35,26 @@ async def trigger_bq_export() -> dict[str, str]:
     """
     results = await export_to_bq.run_export()
     failed = [r for r in results if r.error]
+    behind = [r for r in results if r.remaining_windows]
+
     if not failed:
+        if behind:
+            # Succeeded, but not caught up. Reported as its own state: treating
+            # "behind" as "ok" is precisely how a three-month outage stayed
+            # invisible. Not a 500 — nothing is broken, the schedule just cannot
+            # close a backlog this large on its own.
+            detail = ", ".join(f"{r.table_name}: 残り{r.remaining_windows}日分" for r in behind)
+            log.warning("internal.bq_export.behind", detail=detail)
+            await get_slack_notifier().notify(
+                level="error",
+                title="BigQuery エクスポートに未処理の期間があります",
+                message=(
+                    "今回の実行は成功しましたが、未反映の期間が残っています。"
+                    " `py -m app.cli.export_to_bq --max-windows 0` で追い付かせてください。"
+                ),
+                fields=[(r.table_name, f"残り {r.remaining_windows} 窓") for r in behind],
+            )
+            return {"status": "behind", "tables": str(len(results)), "detail": detail}
         log.info("internal.bq_export.done", tables=len(results))
         return {"status": "ok", "tables": str(len(results))}
 
