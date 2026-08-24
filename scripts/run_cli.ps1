@@ -82,7 +82,10 @@ try {
     if ($Args)   { $cmd += " $Args" }
 
     Section "実行: $cmd"
-    if (-not $DryRun) {
+    # 参照のみのフラグ (--status など) で「本実行です」と出すと警告が形骸化し、
+    # 本当に危険な実行のときに読み飛ばされる。
+    $readOnly = $Args -match '(^|\s)--(status|list|report)(\s|$)'
+    if (-not $DryRun -and -not $readOnly) {
         Write-Host "  [注意] 本実行です。--dry-run の出力を確認済みであることを前提とします。" -ForegroundColor Yellow
     }
     Invoke-Expression $cmd

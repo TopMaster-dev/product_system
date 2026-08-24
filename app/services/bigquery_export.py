@@ -54,7 +54,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -270,65 +270,76 @@ class BigQueryExportService:
         )
         return result.scalar_one_or_none()
 
+    def _source_query(
+        self,
+        spec: TableSpec,
+        since: datetime | None,
+        until: datetime,
+    ) -> Select[Any]:
+        """The rows this table owes for the window (since, until].
+
+        Counting and fetching MUST come from one definition. When they were
+        written separately, "how far behind are we?" and "what will we send?"
+        could quietly disagree — the same class of bug as the inventory badges
+        that did not match their own list.
+        """
+        if spec.name == "master_skus":
+            sku_stmt = select(MasterSku)
+            if since:
+                sku_stmt = sku_stmt.where(MasterSku.updated_at > since)
+            return sku_stmt.where(MasterSku.updated_at <= until)
+
+        if spec.name == "channel_sku_mappings":
+            map_stmt = select(ChannelSkuMapping)
+            if since:
+                map_stmt = map_stmt.where(ChannelSkuMapping.updated_at > since)
+            return map_stmt.where(ChannelSkuMapping.updated_at <= until)
+
+        if spec.name == "orders":
+            ord_stmt = select(Order)
+            if since:
+                ord_stmt = ord_stmt.where(Order.updated_at > since)
+            return ord_stmt.where(Order.updated_at <= until)
+
+        if spec.name == "order_items":
+            # OrderItem has no updated_at; it rides its parent order's.
+            item_stmt = select(OrderItem).join(Order, Order.id == OrderItem.order_id)
+            if since:
+                item_stmt = item_stmt.where(Order.updated_at > since)
+            return item_stmt.where(Order.updated_at <= until)
+
+        if spec.name == "inventory_events":
+            # created_at, NOT occurred_at: a backdated cancellation carries the
+            # original order's occurred_at and would fall outside every future
+            # window, so it would never be exported at all.
+            ev_stmt = select(InventoryEvent)
+            if since:
+                ev_stmt = ev_stmt.where(InventoryEvent.created_at > since)
+            return ev_stmt.where(InventoryEvent.created_at <= until)
+
+        if spec.name == "inventory_snapshots":
+            return select(InventorySnapshot)
+
+        raise ValueError(f"unknown table {spec.name}")
+
+    async def count_source_rows(
+        self,
+        spec: TableSpec,
+        since: datetime | None,
+        until: datetime,
+    ) -> int:
+        """How many rows the window covers, without materialising any of them."""
+        stmt = select(func.count()).select_from(self._source_query(spec, since, until).subquery())
+        return await self._session.scalar(stmt) or 0
+
     async def _fetch_rows(
         self,
         spec: TableSpec,
         since: datetime | None,
         until: datetime,
     ) -> list[dict[str, Any]]:
-        if spec.name == "master_skus":
-            sku_stmt = select(MasterSku)
-            if since:
-                sku_stmt = sku_stmt.where(MasterSku.updated_at > since)
-            sku_stmt = sku_stmt.where(MasterSku.updated_at <= until)
-            return [
-                _serialize(row) for row in (await self._session.execute(sku_stmt)).scalars().all()
-            ]
-
-        if spec.name == "channel_sku_mappings":
-            map_stmt = select(ChannelSkuMapping)
-            if since:
-                map_stmt = map_stmt.where(ChannelSkuMapping.updated_at > since)
-            map_stmt = map_stmt.where(ChannelSkuMapping.updated_at <= until)
-            return [
-                _serialize(row) for row in (await self._session.execute(map_stmt)).scalars().all()
-            ]
-
-        if spec.name == "orders":
-            ord_stmt = select(Order)
-            if since:
-                ord_stmt = ord_stmt.where(Order.updated_at > since)
-            ord_stmt = ord_stmt.where(Order.updated_at <= until)
-            return [
-                _serialize(row) for row in (await self._session.execute(ord_stmt)).scalars().all()
-            ]
-
-        if spec.name == "order_items":
-            # OrderItem has no updated_at; export by parent order's updated_at.
-            item_stmt = select(OrderItem).join(Order, Order.id == OrderItem.order_id)
-            if since:
-                item_stmt = item_stmt.where(Order.updated_at > since)
-            item_stmt = item_stmt.where(Order.updated_at <= until)
-            return [
-                _serialize(row) for row in (await self._session.execute(item_stmt)).scalars().all()
-            ]
-
-        if spec.name == "inventory_events":
-            ev_stmt = select(InventoryEvent)
-            if since:
-                ev_stmt = ev_stmt.where(InventoryEvent.created_at > since)
-            ev_stmt = ev_stmt.where(InventoryEvent.created_at <= until)
-            return [
-                _serialize(row) for row in (await self._session.execute(ev_stmt)).scalars().all()
-            ]
-
-        if spec.name == "inventory_snapshots":
-            snap_stmt = select(InventorySnapshot)
-            return [
-                _serialize(row) for row in (await self._session.execute(snap_stmt)).scalars().all()
-            ]
-
-        raise ValueError(f"unknown table {spec.name}")
+        result = await self._session.execute(self._source_query(spec, since, until))
+        return [_serialize(row) for row in result.scalars().all()]
 
 
 def _serialize(row: Any) -> dict[str, Any]:

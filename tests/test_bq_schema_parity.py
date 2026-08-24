@@ -84,14 +84,20 @@ def test_schema_nullability_matches_orm(spec) -> None:
 
 
 def test_every_spec_has_a_fetcher() -> None:
-    """`_fetch_rows` dispatches on spec.name; a spec with no branch returns []
-    and would silently export an empty table."""
-    import inspect
+    """Row selection dispatches on spec.name; a spec with no branch would
+    silently export an empty table.
+
+    Asked behaviourally rather than by grepping the method source: the previous
+    version read `_fetch_rows`' text and broke the moment the branches moved to
+    `_source_query`, while a genuinely missing branch would still have passed as
+    long as the name appeared anywhere in the function.
+    """
+    from datetime import UTC, datetime
 
     from app.services.bigquery_export import BigQueryExportService
 
-    src = inspect.getsource(BigQueryExportService._fetch_rows)
+    service = BigQueryExportService(None, None)  # type: ignore[arg-type]
+    until = datetime(2026, 8, 24, tzinfo=UTC)
     for spec in TABLE_SPECS:
-        assert f'"{spec.name}"' in src, (
-            f"TABLE_SPECS includes {spec.name} but _fetch_rows has no branch for it"
-        )
+        # Raises ValueError("unknown table ...") when a spec has no branch.
+        assert service._source_query(spec, None, until) is not None, spec.name

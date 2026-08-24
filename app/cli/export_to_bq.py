@@ -31,7 +31,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.bigquery import get_bigquery_client
+from app.bigquery import InMemoryBigQueryClient, get_bigquery_client
 from app.config import get_settings
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
@@ -137,6 +137,54 @@ async def run_export(
     return results
 
 
+async def report_status(
+    session_factory: async_sessionmaker[Any] = async_session_factory,
+    *,
+    until: datetime | None = None,
+) -> int:
+    """Print what each table's watermark is and how far behind it is, without
+    exporting anything.
+
+    "Is the export current?" had no answer short of reading the database by
+    hand, which is a large part of why a three-month outage went unnoticed.
+    Read-only and safe to run at any time, including while the schedule is
+    paused, and it deliberately does NOT construct a real BigQuery client: the
+    watermarks all live in Postgres, so asking for one would make the status of
+    the export un-inspectable from any machine without the [gcp] extra
+    installed — exactly when you most want to ask.
+    """
+    until = until or datetime.now(UTC)
+    bq = InMemoryBigQueryClient()  # never used; the service just requires one
+    for spec in TABLE_SPECS:
+        if spec.mode != "incremental":
+            log.info("bq_export.status", table=spec.name, mode=spec.mode, note="snapshot")
+            continue
+        async with session_factory() as session:
+            service = BigQueryExportService(session, bq)
+            watermark = await service.last_success_watermark(spec.name)
+            earliest = await service.earliest_watermark(spec)
+            start = watermark or earliest
+            # Rows, not just windows. "85 windows pending" says nothing about
+            # whether BigQuery holds 8,000 rows or 80,000 — and comparing the
+            # source total against what BigQuery actually has is the only way
+            # to catch a watermark that claims work it never did.
+            source_total = await service.count_source_rows(spec, None, until)
+            source_pending = await service.count_source_rows(spec, start, until)
+        log.info(
+            "bq_export.status",
+            table=spec.name,
+            mode=spec.mode,
+            watermark=str(watermark) if watermark else None,
+            # No watermark means the next run rebuilds from the oldest row.
+            starts_from=str(start) if start else None,
+            pending_windows=len(plan_windows(start, until)) if start else 0,
+            source_rows_total=source_total,
+            source_rows_pending=source_pending,
+            source_rows_already_exported=source_total - source_pending,
+        )
+    return 0
+
+
 async def run(
     session_factory: async_sessionmaker[Any] = async_session_factory,
     *,
@@ -160,6 +208,11 @@ def main() -> None:
         action="store_true",
         help="Permit running with no BigQuery dataset configured (tests/dev only).",
     )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Report each table's watermark and pending windows; export nothing.",
+    )
     args = parser.parse_args()
     settings = get_settings()
     configure_logging(settings.app_log_level)
@@ -168,6 +221,10 @@ def main() -> None:
     # project is unset, which is right for tests and catastrophic for a manual
     # backfill: the run would report success, write nothing, and leave someone
     # confident the backlog was cleared. Refuse instead of pretending.
+    if args.status:
+        # Reads only the local database; no dataset needed.
+        sys.exit(asyncio.run(report_status()))
+
     if not args.allow_in_memory and not (settings.bigquery_dataset and settings.gcp_project_id):
         sys.exit(
             "BIGQUERY_DATASET / GCP_PROJECT_ID が未設定です。"
