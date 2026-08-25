@@ -77,14 +77,38 @@ async def main() -> int:
                 bad = next((a for a in alltime if a.status == "failed"), None)
                 if bad is not None and bad.last > ok.last:
                     print(f"        以降ずっと失敗しています(直近 {bad.last})。")
-            failed = [r for r in rows if r.status == "failed"]
+            # A table is unhealthy only when its LATEST attempt failed. Flagging
+            # any failure inside the window kept the check red forever after an
+            # incident — every table still carries the 2026-08-20 IAM failures
+            # even though all of them succeeded on 08-24. A health check that is
+            # permanently red is one nobody reads, which is how the export
+            # stayed broken for three months.
+            latest_ok = {r.table_name: r.latest for r in rows if r.status == "success"}
+            latest_bad = {r.table_name: r.latest for r in rows if r.status == "failed"}
+            failed = [
+                table
+                for table, when in latest_bad.items()
+                if table not in latest_ok or when > latest_ok[table]
+            ]
             for r in rows:
-                mark = "  [FAILED]" if r.status == "failed" else ""
+                superseded = (
+                    r.status == "failed"
+                    and r.table_name in latest_ok
+                    and latest_ok[r.table_name] > r.latest
+                )
+                if r.status != "failed":
+                    mark = ""
+                elif superseded:
+                    mark = "  (復旧済み)"
+                else:
+                    mark = "  [FAILED]"
                 print(
                     f"   {r.table_name:24} {r.status:10} runs={r.runs:<4} latest={r.latest}{mark}"
                 )
             if failed:
-                print("\n   [要対応] 失敗しているテーブルがあります。")
+                print(
+                    f"\n   [要対応] 最新の実行が失敗しているテーブル: {', '.join(sorted(failed))}"
+                )
                 print("   bq_schemas の列不足が原因の場合、W0で修正済みの master_skus.json を")
                 print("   terraform apply で反映してください。")
                 print("   (tests/test_bq_schema_parity.py が恒久ガードになります)")
@@ -94,11 +118,12 @@ async def main() -> int:
                             """
                             SELECT table_name, error, started_at
                             FROM bigquery_export_runs
-                            WHERE status = 'failed'
+                            WHERE status = 'failed' AND table_name = ANY(:tables)
                             ORDER BY started_at DESC
                             LIMIT 5
                             """
-                        )
+                        ),
+                        {"tables": failed},
                     )
                 ).all()
                 for e in err:

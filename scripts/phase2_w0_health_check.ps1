@@ -67,8 +67,23 @@ try {
     $env:DATABASE_URL      = "postgresql+asyncpg://postgres:${DB_PASSWORD}@127.0.0.1:${LOCAL_PORT}/$DB"
 
     Section "1. Alembic リビジョン"
-    py -m alembic current
-    Write-Host "  期待値: 0008 (head)。ずれている場合は Phase 2 着手前に解消すること。"
+    # 期待値はリポジトリの alembic から算出する。以前はここに "0008" と直書き
+    # されており、0009/0010 適用後も「期待値: 0008」と表示し続けていた。
+    # 健全な状態を異常と報告するチェックは、そのうち誰も読まなくなる。
+    # stderr は絶対にリダイレクトしないこと。PS 5.1 では native exe の stderr を
+    # リダイレクトすると各行が NativeCommandError になり、$ErrorActionPreference
+    # = "Stop" のもとでスクリプトごと停止する(alembic は INFO を stderr に出す)。
+    # リダイレクトしなければ stderr はコンソールへ直行し、pipeline には stdout
+    # だけが流れる。
+    $current = (py -m alembic current | Select-String -Pattern '^[0-9a-f]+' | Select-Object -First 1).Line
+    $expected = (py -m alembic heads | Select-String -Pattern '^[0-9a-f]+' | Select-Object -First 1).Line
+    Write-Host "  本番    : $current"
+    Write-Host "  リポジトリ: $expected"
+    if ($current -and $expected -and $current.Trim() -eq $expected.Trim()) {
+        Write-Host "  [OK] 一致しています。" -ForegroundColor Green
+    } else {
+        Write-Host "  [要対応] ずれています。デプロイ前に run_db_migration.ps1 を実行してください。" -ForegroundColor Yellow
+    }
 
     Section "2/3. BigQueryエクスポート状況 と 在庫健全性"
     py scripts/phase2_w0_db_checks.py
