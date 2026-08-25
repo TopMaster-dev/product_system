@@ -8,6 +8,7 @@ from app.ui.csv_intake import (
     ColumnSpec,
     CsvDecodeError,
     CsvSpec,
+    OnEmpty,
     decode_csv,
     inspect,
     int_validator,
@@ -65,13 +66,13 @@ def test_row_issues_carry_the_excel_line_number() -> None:
     assert reasons[4] == "実数が数値ではありません: 'abc'"
 
 
-def test_allow_empty_skips_the_row_without_reporting_it() -> None:
+def test_on_empty_skip_drops_the_row_without_reporting_it() -> None:
     """A column that must EXIST but may be blank on a row (the CROSS MALL
     stock export writes such rows) is not an operator error."""
     spec = CsvSpec(
         columns=(
             ColumnSpec(canonical="sku_code"),
-            ColumnSpec(canonical="実数", allow_empty=True),
+            ColumnSpec(canonical="実数", on_empty=OnEmpty.SKIP),
         )
     )
     result = inspect(_csv("sku_code,実数\nN23gold,\nB09,3\n"), spec)
@@ -80,8 +81,8 @@ def test_allow_empty_skips_the_row_without_reporting_it() -> None:
 
 
 def test_required_column_presence_is_separate_from_empty_values() -> None:
-    """allow_empty must NOT make the column itself optional."""
-    spec = CsvSpec(columns=(ColumnSpec(canonical="実数", allow_empty=True),))
+    """on_empty must NOT make the column itself optional."""
+    spec = CsvSpec(columns=(ColumnSpec(canonical="実数", on_empty=OnEmpty.SKIP),))
     result = inspect(_csv("別の列\n1\n"), spec)
     assert result.fatal and "実数" in result.fatal[0]
 
@@ -148,3 +149,38 @@ def test_comment_skipping_can_be_disabled() -> None:
 
 def test_file_of_only_comments_reports_no_header() -> None:
     assert inspect(_csv("# just guidance\n# and more\n"), SPEC).fatal
+
+
+def test_on_empty_keep_treats_blank_as_a_value() -> None:
+    """Blanking a cell is how a SKU gets UN-assigned from its category, so the
+    row has to survive and reach the caller as "". SKIP would silently discard
+    the correction and KEEP is the only way to express it."""
+    spec = CsvSpec(
+        columns=(
+            ColumnSpec(canonical="sku_code"),
+            ColumnSpec(canonical="category_code", on_empty=OnEmpty.KEEP),
+        )
+    )
+    result = inspect(_csv("sku_code,category_code\nN23gold,\nB09,NL\n"), spec)
+    assert result.row_issues == []
+    assert result.valid_rows == 2
+
+    rows = list(iter_rows(_csv("sku_code,category_code\nN23gold,\n"), spec))
+    assert rows == [{"sku_code": "N23gold", "category_code": ""}]
+
+
+def test_the_three_empty_behaviours_are_distinct() -> None:
+    """One boolean could only express two of these, which is how the category
+    import silently dropped every un-assignment."""
+    body = _csv("a,b\nx,\n")
+    for behaviour, expected_rows, expected_issues in (
+        (OnEmpty.ERROR, 0, 1),
+        (OnEmpty.SKIP, 0, 0),
+        (OnEmpty.KEEP, 1, 0),
+    ):
+        spec = CsvSpec(
+            columns=(ColumnSpec(canonical="a"), ColumnSpec(canonical="b", on_empty=behaviour))
+        )
+        result = inspect(body, spec)
+        assert result.valid_rows == expected_rows, behaviour
+        assert len(result.row_issues) == expected_issues, behaviour

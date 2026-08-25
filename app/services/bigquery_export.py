@@ -68,6 +68,7 @@ from app.models import (
     MasterSku,
     Order,
     OrderItem,
+    ProductCategory,
 )
 
 log = get_logger(__name__)
@@ -92,6 +93,10 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("order_items", "incremental"),
     TableSpec("inventory_events", "incremental", partition_field="occurred_at"),
     TableSpec("inventory_snapshots", "snapshot"),
+    # Tiny (tens of rows) and edited by hand in the admin UI, so a full reload
+    # every run is both cheap and self-healing — same reasoning as the two
+    # dimension tables above.
+    TableSpec("product_categories", "snapshot"),
 )
 
 #: How much time one incremental window covers. A day of this shop's activity is
@@ -319,6 +324,9 @@ class BigQueryExportService:
 
         if spec.name == "inventory_snapshots":
             return select(InventorySnapshot)
+
+        if spec.name == "product_categories":
+            return select(ProductCategory)
 
         raise ValueError(f"unknown table {spec.name}")
 

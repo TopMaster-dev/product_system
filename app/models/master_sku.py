@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, String, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +29,8 @@ class MasterSku(Base, TimestampMixin):
             "is_stock_managed = (non_inventory_kind IS NULL)",
             name="ck_master_sku_non_inventory_kind",
         ),
+        # カテゴリ別集計と「未分類件数」の両方がこの索引を使う。
+        Index("ix_master_skus_category", "category_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -49,3 +60,13 @@ class MasterSku(Base, TimestampMixin):
     # (除外すると移行前の売上が消え前期間比較が壊れる)。
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # --- Phase 2 categorisation (migration 0010) ---------------------------
+    # 分析軸。NULL は「未分類」であり、カテゴリ別集計では独立した区分として
+    # 表示する(黙って除外すると各カテゴリの合計と全体の合計が食い違う)。
+    # ON DELETE RESTRICT: カテゴリを消しても SKU の分類が黙って消えないよう、
+    # 割当済みの SKU がある限り削除を拒否する。
+    category_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("product_categories.id", ondelete="RESTRICT"),
+        nullable=True,
+    )

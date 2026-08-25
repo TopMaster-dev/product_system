@@ -46,7 +46,7 @@ from app.models import (
 )
 from app.services.reconcile import ReconcileService
 from app.ui.auth import OperatorDep
-from app.ui.csv_intake import ColumnSpec, CsvSpec, inspect, int_validator
+from app.ui.csv_intake import ColumnSpec, CsvSpec, OnEmpty, inspect, int_validator
 from app.ui.deps import templates
 
 router = APIRouter(prefix="/reconcile")
@@ -76,7 +76,7 @@ _STOCK_CSV_SPEC = CsvSpec(
             required=True,
             # An empty quantity skips the row silently — CROSS MALL exports rows
             # with no stock figure and they are not an operator error.
-            allow_empty=True,
+            on_empty=OnEmpty.SKIP,
             validator=int_validator("在庫数量が数値ではありません: '{value}'"),
         ),
     ),

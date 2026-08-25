@@ -12,6 +12,9 @@ Phase 1-B additions:
 - sync_attempts
 - reconcile_runs, reconcile_diffs
 - bundle_components (組み合わせ商品 / 共有在庫)
+
+Phase 2 additions:
+- product_categories (大分類/中分類、深さ2)
 """
 
 from app.models.base import Base, TimestampMixin
@@ -34,11 +37,13 @@ from app.models.inventory import InventoryEvent, InventorySnapshot
 from app.models.mapping_alert import MappingAlert
 from app.models.master_sku import MasterSku
 from app.models.order import Order, OrderItem
+from app.models.product_category import MAX_CATEGORY_LEVEL, ProductCategory
 from app.models.reconcile import ReconcileDiff, ReconcileRun
 from app.models.sync_attempt import SyncAttempt
 from app.models.webhook_log import WebhookLog
 
 __all__ = [
+    "MAX_CATEGORY_LEVEL",
     "Base",
     "BigQueryExportRun",
     "BundleComponent",
@@ -54,6 +59,7 @@ __all__ = [
     "Order",
     "OrderItem",
     "OrderStatusEnum",
+    "ProductCategory",
     "ReconcileDiff",
     "ReconcileDiffDecisionEnum",
     "ReconcileRun",

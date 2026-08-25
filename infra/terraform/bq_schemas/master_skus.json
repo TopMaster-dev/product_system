@@ -10,6 +10,7 @@
   { "name": "non_inventory_kind", "type": "STRING", "mode": "NULLABLE" },
   { "name": "archived_at", "type": "TIMESTAMP", "mode": "NULLABLE" },
   { "name": "archived_reason", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "category_id", "type": "INTEGER", "mode": "NULLABLE" },
   { "name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED" },
   { "name": "updated_at", "type": "TIMESTAMP", "mode": "REQUIRED" }
 ]

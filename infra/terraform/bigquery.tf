@@ -1,8 +1,22 @@
 # BigQuery — dataset already exists in the project (created by client).
-# We reference it via a data source and only manage the 6 tables + IAM.
+# We reference it via a data source and only manage the tables + IAM.
+#
+# Adding a column to a table that is ALREADY DEPLOYED must use
+# "mode": "NULLABLE". REQUIRED forces Terraform to destroy and re-create the
+# table, which silently deletes every row in it. tests/test_bq_schema_parity.py
+# pins each JSON against the ORM; see its docstring.
 
 data "google_bigquery_dataset" "main" {
   dataset_id = var.bigquery_dataset
+}
+
+# New in Phase 2 W3. REQUIRED modes are safe here only because the table does
+# not exist yet — a create, not an alter.
+resource "google_bigquery_table" "product_categories" {
+  dataset_id          = data.google_bigquery_dataset.main.dataset_id
+  table_id            = "product_categories"
+  deletion_protection = false
+  schema              = file("${path.module}/bq_schemas/product_categories.json")
 }
 
 resource "google_bigquery_table" "master_skus" {

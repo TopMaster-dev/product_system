@@ -27,6 +27,7 @@ import csv
 import io
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 # Excel-on-Windows writes CP932; Excel "CSV UTF-8" writes a BOM; our own exports
@@ -39,18 +40,33 @@ NO_HEADER_MESSAGE = "ヘッダー行がありません。"
 MISSING_COLUMNS_PREFIX = "必須列がありません: "
 
 
+class OnEmpty(StrEnum):
+    """What an empty cell MEANS for this column — three genuinely different
+    things that a boolean kept collapsing into two.
+
+    ERROR  the value is required on every row. Reports a row issue with its line
+           number and skips the row. The default, because silently dropping a
+           row an operator believed they had filled in is the worst outcome.
+    SKIP   the row simply carries nothing here, and that is not an operator
+           error — the CROSS MALL stock export emits rows with no quantity.
+           Skipped silently.
+    KEEP   empty is itself a value. Blanking `category_code` is how a SKU gets
+           UN-assigned, so the row must survive and reach the caller as "".
+    """
+
+    ERROR = "error"
+    SKIP = "skip"
+    KEEP = "keep"
+
+
 @dataclass(frozen=True, slots=True)
 class ColumnSpec:
     """One expected column.
 
-    Two independent questions, deliberately NOT collapsed into one flag:
-
-    `required`   — must the COLUMN exist in the header? Absent -> fatal, the
-                   whole upload is rejected.
-    `allow_empty` — is an empty VALUE acceptable on a given row? False reports a
-                   row issue; True skips the row silently (the column is there,
-                   this row just has nothing to say — CROSS MALL exports rows
-                   with no stock figure and that is not an operator error).
+    `required` and `on_empty` answer different questions and must not be
+    conflated: `required` is about the COLUMN existing in the header (absent ->
+    fatal, the whole upload is rejected), `on_empty` is about a VALUE being
+    blank on some particular row.
 
     `validator` runs only on non-empty values and returns an error message, or
     None when the value is acceptable.
@@ -59,7 +75,7 @@ class ColumnSpec:
     canonical: str
     aliases: tuple[str, ...] = ()
     required: bool = True
-    allow_empty: bool = False
+    on_empty: OnEmpty = OnEmpty.ERROR
     validator: Callable[[str], str | None] | None = None
     empty_message: str | None = None
 
@@ -213,7 +229,11 @@ def _row_issue(
             continue
         value = row[position].strip()
         if not value:
-            if not column.allow_empty:
+            if column.on_empty is OnEmpty.KEEP:
+                # Empty is the value. Skip validation (there is nothing to
+                # validate) but let the row through.
+                continue
+            if column.on_empty is OnEmpty.ERROR:
                 _record(result, spec, lineno, column.empty_message or f"{column.canonical}が空です")
             return True
         if column.validator is not None:

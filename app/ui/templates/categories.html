@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}カテゴリ管理 · Product System{% endblock %}
+{% block content %}
+
+<div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">カテゴリ管理</h1>
+    <p class="text-sm text-ink-500 mt-1">分析軸となる大分類 / 中分類（2階層）</p>
+  </div>
+  <div class="flex gap-2 self-start sm:self-end">
+    <a href="/admin/categories/export.csv"
+       class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-ink-300 bg-white hover:bg-ink-50 text-ink-700 text-sm font-medium px-4 py-2 transition">
+      CSV出力
+    </a>
+    <a href="/admin/categories/upload"
+       class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2 transition">
+      SKUの一括設定
+    </a>
+  </div>
+</div>
+
+<!-- Coverage -->
+<div class="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">カテゴリ数</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ overview.total_categories }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">分類済SKU</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ overview.classified_count }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">未分類SKU</div>
+    <div class="text-2xl font-semibold tabular-nums {% if overview.unclassified_count %}text-amber-600{% else %}text-emerald-600{% endif %}">
+      {{ overview.unclassified_count }}
+    </div>
+  </div>
+</div>
+
+<!-- New category -->
+<form method="post" action="/admin/categories"
+      class="bg-white rounded-xl border border-ink-200 p-3 sm:p-4 mb-4 flex flex-col sm:flex-row sm:items-end gap-3">
+  <div class="sm:w-40">
+    <label for="cat-code" class="block text-xs font-medium text-ink-600 mb-1.5">カテゴリコード</label>
+    <input id="cat-code" name="code" required placeholder="NL-CROSS"
+           class="w-full px-3 py-2 border border-ink-300 rounded-md text-sm font-mono focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
+  </div>
+  <div class="flex-1">
+    <label for="cat-name" class="block text-xs font-medium text-ink-600 mb-1.5">名称</label>
+    <input id="cat-name" name="name" required placeholder="クロス"
+           class="w-full px-3 py-2 border border-ink-300 rounded-md text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition" />
+  </div>
+  <div class="sm:w-52">
+    <label for="cat-parent" class="block text-xs font-medium text-ink-600 mb-1.5">親カテゴリ</label>
+    <select id="cat-parent" name="parent_id"
+            class="w-full px-3 py-2 border border-ink-300 rounded-md text-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition bg-white">
+      <option value="">（大分類として作成）</option>
+      {% for root in overview.roots %}
+        <option value="{{ root.category.id }}">{{ root.category.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button type="submit"
+          class="rounded-md bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-5 py-2 transition whitespace-nowrap">
+    追加
+  </button>
+</form>
+
+{% macro row_actions(node) %}
+  <div class="flex items-center justify-end gap-1">
+    <form method="post" action="/admin/categories/{{ node.category.id }}/toggle">
+      <button type="submit"
+              class="px-2 py-1 rounded text-xs font-medium transition
+                     {% if node.category.is_active %}text-ink-500 hover:text-ink-800 hover:bg-ink-100{% else %}text-emerald-700 hover:bg-emerald-50{% endif %}">
+        {% if node.category.is_active %}無効化{% else %}有効化{% endif %}
+      </button>
+    </form>
+    <form method="post" action="/admin/categories/{{ node.category.id }}/delete">
+      <button type="submit"
+              class="px-2 py-1 rounded text-xs font-medium text-red-600 hover:bg-red-50 transition">
+        削除
+      </button>
+    </form>
+  </div>
+{% endmacro %}
+
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="scroll-area overflow-x-auto">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">コード</th>
+          <th class="px-4 py-3 text-left font-semibold">カテゴリ</th>
+          <th class="px-4 py-3 text-right font-semibold whitespace-nowrap">割当SKU</th>
+          <th class="px-4 py-3 text-left font-semibold">状態</th>
+          <th class="px-4 py-3 text-right font-semibold"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for root in overview.roots %}
+          <tr class="hover:bg-ink-50/60 transition {% if not root.category.is_active %}opacity-60{% endif %}">
+            <td class="px-4 py-3 font-mono text-xs font-medium text-ink-800">{{ root.category.code }}</td>
+            <td class="px-4 py-3 text-ink-900 font-medium">{{ root.category.name }}</td>
+            <td class="px-4 py-3 text-right font-semibold tabular-nums">
+              {{ root.total_sku_count }}
+              {% if root.children and root.own_sku_count %}
+                <span class="text-[10px] text-ink-400 font-normal">(直下 {{ root.own_sku_count }})</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3">
+              {% if root.category.is_active %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">有効</span>
+              {% else %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-ink-100 text-ink-500 ring-1 ring-ink-300">無効</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3">{{ row_actions(root) }}</td>
+          </tr>
+          {% for child in root.children %}
+            <tr class="hover:bg-ink-50/60 transition {% if not child.category.is_active %}opacity-60{% endif %}">
+              <td class="px-4 py-3 font-mono text-xs text-ink-600 pl-8">{{ child.category.code }}</td>
+              <td class="px-4 py-3 text-ink-700 pl-8">
+                <span class="text-ink-300 mr-1">└</span>{{ child.category.name }}
+              </td>
+              <td class="px-4 py-3 text-right tabular-nums text-ink-700">{{ child.total_sku_count }}</td>
+              <td class="px-4 py-3">
+                {% if child.category.is_active %}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">有効</span>
+                {% else %}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-ink-100 text-ink-500 ring-1 ring-ink-300">無効</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3">{{ row_actions(child) }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td colspan="5" class="px-4 py-16 text-center">
+              <div class="flex flex-col items-center gap-2 text-ink-500">
+                <div class="text-sm">カテゴリがまだ登録されていません</div>
+                <div class="text-xs text-ink-400">
+                  まず大分類（ネックレス など）を追加し、その下に中分類を追加してください。
+                </div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if overview.unclassified_count %}
+  <div class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900">
+    <span class="font-medium">未分類のSKUが {{ overview.unclassified_count }} 件あります。</span>
+    <span class="text-amber-800 text-xs ml-1">
+      カテゴリ別の分析では「未分類」として1行にまとまります。
+    </span>
+    <a href="/admin/categories/upload" class="text-xs font-medium underline ml-1">CSVで一括設定する</a>
+  </div>
+{% endif %}
+{% endblock %}
