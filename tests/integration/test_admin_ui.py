@@ -631,12 +631,13 @@ async def test_alerts_resolve_from_in_progress_replays(admin_client, _test_engin
 
     r = await admin_client.post(
         f"/admin/alerts/{alert_id}/resolve",
-        data={"master_sku_id": sku_id},
+        data={"sku_code": "IP-SKU"},
         headers=_auth_header(),
         follow_redirects=False,
     )
     assert r.status_code == 303
     assert "resolved:1" in r.headers["location"]
+    assert sku_id is not None
 
     async with factory() as session:
         alert = (
@@ -796,7 +797,7 @@ async def test_alerts_resolve_replays_pending_order(admin_client, _test_engine) 
 
     r = await admin_client.post(
         f"/admin/alerts/{alert_id}/resolve",
-        data={"master_sku_id": sku_id},
+        data={"sku_code": "ALERT-1"},
         headers=_auth_header(),
         follow_redirects=False,
     )
@@ -1209,3 +1210,107 @@ async def test_events_log_exposes_backdated_rows(admin_client, _test_engine) -> 
     r = await admin_client.get("/admin/events?sku_code=BD-NOW", headers=_auth_header())
     assert "BD-NOW" in r.text
     assert badge not in r.text
+
+
+async def test_alerts_page_does_not_grow_with_alerts_times_masters(
+    admin_client, _test_engine
+) -> None:
+    """The regression that took /admin/alerts down on 2026-08-25.
+
+    A <select> of every master inside every row is O(alerts x masters). At
+    156 x 1051 that was 163,956 options and a 28.4 MiB response, which Cloud
+    Run refused — HTTP 500 with no traceback, because the app never raised.
+    The master list is now emitted once as a <datalist>.
+
+    Asserted as a SHAPE, not a byte budget: the cost of one alert row must not
+    depend on how many masters exist. An absolute limit would drift with every
+    styling change; this holds regardless of markup.
+    """
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+
+    async def seed_masters(prefix: str, n: int) -> None:
+        for i in range(n):
+            await _seed_sku(factory, f"{prefix}-{i:03d}", f"Scale product {prefix} {i}")
+
+    async def page_size(n_alerts: int) -> int:
+        async with factory() as session, session.begin():
+            await session.execute(
+                MappingAlert.__table__.delete().where(
+                    MappingAlert.channel_sku.like("SCALE-ALERT-%")
+                )
+            )
+            for i in range(n_alerts):
+                session.add(
+                    MappingAlert(
+                        channel="shopify",
+                        channel_sku=f"SCALE-ALERT-{i:03d}",
+                        status=MappingAlertStatusEnum.OPEN,
+                    )
+                )
+        r = await admin_client.get("/admin/alerts?status=open", headers=_auth_header())
+        assert r.status_code == 200
+        return len(r.content)
+
+    async def cost_per_alert() -> float:
+        return (await page_size(20) - await page_size(1)) / 19
+
+    await seed_masters("SCALE-A", 40)
+    with_few_masters = await cost_per_alert()
+
+    await seed_masters("SCALE-B", 160)  # 5x the catalogue
+    with_many_masters = await cost_per_alert()
+
+    # Per-row markup is unchanged by catalogue size. If the master list were
+    # inside the row again, quintupling the catalogue would roughly quintuple
+    # this number.
+    assert with_many_masters < with_few_masters * 1.5, (
+        f"a 5x larger catalogue changed per-alert cost from {with_few_masters:.0f} "
+        f"to {with_many_masters:.0f} bytes — the master list is being rendered "
+        "per row again"
+    )
+
+
+async def test_alerts_resolve_rejects_an_unknown_sku_code(admin_client, _test_engine) -> None:
+    """A <datalist> only suggests; the browser submits whatever was typed."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session, session.begin():
+        session.add(
+            MappingAlert(
+                channel="shopify",
+                channel_sku="BADSKU-1",
+                status=MappingAlertStatusEnum.OPEN,
+            )
+        )
+    async with factory() as session:
+        alert_id = (
+            await session.execute(
+                select(MappingAlert.id).where(MappingAlert.channel_sku == "BADSKU-1")
+            )
+        ).scalar_one()
+
+    r = await admin_client.post(
+        f"/admin/alerts/{alert_id}/resolve",
+        data={"sku_code": "TYPED-NONSENSE"},
+        headers=_auth_header(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    assert "flash=badsku" in r.headers["location"]
+
+    async with factory() as session:
+        alert = (
+            await session.execute(select(MappingAlert).where(MappingAlert.id == alert_id))
+        ).scalar_one()
+    assert alert.status == MappingAlertStatusEnum.OPEN, "an invalid code must not resolve"
+
+
+async def test_alerts_sku_picker_excludes_archived_masters(admin_client, _test_engine) -> None:
+    """Archived masters are not valid mapping targets — offering the 359 the
+    cutover retired invites resolving an alert onto a dead product."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_sku(factory, "PICK-LIVE", "Live product")
+    await _seed_hidden(factory, "PICK-ARCHIVED", 0, archived=True)
+
+    r = await admin_client.get("/admin/alerts?status=open", headers=_auth_header())
+    assert "PICK-LIVE" in r.text
+    assert "PICK-ARCHIVED" not in r.text

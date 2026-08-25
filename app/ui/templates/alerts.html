@@ -87,11 +87,14 @@
     <img id="prev-{{ a.id }}" src="" alt="" referrerpolicy="no-referrer" style="display:none"
          data-zoom title="選択中のShopify商品（クリックで拡大）"
          class="w-9 h-9 rounded-lg object-cover bg-ink-100 ring-1 ring-ink-200 flex-shrink-0 cursor-zoom-in hover:ring-brand-400 hover:ring-2 transition" />
-    <select name="master_sku_id" required data-preview="prev-{{ a.id }}" aria-label="紐付ける社内SKU"
-            class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 outline-none" style="max-width: 200px;">
-      <option value="">— SKU 選択 —</option>
-      {% for s in master_skus %}<option value="{{ s.id }}">{{ s.sku_code }}{% if s.name %} — {{ s.name }}{% endif %}</option>{% endfor %}
-    </select>
+    {# list="skuOptions" references ONE datalist rendered at the bottom of the
+       page. A <select> here repeated the whole master list per row: at 156
+       alerts x 1051 masters that was 163,956 options and a 28.4 MiB response,
+       which Cloud Run refused outright. #}
+    <input name="sku_code" list="skuOptions" required autocomplete="off"
+           data-preview="prev-{{ a.id }}" aria-label="紐付ける社内SKU"
+           placeholder="SKUコードを入力"
+           class="flex-1 min-w-0 border border-ink-300 rounded-md px-2 py-1.5 text-xs bg-white focus:ring-2 focus:ring-brand-500 outline-none" style="max-width: 200px;" />
     <button class="flex-shrink-0 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium px-3 py-1.5 transition">解決</button>
   </form>
 {% endmacro %}
@@ -195,24 +198,48 @@
   {% endfor %}
 </div>
 
-<!-- master_sku_id -> Shopify image URL, emitted once and looked up by JS so the
-     per-row SKU selects stay small. -->
+{% if pagination.total > pagination.shown %}
+  <div class="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm">
+    <div class="text-ink-500 text-xs">
+      <span class="font-medium text-ink-700">{{ pagination.offset + 1 }}–{{ pagination.offset + pagination.shown }}</span>
+      <span class="mx-1">/</span>
+      <span>{{ pagination.total }}</span> 件
+    </div>
+    <div class="flex gap-2">
+      {% if pagination.has_prev %}
+        <a href="?{{ pagination.qs_prev }}" class="inline-flex items-center px-3 py-1.5 border border-ink-300 bg-white hover:bg-ink-50 rounded-md text-ink-700 font-medium transition text-xs">前へ</a>
+      {% endif %}
+      {% if pagination.has_next %}
+        <a href="?{{ pagination.qs_next }}" class="inline-flex items-center px-3 py-1.5 border border-ink-300 bg-white hover:bg-ink-50 rounded-md text-ink-700 font-medium transition text-xs">次へ</a>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
+{# ONE list for the whole page, referenced by every row's input. Rendering it
+   per row is what took this screen down on 2026-08-25. #}
+<datalist id="skuOptions">
+  {% for s in master_skus %}<option value="{{ s.sku_code }}">{{ s.name }}</option>{% endfor %}
+</datalist>
+
+<!-- sku_code -> Shopify image URL, emitted once and looked up by JS. -->
 <script id="skuImages" type="application/json">{{ sku_images | tojson }}</script>
 <script>
   (function () {
     var el = document.getElementById('skuImages');
     var images = {};
     try { images = JSON.parse(el.textContent || '{}'); } catch (e) { images = {}; }
-    function sync(sel) {
-      var preview = document.getElementById(sel.dataset.preview);
+    function sync(input) {
+      var preview = document.getElementById(input.dataset.preview);
       if (!preview) return;
-      var url = images[sel.value];
+      var url = images[input.value.trim()];
       if (url) { preview.src = url; preview.style.display = ''; }
       else { preview.removeAttribute('src'); preview.style.display = 'none'; }
     }
-    document.querySelectorAll('select[data-preview]').forEach(function (sel) {
-      sel.addEventListener('change', function () { sync(sel); });
-      sync(sel);
+    document.querySelectorAll('input[data-preview]').forEach(function (input) {
+      input.addEventListener('input', function () { sync(input); });
+      input.addEventListener('change', function () { sync(input); });
+      sync(input);
     });
   })();
 </script>
