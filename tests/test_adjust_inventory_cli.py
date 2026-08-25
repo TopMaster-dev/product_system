@@ -177,3 +177,84 @@ async def test_adjust_unknown_sku_fails(_test_engine: AsyncEngine) -> None:
         session_factory=factory,
     )
     assert code == 1
+
+
+@pytest.mark.unit
+def test_parse_args_accepts_sku_code_instead_of_id() -> None:
+    args = parse_args(["--sku-code", "B09", "--delta", "-2", "--reason", "r", "--operator", "op"])
+    assert args.sku_code == "B09"
+    assert args.master_sku_id is None
+
+
+@pytest.mark.unit
+def test_parse_args_requires_exactly_one_target() -> None:
+    """Mutually exclusive and required: passing neither, or both, is a usage
+    error rather than a silent precedence rule nobody can remember."""
+    with pytest.raises(SystemExit):
+        parse_args(["--delta", "-1", "--reason", "r", "--operator", "op"])
+    with pytest.raises(SystemExit):
+        parse_args(
+            [
+                "--master-sku-id",
+                "1",
+                "--sku-code",
+                "B09",
+                "--delta",
+                "-1",
+                "--reason",
+                "r",
+                "--operator",
+                "op",
+            ]
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_adjust_by_sku_code_resolves_the_right_master(_test_engine: AsyncEngine) -> None:
+    """Legacy masters sit alongside variants with confusingly similar names, so
+    resolving `B09` must not touch `B09gold`."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models import InventorySnapshot, MasterSku
+    from app.services.inventory import InventoryService
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session, session.begin():
+        legacy = MasterSku(sku_code="SKUCODE-B09", name="legacy")
+        variant = MasterSku(sku_code="SKUCODE-B09gold", name="variant")
+        session.add_all([legacy, variant])
+        await session.flush()
+        session.add(InventorySnapshot(master_sku_id=legacy.id, on_hand_qty=2))
+        session.add(InventorySnapshot(master_sku_id=variant.id, on_hand_qty=40))
+        legacy_id, variant_id = legacy.id, variant.id
+
+    code = await run(
+        sku_code="SKUCODE-B09",
+        delta=-2,
+        reason="cutover後のキャンセル戻りによる幽霊在庫",
+        operator="admin",
+        session_factory=factory,
+    )
+    assert code == 0
+
+    async with factory() as session:
+        svc = InventoryService(session)
+        assert await svc.get_current_stock(legacy_id) == 0
+        assert await svc.get_current_stock(variant_id) == 40  # untouched
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_adjust_by_unknown_sku_code_fails_clearly(_test_engine: AsyncEngine) -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    code = await run(
+        sku_code="NO-SUCH-SKU-CODE",
+        delta=-1,
+        reason="r",
+        operator="op",
+        session_factory=factory,
+    )
+    assert code == 1
