@@ -354,3 +354,44 @@ async def test_categories_export_csv_round_trips_the_taxonomy(admin_client, _tes
     assert "category_code,大分類,中分類,有効,割当SKU数" in r.text
     assert "EX,エクスポート,," in r.text
     assert "EX-SUB,エクスポート,サブ," in r.text
+
+
+async def test_import_categories_cli_shares_the_screen_s_logic(_test_engine, tmp_path) -> None:
+    """The CLI and the upload screen must never disagree about what a file
+    means, which is why both call plan_assignments."""
+    from app.cli.import_categories import run
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    cat = await _seed_category(factory, "CLI-1", "CLI用カテゴリ")
+    sku = await _seed_sku(factory, "CLI-SKU-1")
+
+    path = tmp_path / "sku_categories.csv"
+    path.write_bytes("sku_code,category_code\nCLI-SKU-1,CLI-1\n".encode("utf-8-sig"))
+
+    assert await run(csv_path=path, dry_run=True, session_factory=factory) == 0
+    assert await _category_of(factory, sku) is None, "dry-run must not write"
+
+    assert await run(csv_path=path, dry_run=False, session_factory=factory) == 0
+    assert await _category_of(factory, sku) == cat
+
+
+async def test_import_categories_cli_reports_unknown_codes_by_name(_test_engine, tmp_path) -> None:
+    """ "12 unknown categories" is not something anyone can act on."""
+    from app.cli import import_categories as mod
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_sku(factory, "CLI-SKU-2")
+
+    path = tmp_path / "bad.csv"
+    path.write_bytes("sku_code,category_code\nCLI-SKU-2,NOPE\n".encode("utf-8-sig"))
+
+    captured: dict[str, object] = {}
+    original = mod.log.info
+    mod.log.info = lambda event, **kw: captured.update(kw)
+    try:
+        code = await mod.run(csv_path=path, dry_run=True, session_factory=factory)
+    finally:
+        mod.log.info = original
+
+    assert code == 1, "a skipped row must give a non-zero exit for scripted runs"
+    assert captured["unknown_category_examples"] == ["NOPE"]

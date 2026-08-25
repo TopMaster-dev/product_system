@@ -23,6 +23,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import MasterSku, ProductCategory
 from app.services.sku_scope import operational_conditions
+from app.ui.csv_intake import ColumnSpec, CsvSpec, Inspection, OnEmpty, inspect, iter_rows
+
+#: The client fills this in Excel, so the header comes back in Japanese as often
+#: as not. `category_code` uses OnEmpty.KEEP: a blank cell is how a SKU gets
+#: UN-assigned, so the row must survive rather than be skipped.
+SKU_CATEGORY_CSV = CsvSpec(
+    columns=(
+        ColumnSpec(canonical="sku_code", aliases=("SKUコード", "SKU", "商品コード")),
+        ColumnSpec(
+            canonical="category_code",
+            aliases=("カテゴリコード", "カテゴリ", "category"),
+            on_empty=OnEmpty.KEEP,
+        ),
+    )
+)
 
 
 @dataclass(slots=True)
@@ -175,3 +190,82 @@ async def assert_can_delete(session: AsyncSession, category: ProductCategory) ->
         raise CategoryError(
             f"中分類が {children} 件あるため削除できません。先に中分類を削除してください。"
         )
+
+
+class AssignmentPlan:
+    """What an import would do, resolved but not yet written."""
+
+    def __init__(self) -> None:
+        #: category_id (or None to clear) -> master_sku ids
+        self.by_category: dict[int | None, list[int]] = {}
+        self.unknown_skus: list[str] = []
+        self.unknown_categories: list[str] = []
+        self.unchanged = 0
+
+    @property
+    def assigned(self) -> int:
+        return sum(len(v) for k, v in self.by_category.items() if k is not None)
+
+    @property
+    def cleared(self) -> int:
+        return len(self.by_category.get(None, []))
+
+
+async def plan_assignments(session: AsyncSession, data: bytes) -> tuple[Inspection, AssignmentPlan]:
+    """Resolve a CSV against the database without writing anything.
+
+    Runs for both the preview and the apply, so the two can never disagree about
+    what the file means.
+    """
+    inspection = inspect(data, SKU_CATEGORY_CSV)
+    plan = AssignmentPlan()
+    if inspection.fatal:
+        return inspection, plan
+
+    rows = list(iter_rows(data, SKU_CATEGORY_CSV))
+    wanted_skus = {r["sku_code"] for r in rows}
+    wanted_codes = {r["category_code"] for r in rows if r.get("category_code")}
+
+    sku_by_code = {
+        code: (mid, current)
+        for code, mid, current in (
+            await session.execute(
+                select(MasterSku.sku_code, MasterSku.id, MasterSku.category_id).where(
+                    MasterSku.sku_code.in_(wanted_skus or [""])
+                )
+            )
+        ).all()
+    }
+    category_rows = await session.execute(
+        select(ProductCategory.code, ProductCategory.id).where(
+            ProductCategory.code.in_(wanted_codes or [""])
+        )
+    )
+    category_by_code: dict[str, int] = dict(category_rows.all())  # type: ignore[arg-type]
+
+    for row in rows:
+        sku_code = row["sku_code"]
+        found = sku_by_code.get(sku_code)
+        if found is None:
+            plan.unknown_skus.append(sku_code)
+            continue
+        master_id, current_category = found
+
+        raw_code = row.get("category_code") or ""
+        if not raw_code:
+            # Blank means "remove the category" — a real correction, not a typo.
+            target: int | None = None
+        else:
+            target = category_by_code.get(raw_code)
+            if target is None:
+                plan.unknown_categories.append(raw_code)
+                continue
+
+        if target == current_category:
+            # Re-importing the same file is a no-op, which is what makes a
+            # corrected re-send safe to run twice.
+            plan.unchanged += 1
+            continue
+        plan.by_category.setdefault(target, []).append(master_id)
+
+    return inspection, plan

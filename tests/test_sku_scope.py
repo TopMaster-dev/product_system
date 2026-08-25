@@ -30,6 +30,12 @@ DIRECT_USE_ALLOWED = {
     # Legitimately SELECTS bundle parents (the inverse of excluding them) — it
     # exists to push their derived availability.
     "app/services/bundle_push.py",
+    # Counts the COMPLEMENT of the operational population on purpose: "how many
+    # SKUs are archived / 在庫管理対象外 / bundle parents" are its own tiles.
+    # Its defect tiles do use operational_conditions(); only the three
+    # informational counts name the flags, and sku_scope has no predicate for
+    # "the ones we exclude" because nothing else needs one.
+    "app/services/data_quality.py",
     # Import/seed CLIs set and read the flag while building masters; they are not
     # filtering a query population.
     "app/cli/import_variant_mappings.py",

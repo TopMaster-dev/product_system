@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     # まだ無い SKU」のフォールバックとして残る。
     low_stock_threshold: int = 10
 
+    # 楽天SKU管理番号の「仮値」を判定する正規表現。RMS が採番した自動値
+    # (r-sku00000001 形式) は商品を識別できないため、実SKUへの差し替えを
+    # クライアントに依頼する必要がある。設定値にしてあるのは、RMS の採番規則が
+    # 変わったときにコード変更なしで追随するため。
+    rakuten_placeholder_sku_pattern: str = r"^r-sku\d+$"
+
     # Phase 1-B: daily reconcile CSV source. gs:// URI of the CROSS MALL stock
     # export that the scheduled reconcile job reads. Empty disables the
     # scheduled job (it logs and no-ops); the admin-UI CSV upload path is

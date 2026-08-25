@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.ui.routes.adjust import router as adjust_router
 from app.ui.routes.alerts import router as alerts_router
 from app.ui.routes.categories import router as categories_router
+from app.ui.routes.data_quality import router as data_quality_router
 from app.ui.routes.events import router as events_router
 from app.ui.routes.home import router as home_router
 from app.ui.routes.inventory import router as inventory_router
@@ -28,6 +29,7 @@ router.include_router(adjust_router)
 router.include_router(events_router)
 router.include_router(alerts_router)
 router.include_router(categories_router)
+router.include_router(data_quality_router)
 router.include_router(manual_router)
 
 __all__ = ["router"]

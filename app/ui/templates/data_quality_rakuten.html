@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}楽天SKU管理番号 不備レポート · Product System{% endblock %}
+{% block content %}
+
+<div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
+  <div>
+    <a href="/admin/data-quality" class="text-xs text-brand-600 hover:underline font-medium">← データ品質サマリーに戻る</a>
+    <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900 mt-1">楽天SKU管理番号 不備レポート</h1>
+    <p class="text-sm text-ink-500 mt-1">CSVはそのままRMS修正依頼書としてお使いいただけます</p>
+  </div>
+  <a href="/admin/data-quality/rakuten/export.csv"
+     class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2 transition self-start sm:self-end">
+    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    修正依頼CSVを出力
+  </a>
+</div>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">仮値のSKU管理番号</div>
+    <div class="text-2xl font-semibold tabular-nums {% if report.placeholder %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ report.placeholder|length }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">重複するSKU管理番号</div>
+    <div class="text-2xl font-semibold tabular-nums {% if report.duplicated %}text-red-600{% else %}text-emerald-600{% endif %}">{{ report.duplicated|length }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">未マッピングの明細</div>
+    <div class="text-2xl font-semibold tabular-nums {% if report.unmapped_lines %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ report.unmapped_lines }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">分析から欠落する金額</div>
+    <div class="text-2xl font-semibold tabular-nums {% if report.unmapped_amount %}text-amber-600{% else %}text-emerald-600{% endif %}">
+      ¥{{ '{:,.0f}'.format(report.unmapped_amount) }}
+    </div>
+  </div>
+</div>
+
+<div class="rounded-xl border border-ink-200 bg-ink-50 px-5 py-3 mb-4 text-sm text-ink-700">
+  <span class="font-medium">「仮値」の判定条件:</span>
+  <span class="font-mono text-xs ml-1">{{ pattern }}</span>
+  <div class="text-xs text-ink-500 mt-1">
+    RMSが自動採番したままのSKU管理番号は商品を識別できないため、実際のSKUコードへの変更をお願いする対象です。
+  </div>
+</div>
+
+<!-- 1. Placeholder -->
+<h2 class="text-sm font-semibold text-ink-900 mb-2">1. 仮値のSKU管理番号（{{ report.placeholder|length }}件）</h2>
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden mb-6">
+  <div class="scroll-area overflow-x-auto max-h-96">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200 sticky top-0">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">SKU管理番号</th>
+          <th class="px-4 py-3 text-left font-semibold">商品管理番号</th>
+          <th class="px-4 py-3 text-left font-semibold">対象SKU</th>
+          <th class="px-4 py-3 text-left font-semibold">商品名</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for row in report.placeholder %}
+          <tr class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-2.5 font-mono text-xs text-amber-700">{{ row.channel_sku }}</td>
+            <td class="px-4 py-2.5 font-mono text-xs text-ink-500">{{ row.channel_product_id or '—' }}</td>
+            <td class="px-4 py-2.5 font-mono text-xs text-ink-800">{{ row.master_sku_code }}</td>
+            <td class="px-4 py-2.5 text-ink-700">{{ row.product_name }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="px-4 py-10 text-center text-sm text-ink-500">仮値のSKU管理番号はありません</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 2. Duplicates -->
+<h2 class="text-sm font-semibold text-ink-900 mb-2">2. 重複するSKU管理番号（{{ report.duplicated|length }}件）</h2>
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden mb-6">
+  <div class="scroll-area overflow-x-auto max-h-72">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200 sticky top-0">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">SKU管理番号</th>
+          <th class="px-4 py-3 text-right font-semibold">割当数</th>
+          <th class="px-4 py-3 text-left font-semibold">割り当てられているSKU</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for row in report.duplicated %}
+          <tr class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-2.5 font-mono text-xs text-red-700">{{ row.channel_sku }}</td>
+            <td class="px-4 py-2.5 text-right tabular-nums font-semibold">{{ row.mappings }}</td>
+            <td class="px-4 py-2.5 font-mono text-xs text-ink-700">{{ row.masters }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="3" class="px-4 py-10 text-center text-sm text-ink-500">重複はありません</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 3. Unmapped sales -->
+<h2 class="text-sm font-semibold text-ink-900 mb-2">
+  3. 未マッピングの受注実績（{{ report.unmapped_lines }}明細 / {{ report.unmapped_quantity }}点 / ¥{{ '{:,.0f}'.format(report.unmapped_amount) }}）
+</h2>
+<p class="text-xs text-ink-500 mb-2">
+  マスターSKUに紐づいていないため、商品別・カテゴリ別の売上分析から欠落します。この金額が分析精度の上限です。
+</p>
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="scroll-area overflow-x-auto max-h-96">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200 sticky top-0">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">SKU管理番号</th>
+          <th class="px-4 py-3 text-right font-semibold">明細数</th>
+          <th class="px-4 py-3 text-right font-semibold">数量</th>
+          <th class="px-4 py-3 text-right font-semibold">金額</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for row in report.unmapped_examples %}
+          <tr class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-2.5 font-mono text-xs text-ink-800">{{ row.channel_sku }}</td>
+            <td class="px-4 py-2.5 text-right tabular-nums text-ink-600">{{ row.lines }}</td>
+            <td class="px-4 py-2.5 text-right tabular-nums text-ink-600">{{ row.quantity }}</td>
+            <td class="px-4 py-2.5 text-right tabular-nums font-semibold text-ink-900">¥{{ '{:,.0f}'.format(row.amount) }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="px-4 py-10 text-center text-sm text-ink-500">未マッピングの受注実績はありません</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

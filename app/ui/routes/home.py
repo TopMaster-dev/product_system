@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
+from app.config import get_settings
 from app.db import get_session
 from app.models import (
     ChannelSkuMapping,
@@ -22,6 +23,7 @@ from app.models import (
     SyncAttempt,
     SyncAttemptStatusEnum,
 )
+from app.services.data_quality import summary_tiles
 from app.ui.auth import OperatorDep
 from app.ui.deps import templates
 
@@ -56,6 +58,18 @@ async def home(
         .where(ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value)
     )
 
+    # How many DEFECT classes are non-zero — not how many rows are wrong. One
+    # number an operator can act on; the summary screen breaks it down. The
+    # informational tiles (archived / 在庫管理対象外 / セット親) are outcomes of
+    # deliberate cleanup, so counting them here would make a tidy system look
+    # permanently broken.
+    tiles = await summary_tiles(
+        session,
+        placeholder_pattern=get_settings().rakuten_placeholder_sku_pattern,
+        deep=False,
+    )
+    data_quality_issues = sum(1 for t in tiles if t.count and not t.informational)
+
     return templates.TemplateResponse(
         request,
         "home.html",
@@ -69,6 +83,7 @@ async def home(
                 "events_today": events_today or 0,
                 "sync_errors": sync_errors or 0,
                 "pending_reconcile": pending_reconcile or 0,
+                "data_quality_issues": data_quality_issues,
             },
         },
     )
