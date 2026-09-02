@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import ColumnElement, Date, cast, func
@@ -84,8 +85,12 @@ DEFAULT_PRESET = "28d"
 PREVIOUS_YEAR_SHIFT = timedelta(days=364)
 
 
-def jst_date_expr(column: ColumnElement[datetime]) -> ColumnElement[date]:
+def jst_date_expr(column: Any) -> ColumnElement[date]:
     """SQL for "which JST calendar day is this UTC timestamp in".
+
+    `column` is typed Any because callers pass ORM attributes
+    (`Order.ordered_at`), which mypy models as InstrumentedAttribute rather
+    than ColumnElement — narrowing it would reject every real call site.
 
     Assign the result to a variable and reuse THAT OBJECT in both SELECT and
     GROUP BY — see rule 1 in the module docstring. Never put this in a WHERE
