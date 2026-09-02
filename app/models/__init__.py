@@ -15,8 +15,17 @@ Phase 1-B additions:
 
 Phase 2 additions:
 - product_categories (大分類/中分類、深さ2)
+- sku_daily_stock / sku_daily_sales / daily_unmapped_sales /
+  daily_kpi_snapshots / analytics_rollup_runs (分析ロールアップ)
 """
 
+from app.models.analytics import (
+    AnalyticsRollupRun,
+    DailyKpiSnapshot,
+    DailyUnmappedSales,
+    SkuDailySales,
+    SkuDailyStock,
+)
 from app.models.base import Base, TimestampMixin
 from app.models.bigquery_export_run import BigQueryExportRun
 from app.models.bundle_component import BundleComponent
@@ -44,11 +53,14 @@ from app.models.webhook_log import WebhookLog
 
 __all__ = [
     "MAX_CATEGORY_LEVEL",
+    "AnalyticsRollupRun",
     "Base",
     "BigQueryExportRun",
     "BundleComponent",
     "ChannelEnum",
     "ChannelSkuMapping",
+    "DailyKpiSnapshot",
+    "DailyUnmappedSales",
     "FulfillmentTypeEnum",
     "InventoryEvent",
     "InventoryEventTypeEnum",
@@ -64,6 +76,8 @@ __all__ = [
     "ReconcileDiffDecisionEnum",
     "ReconcileRun",
     "ReconcileRunStatusEnum",
+    "SkuDailySales",
+    "SkuDailyStock",
     "SyncAttempt",
     "SyncAttemptStatusEnum",
     "SyncAttemptTypeEnum",

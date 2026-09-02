@@ -25,6 +25,11 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
 
+    # Timezone database. NOT optional: python:*-slim ships no system tzdata, so
+    # ZoneInfo("Asia/Tokyo") raises ZoneInfoNotFoundError at import in the
+    # container (and on Windows dev machines). Every JST rollup depends on it.
+    "tzdata>=2024.1",
+
     # HTTP client (channel adapters)
     "httpx>=0.27",
 
