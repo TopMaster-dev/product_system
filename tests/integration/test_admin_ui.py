@@ -379,10 +379,13 @@ async def test_inventory_export_reports_lifecycle_state(admin_client, _test_engi
     r = await admin_client.get(
         "/admin/inventory/export.csv?include_hidden=1", headers=_auth_header()
     )
-    header = r.text.splitlines()[0]
+    # Decoded utf-8-sig, like any correct reader: every export carries a BOM so
+    # Excel picks UTF-8 rather than the system codepage.
+    text = r.content.decode("utf-8-sig")
+    header = text.splitlines()[0]
     assert header.startswith("sku_code,name,jan_code,on_hand_qty,status,best_seller,updated_at")
     assert header.endswith("stock_managed,archived")
-    assert "LC-BOX" in r.text and "対象外" in r.text
+    assert "LC-BOX" in text and "対象外" in text
 
 
 async def test_stock_managed_toggle_flips_the_flag_and_keeps_filters(

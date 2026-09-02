@@ -12,7 +12,7 @@ import io
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
@@ -20,6 +20,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.services.data_quality import rakuten_sku_report, summary_tiles
 from app.ui.auth import OperatorDep
+from app.ui.csv_export import csv_response
 from app.ui.deps import templates
 
 router = APIRouter()
@@ -143,11 +144,4 @@ async def rakuten_report_csv(
                 "受注実績はあるがマスターに紐づいていません",
             ]
         )
-    buf.seek(0)
-    return StreamingResponse(
-        # CP932 with replacement: a stray character must not fail the download
-        # of a file whose whole purpose is to get the data fixed.
-        iter([buf.getvalue().encode("cp932", errors="replace")]),
-        media_type="text/csv; charset=Shift_JIS",
-        headers={"Content-Disposition": 'attachment; filename="rakuten_sku_defects.csv"'},
-    )
+    return csv_response(buf.getvalue(), filename="rakuten_sku_defects.csv")

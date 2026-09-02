@@ -7,7 +7,7 @@ import io
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app import __version__
 from app.db import get_session
 from app.models import ChannelEnum, ChannelSkuMapping, MasterSku
 from app.ui.auth import OperatorDep
+from app.ui.csv_export import csv_response
 from app.ui.deps import templates
 
 router = APIRouter(prefix="/mappings")
@@ -158,12 +159,7 @@ async def mappings_export(
     )
     for r in rows:
         writer.writerow([r[0], r[1], r[2], r[3] or "", r[4] or "", "1" if r[5] else "0"])
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="mappings.csv"'},
-    )
+    return csv_response(buf.getvalue(), filename="mappings.csv")
 
 
 @router.post("/import")

@@ -275,11 +275,16 @@ async def test_unmapped_rakuten_sales_are_quantified(admin_client, _test_engine)
     assert "ghost-sku" in r.text
 
 
-async def test_report_csv_is_cp932_and_carries_all_three_sections(
+async def test_report_csv_opens_in_excel_and_carries_all_three_sections(
     admin_client, _test_engine
 ) -> None:
     """The CSV IS the RMS correction request — it is opened in Excel on Windows,
-    and a mojibake'd request gets ignored."""
+    and a mojibake'd request gets ignored.
+
+    It used to be CP932, which decodes only on a Japanese-locale Windows; on an
+    English-locale machine 仮値 came out as `‰¼'l`. UTF-8 with a BOM is the one
+    encoding Excel reads correctly everywhere.
+    """
     factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
     bad = await _seed_sku(factory, "CSV-RK", qty=1)
     await _seed_rakuten_mapping(factory, bad, "r-sku00000099")
@@ -287,7 +292,8 @@ async def test_report_csv_is_cp932_and_carries_all_three_sections(
 
     r = await admin_client.get("/admin/data-quality/rakuten/export.csv", headers=_auth_header())
     assert r.status_code == 200
-    text = r.content.decode("cp932")
+    assert r.content.startswith(b"\xef\xbb\xbf"), "Excel needs the BOM to pick UTF-8"
+    text = r.content.decode("utf-8-sig")
     assert "区分,SKU管理番号" in text
     assert "仮値" in text and "r-sku00000099" in text
     assert "未マッピング実績" in text and "csv-ghost" in text
@@ -308,3 +314,23 @@ async def test_placeholder_pattern_is_configurable(admin_client, _test_engine) -
 
     assert not any(p["channel_sku"] == "TEMP-0001" for p in default.placeholder)
     assert any(p["channel_sku"] == "TEMP-0001" for p in custom.placeholder)
+
+
+async def test_every_csv_export_is_utf8_with_a_bom(admin_client, _test_engine) -> None:
+    """Excel reads a BOM-less CSV in the system codepage, so Japanese headers
+    mojibake. Asserted across ALL exports, not one, because the 2026-08-29
+    report came from two different endpoints failing in two different ways.
+    """
+    exports = [
+        "/admin/inventory/export.csv",
+        "/admin/categories/export.csv",
+        "/admin/mappings/export.csv",
+        "/admin/data-quality/rakuten/export.csv",
+    ]
+    for url in exports:
+        r = await admin_client.get(url, headers=_auth_header())
+        assert r.status_code == 200, f"{url} returned {r.status_code}"
+        assert r.content.startswith(b"\xef\xbb\xbf"), f"{url} has no UTF-8 BOM"
+        assert "charset=utf-8" in r.headers["content-type"], url
+        # Decodes cleanly as UTF-8; a CP932 payload would raise here.
+        r.content.decode("utf-8-sig")

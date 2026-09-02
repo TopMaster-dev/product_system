@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +46,7 @@ from app.models import (
 )
 from app.services.reconcile import ReconcileService
 from app.ui.auth import OperatorDep
+from app.ui.csv_export import csv_response
 from app.ui.csv_intake import ColumnSpec, CsvSpec, OnEmpty, inspect, int_validator
 from app.ui.deps import templates
 
@@ -419,12 +420,7 @@ async def reconcile_export(
         writer.writerow(
             [r[0], r[1], r[2], r[3], r[4], "" if r[5] is None else r[5], r[6], r[7] or ""]
         )
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="reconcile_run_{run_id}.csv"'},
-    )
+    return csv_response(buf.getvalue(), filename=f"reconcile_run_{run_id}.csv")
 
 
 def _flash(token: str | None) -> dict[str, str] | None:

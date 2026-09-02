@@ -20,7 +20,7 @@ from typing import Annotated, Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +38,7 @@ from app.services.categories import (
 )
 from app.services.sku_scope import operational_conditions
 from app.ui.auth import OperatorDep
+from app.ui.csv_export import csv_response
 from app.ui.deps import templates
 
 router = APIRouter()
@@ -94,12 +95,7 @@ async def categories_export(
                     child.total_sku_count,
                 ]
             )
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="categories.csv"'},
-    )
+    return csv_response(buf.getvalue(), filename="categories.csv")
 
 
 @router.post("/categories")

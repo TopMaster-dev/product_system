@@ -21,7 +21,7 @@ from typing import Annotated, Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +45,7 @@ from app.services.stock_status import (
     status_rank,
 )
 from app.ui.auth import OperatorDep
+from app.ui.csv_export import csv_response
 from app.ui.deps import templates
 
 router = APIRouter()
@@ -318,12 +319,7 @@ async def inventory_export(
                 "はい" if r["archived_at"] else "",
             ]
         )
-    buf.seek(0)
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="inventory.csv"'},
-    )
+    return csv_response(buf.getvalue(), filename="inventory.csv")
 
 
 # --------------------------------------------------------------------------
