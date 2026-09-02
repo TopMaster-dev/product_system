@@ -11,7 +11,13 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 
-from app.cli import export_to_bq, poll_channels, push_bundle_availability, reconcile_inventory
+from app.cli import (
+    export_to_bq,
+    poll_channels,
+    push_bundle_availability,
+    rebuild_daily_metrics,
+    reconcile_inventory,
+)
 from app.config import get_settings
 from app.logging import get_logger
 from app.notifications.slack import get_slack_notifier
@@ -70,6 +76,71 @@ async def trigger_bq_export() -> dict[str, str]:
         fields=[(r.table_name, (r.error or "")[:200]) for r in failed],
     )
     raise HTTPException(status_code=500, detail=f"bq-export failed: {detail}")
+
+
+@router.post("/rollup-daily")
+async def trigger_rollup_daily(mode: str = "incremental") -> dict[str, str]:
+    """Rebuild the daily analytics rollups.
+
+    Two schedulers hit this. `mode=incremental` (hourly) rebuilds only the JST
+    days touched since the last success. `mode=repair` (nightly) rebuilds a
+    trailing window unconditionally, covering anything the incremental window
+    could have missed.
+
+    A failure returns 500 so Cloud Scheduler retries and Slack fires — the same
+    contract as the BigQuery export, and for the same reason: an aggregation job
+    that reports success while producing nothing is how a broken pipeline hides
+    for months.
+
+    Being skipped because another run holds the lock is NOT a failure. The
+    hourly and nightly jobs will eventually overlap, and that is the guard
+    working.
+    """
+    repair = mode == "repair"
+    outcome = await rebuild_daily_metrics.run(
+        repair_days=rebuild_daily_metrics.DEFAULT_REPAIR_DAYS if repair else None,
+        job_name="nightly-repair" if repair else "hourly",
+        triggered_by="cloud_scheduler",
+    )
+
+    if outcome.error:
+        log.error("internal.rollup.failed", mode=mode, error=outcome.error)
+        await get_slack_notifier().notify(
+            level="critical",
+            title="分析ロールアップ失敗",
+            message=(
+                f"{mode} ロールアップが失敗しました。"
+                " 分析画面の数値が更新されていない可能性があります。"
+            ),
+            fields=[("error", outcome.error[:300])],
+        )
+        raise HTTPException(status_code=500, detail=f"rollup failed: {outcome.error}")
+
+    if outcome.skipped_locked:
+        log.info("internal.rollup.skipped", mode=mode)
+        return {"status": "skipped", "reason": "another rollup is running"}
+
+    if outcome.remaining_days:
+        # Succeeded but not caught up — its own state, never folded into "ok".
+        log.warning("internal.rollup.behind", mode=mode, remaining_days=outcome.remaining_days)
+        await get_slack_notifier().notify(
+            level="error",
+            title="分析ロールアップに未処理の日付があります",
+            message=(
+                f"{outcome.days_rebuilt}日分を再構築しましたが、"
+                f"残り{outcome.remaining_days}日分が未処理です。"
+                " `py -m app.cli.rebuild_daily_metrics --max-days 0` で追い付かせてください。"
+            ),
+            fields=[("remaining_days", str(outcome.remaining_days))],
+        )
+        return {
+            "status": "behind",
+            "days_rebuilt": str(outcome.days_rebuilt),
+            "remaining_days": str(outcome.remaining_days),
+        }
+
+    log.info("internal.rollup.done", mode=mode, days_rebuilt=outcome.days_rebuilt)
+    return {"status": "ok", "days_rebuilt": str(outcome.days_rebuilt)}
 
 
 @router.post("/poll-shopify")

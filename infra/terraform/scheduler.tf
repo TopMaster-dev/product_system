@@ -108,3 +108,64 @@ resource "google_cloud_scheduler_job" "bundle_push_hourly" {
 
   depends_on = [google_project_service.required]
 }
+
+# --- Phase 2 W4: analytics rollups ---------------------------------------
+#
+# Two jobs against one endpoint. The hourly one rebuilds only the JST days
+# touched since the last success; the nightly one re-walks a trailing window
+# unconditionally, catching anything the incremental window could have missed.
+#
+# They will overlap eventually — a slow hourly run still going at 03:20 — and
+# that is fine: the job takes pg_try_advisory_lock and a second run exits
+# having done nothing. "Someone else is already doing it" is success.
+
+resource "google_cloud_scheduler_job" "rollup_hourly" {
+  name        = "product-system-rollup-hourly"
+  description = "Incremental analytics rollup: only the JST days that changed."
+  schedule    = "20 * * * *" # :20 past, clear of the :00 bundle push
+  time_zone   = "Etc/UTC"
+  region      = var.region
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "30s"
+    max_backoff_duration = "300s"
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${google_cloud_run_v2_service.app.uri}/internal/jobs/rollup-daily?mode=incremental"
+    oidc_token {
+      service_account_email = google_service_account.app.email
+    }
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+# 04:10 JST = 19:10 UTC. After the 03:00 JST BigQuery export so the two do not
+# contend for the same shared vCPU, and before the 06:00 JST reconcile so the
+# numbers are current when the day's operations begin.
+resource "google_cloud_scheduler_job" "rollup_nightly_repair" {
+  name        = "product-system-rollup-nightly-repair"
+  description = "Trailing-window analytics rollup repair."
+  schedule    = "10 19 * * *"
+  time_zone   = "Etc/UTC"
+  region      = var.region
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "60s"
+    max_backoff_duration = "600s"
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${google_cloud_run_v2_service.app.uri}/internal/jobs/rollup-daily?mode=repair"
+    oidc_token {
+      service_account_email = google_service_account.app.email
+    }
+  }
+
+  depends_on = [google_project_service.required]
+}
