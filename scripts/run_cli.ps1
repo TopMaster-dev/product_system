@@ -84,8 +84,9 @@ try {
     Section "実行: $cmd"
     # 参照のみのフラグ (--status など) で「本実行です」と出すと警告が形骸化し、
     # 本当に危険な実行のときに読み飛ばされる。
-    # inspect_* は引数なしの参照専用CLI。フラグではなくCLI名で判定する。
-    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^inspect_')
+    # inspect_* は引数なしの参照専用CLI。export_unmapped_worksheet はDBを読み
+    # 取ってローカルにCSVを書くだけで、DBもチャネルも変更しない。
+    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^inspect_') -or ($Cli -eq 'export_unmapped_worksheet')
     if (-not $DryRun -and -not $readOnly) {
         Write-Host "  [注意] 本実行です。--dry-run の出力を確認済みであることを前提とします。" -ForegroundColor Yellow
     }
