@@ -1,0 +1,168 @@
+{#
+  Chart macros. These emit coordinates and NOTHING ELSE — every number here was
+  computed by app/ui/charts.py, which is unit-tested. If a macro ever needs
+  arithmetic, that arithmetic belongs in the module instead: keeping the
+  geometry testable is the entire reason we do not use a CDN charting library.
+
+  Inline SVG, no JavaScript, no external requests. Charts render on a printed
+  page and in an email client, and there is no library version to keep current.
+#}
+
+{% macro empty_frame(model, message) %}
+  <div class="flex items-center justify-center text-sm text-ink-400"
+       style="height: {{ model.height }}px">
+    {{ message or 'この期間のデータがありません' }}
+  </div>
+{% endmacro %}
+
+
+{% macro line_chart(model, message=None) %}
+  {% if model.empty %}
+    {{ empty_frame(model, message) }}
+  {% else %}
+    <svg viewBox="0 0 {{ model.width }} {{ model.height }}" class="w-full h-auto"
+         role="img" preserveAspectRatio="none">
+      {# horizontal gridlines + y labels #}
+      {% for tick in model.ticks %}
+        <line x1="{{ model.padding_left }}" y1="{{ '%.1f'|format(tick.y) }}"
+              x2="{{ model.width }}" y2="{{ '%.1f'|format(tick.y) }}"
+              stroke="#E2E8F0" stroke-width="1" />
+        <text x="{{ model.padding_left - 6 }}" y="{{ '%.1f'|format(tick.y + 3) }}"
+              text-anchor="end" font-size="10" fill="#94A3B8">{{ tick.label }}</text>
+      {% endfor %}
+
+      {% for s in model.series %}
+        {% if s.area %}
+          <polygon points="{{ model.padding_left }},{{ '%.1f'|format(model.baseline_y) }} {{ s.area }} {{ model.padding_left }},{{ '%.1f'|format(model.baseline_y) }}"
+                   fill="{{ s.color }}" fill-opacity="0.08" />
+        {% endif %}
+        <polyline points="{{ s.polyline }}" fill="none" stroke="{{ s.color }}"
+                  stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+        {# Points are marked only on short series; at 90 days they merge into
+           a smear and hide the line they are meant to clarify. #}
+        {% if s.points|length <= 31 %}
+          {% for p in s.points %}
+            <circle cx="{{ '%.1f'|format(p.x) }}" cy="{{ '%.1f'|format(p.y) }}" r="2.5"
+                    fill="{{ s.color }}">
+              <title>{{ p.label }}: {{ p.value }}</title>
+            </circle>
+          {% endfor %}
+        {% endif %}
+      {% endfor %}
+
+      {% for x, label in model.x_labels %}
+        <text x="{{ '%.1f'|format(x) }}" y="{{ model.height - 6 }}" text-anchor="middle"
+              font-size="10" fill="#94A3B8">{{ label }}</text>
+      {% endfor %}
+    </svg>
+
+    {% if model.series|length > 1 %}
+      <div class="flex flex-wrap gap-3 mt-2 text-xs text-ink-600">
+        {% for s in model.series %}
+          <span class="inline-flex items-center gap-1.5">
+            <span class="w-3 h-0.5 rounded" style="background: {{ s.color }}"></span>{{ s.name }}
+          </span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+
+
+{% macro bar_chart(model, bars, color='#4F46E5', message=None) %}
+  {% if model.empty %}
+    {{ empty_frame(model, message) }}
+  {% else %}
+    <svg viewBox="0 0 {{ model.width }} {{ model.height }}" class="w-full h-auto"
+         role="img" preserveAspectRatio="none">
+      {% for tick in model.ticks %}
+        <line x1="{{ model.padding_left }}" y1="{{ '%.1f'|format(tick.y) }}"
+              x2="{{ model.width }}" y2="{{ '%.1f'|format(tick.y) }}"
+              stroke="#E2E8F0" stroke-width="1" />
+        <text x="{{ model.padding_left - 6 }}" y="{{ '%.1f'|format(tick.y + 3) }}"
+              text-anchor="end" font-size="10" fill="#94A3B8">{{ tick.label }}</text>
+      {% endfor %}
+
+      {% for bar in bars %}
+        {# height 0 is omitted entirely: a 1px sliver reads as a real quantity,
+           and the axis rule already says "nothing here". #}
+        {% if bar.height > 0 %}
+          <rect x="{{ '%.1f'|format(bar.x) }}" y="{{ '%.1f'|format(bar.y) }}"
+                width="{{ '%.1f'|format(bar.width) }}" height="{{ '%.1f'|format(bar.height) }}"
+                fill="{{ color }}" rx="2">
+            <title>{{ bar.label }}: {{ bar.display }}</title>
+          </rect>
+        {% endif %}
+      {% endfor %}
+
+      {% for x, label in model.x_labels %}
+        <text x="{{ '%.1f'|format(x) }}" y="{{ model.height - 6 }}" text-anchor="middle"
+              font-size="10" fill="#94A3B8">{{ label }}</text>
+      {% endfor %}
+    </svg>
+  {% endif %}
+{% endmacro %}
+
+
+{% macro share_bar_list(bars, message=None) %}
+  {% if not bars %}
+    <div class="text-sm text-ink-400 py-6 text-center">
+      {{ message or 'この期間のデータがありません' }}
+    </div>
+  {% else %}
+    <div class="space-y-2">
+      {% for bar in bars %}
+        <div>
+          <div class="flex items-baseline justify-between gap-2 text-xs mb-1">
+            <span class="text-ink-700 truncate">{{ bar.label }}</span>
+            <span class="text-ink-500 tabular-nums flex-shrink-0">
+              {{ bar.display }}
+              <span class="text-ink-400">({{ '%.1f'|format(bar.percent) }}%)</span>
+            </span>
+          </div>
+          <div class="h-2 rounded bg-ink-100 overflow-hidden">
+            <div class="h-full rounded bg-brand-500"
+                 style="width: {{ '%.1f'|format(bar.percent) }}%"></div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endmacro %}
+
+
+{#
+  A KPI number with its change against the comparison period.
+
+  `delta` is None when the change cannot be expressed — a zero baseline has no
+  percentage. It renders as "—", never as 0% or +100%: inventing a figure the
+  client would act on is worse than admitting there is none.
+#}
+{% macro kpi_tile(label, value, delta=None, hint=None, href=None, good_when_up=True) %}
+  {% set body %}
+    <div class="text-xs text-ink-500 mb-1">{{ label }}</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ value }}</div>
+    <div class="mt-1 text-xs flex items-center gap-1.5">
+      {% if delta is none %}
+        <span class="text-ink-400">前期間比 —</span>
+      {% else %}
+        {% set positive = delta >= 0 %}
+        {% set favourable = positive if good_when_up else not positive %}
+        <span class="{% if delta == 0 %}text-ink-400{% elif favourable %}text-emerald-600{% else %}text-red-600{% endif %} font-medium tabular-nums">
+          {{ '+' if positive else '' }}{{ '%.1f'|format(delta) }}%
+        </span>
+        <span class="text-ink-400">前期間比</span>
+      {% endif %}
+    </div>
+    {% if hint %}<div class="text-[11px] text-ink-400 mt-1">{{ hint }}</div>{% endif %}
+  {% endset %}
+
+  {% if href %}
+    <a href="{{ href }}"
+       class="block rounded-xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-card-hover transition p-4">
+      {{ body }}
+    </a>
+  {% else %}
+    <div class="rounded-xl bg-white border border-ink-200 p-4">{{ body }}</div>
+  {% endif %}
+{% endmacro %}
