@@ -89,10 +89,15 @@ async def rakuten_report_csv(
 ) -> Response:
     """The RMS correction request, as a file.
 
-    One row per defect with the SKU管理番号, what is wrong, and which product it
-    should identify — everything the person editing RMS needs, without them
-    having to cross-reference our screens. CP932 because it is opened in Excel
-    on a Windows desktop, and a mojibake'd request gets ignored.
+    One row per defect, identifying the product the way that defect's own source
+    identifies it. 仮値 and 重複 come from mappings, which for Rakuten are keyed
+    on the SKU管理番号. 未マッピング実績 comes from order lines, and Rakuten
+    gives us those keyed on the 商品管理番号 only (`adapters/rakuten.py`) — there
+    is no SKU-level identifier in the payload at all.
+
+    Filing the latter under the SKU管理番号 heading sent the client hunting for
+    SKU values that were never in the file, so each row now fills the column its
+    identifier actually belongs to. Encoding is UTF-8 + BOM via `csv_response`.
     """
     report = await rakuten_sku_report(
         session, placeholder_pattern=settings.rakuten_placeholder_sku_pattern
@@ -113,7 +118,7 @@ async def rakuten_report_csv(
                 "",
                 "",
                 "",
-                "RMSで実際のSKUコードに変更してください",
+                "RMSでの修正は不要です。当システムはSKU管理番号を参照していません",
             ]
         )
     for row in report.duplicated:
@@ -134,8 +139,8 @@ async def rakuten_report_csv(
         writer.writerow(
             [
                 "未マッピング実績",
-                row["channel_sku"],
                 "",
+                row["channel_sku"],
                 "",
                 "",
                 row["lines"],
