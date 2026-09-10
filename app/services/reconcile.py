@@ -29,9 +29,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.logging import get_logger
@@ -43,6 +43,7 @@ from app.models import (
     ReconcileDiffDecisionEnum,
     ReconcileRun,
     ReconcileRunStatusEnum,
+    ReconcileRunTypeEnum,
 )
 
 log = get_logger(__name__)
@@ -66,6 +67,23 @@ class DiffApplyResult:
 _RECONCILE_SOURCE_CHANNEL = "reconcile"
 
 
+def of_run_type(
+    run_type: ReconcileRunTypeEnum | str = ReconcileRunTypeEnum.RECONCILE,
+) -> ColumnElement[bool]:
+    """Predicate restricting a query to ONE kind of run.
+
+    Since migration 0012 the same table holds the daily CROSS MALL
+    reconciliation, the Shopify stock audit and the physical stocktake. Every
+    query that means one of them must say which, or an audit run appears in the
+    operator's reconcile queue as work they are expected to approve — and the
+    dashboard's 未承認 badge counts it, which is how a screen starts lying.
+
+    Defaulting to RECONCILE keeps the existing call sites meaning what they
+    already meant: before 0012 every row was a CROSS MALL run.
+    """
+    return ReconcileRun.run_type == str(run_type)
+
+
 class ReconcileService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -79,6 +97,11 @@ class ReconcileService:
         triggered_by: str,
         diffs: Iterable[DiffInput],
         csv_filename: str | None = None,
+        run_type: ReconcileRunTypeEnum | str = ReconcileRunTypeEnum.RECONCILE,
+        counted_by: str | None = None,
+        counted_on: date | None = None,
+        scope_note: str | None = None,
+        counted_sku_count: int | None = None,
     ) -> ReconcileRun:
         """Create a new ReconcileRun and its diff rows.
 
@@ -88,12 +111,23 @@ class ReconcileService:
 
         Status flows: running -> pending_approval immediately after the
         diff rows are flushed, since at that point human action is needed.
+
+        `run_type` defaults to the CROSS MALL reconciliation so the daily job
+        keeps meaning what it meant before migration 0012. The count metadata is
+        for the stocktake and the Shopify audit; the discard of `delta == 0`
+        rows is deliberately NOT conditional on the kind of run — all three want
+        an approval queue holding only real differences.
         """
         run = ReconcileRun(
             source=source,
+            run_type=str(run_type),
             csv_filename=csv_filename,
             status=ReconcileRunStatusEnum.RUNNING.value,
             triggered_by=triggered_by,
+            counted_by=counted_by,
+            counted_on=counted_on,
+            scope_note=scope_note,
+            counted_sku_count=counted_sku_count,
         )
         self._session.add(run)
         await self._session.flush()

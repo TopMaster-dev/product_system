@@ -13,10 +13,11 @@ applied_event_id. The run transitions through running → pending_approval
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -37,6 +38,12 @@ class ReconcileRun(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
+    #: Which kind of count this is — see ReconcileRunTypeEnum. Defaulted in the
+    #: database (migration 0012) so every pre-existing row reads as the CROSS
+    #: MALL reconciliation it was.
+    run_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="reconcile", default="reconcile"
+    )
     csv_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     diff_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -57,6 +64,14 @@ class ReconcileRun(Base, TimestampMixin):
         nullable=True,
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- who counted, and what (stocktake / audit) ------------------------
+    counted_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    counted_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: What was in scope — "2階の棚のみ". A partial count read as a full one
+    #: turns every uncounted SKU into a diff proposing it be zeroed.
+    scope_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    counted_sku_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ReconcileDiff(Base, TimestampMixin):
@@ -104,3 +119,6 @@ class ReconcileDiff(Base, TimestampMixin):
         DateTime(timezone=True),
         nullable=True,
     )
+    #: Remark from whoever counted this line ("箱破損のため別置き"). Carried on
+    #: the diff rather than the run because it explains one SKU, not the count.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)

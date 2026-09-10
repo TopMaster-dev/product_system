@@ -67,6 +67,24 @@ class ReconcileRunStatusEnum(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ReconcileRunTypeEnum(StrEnum):
+    """What kind of count produced a run.
+
+    All three share one approval path — the only code that deliberately
+    overwrites a snapshot — and are told apart by this column alone. Every
+    query that means "the daily CROSS MALL reconciliation" must say so, or a
+    Shopify audit surfaces as a pending reconciliation in the operator's queue.
+    """
+
+    #: Daily CROSS MALL CSV. Retires when CROSS MALL shuts down.
+    RECONCILE = "reconcile"
+    #: Physical count entered from a CSV (P2-028).
+    STOCKTAKE = "stocktake"
+    #: Daily comparison against Shopify's own inventory, which replaces
+    #: CROSS MALL as the external check (P2-035).
+    SHOPIFY_AUDIT = "shopify_audit"
+
+
 class ReconcileDiffDecisionEnum(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"

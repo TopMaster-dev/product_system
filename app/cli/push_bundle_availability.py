@@ -17,8 +17,7 @@ import argparse
 import asyncio
 import sys
 
-from app.adapters.shopify import ShopifyAdapter
-from app.config import get_settings
+from app.cli._adapters import build_shopify_adapter
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import SyncAttemptStatusEnum
@@ -28,21 +27,8 @@ from app.services import BundlePushService
 log = get_logger(__name__)
 
 
-def build_shopify_adapter() -> ShopifyAdapter:
-    settings = get_settings()
-    if not settings.shopify_shop_domain or not settings.shopify_access_token:
-        raise RuntimeError("Shopify credentials are missing from settings; cannot push.")
-    return ShopifyAdapter(
-        shop_domain=settings.shopify_shop_domain,
-        access_token=settings.shopify_access_token,
-        webhook_secret=settings.shopify_webhook_secret,
-        api_version=settings.shopify_api_version,
-        location_id=settings.shopify_location_id,
-    )
-
-
 async def run(*, dry_run: bool, triggered_by: str) -> int:
-    adapter = build_shopify_adapter()
+    adapter = build_shopify_adapter(purpose="push")
     notifier = get_slack_notifier()
     async with adapter, async_session_factory() as session, session.begin():
         svc = BundlePushService(session, notifier)

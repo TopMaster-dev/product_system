@@ -119,26 +119,52 @@ def _is_comment(row: list[str], spec: CsvSpec) -> bool:
     return row[0].lstrip().startswith(spec.comment_prefix)
 
 
+#: How far to look for the header before giving up. Excel writes the sheet name
+#: as a title row above the header whenever a named range or table is exported,
+#: and a returned file often gains a blank spacer row or two on the way back. A
+#: handful of lines absorbs that; scanning the whole file would let a genuinely
+#: headerless CSV match some unlucky data row far below.
+HEADER_SEARCH_LIMIT = 10
+
+
 def _read_header(reader: Iterator[list[str]], spec: CsvSpec) -> tuple[list[str] | None, int]:
     """Return the header row and the 1-based file line it was found on.
 
-    Only lines BEFORE the header are treated as guidance. Filtering `#` globally
-    would silently drop a data row whose first cell legitimately starts with one
-    (a 備考 column, say) — and a silently dropped row in a stocktake means the
-    stock is wrong and nobody knows. A stray `#` further down instead surfaces as
-    a normal row issue with its line number, which someone can see and fix. Every
-    template we ship puts its guidance at the top, so nothing is lost.
+    The header is the first line that actually resolves every required column,
+    not simply the first line present. We send these files out to be edited and
+    returned, and Excel puts the sheet name on line 1 when it exports a named
+    range — so a file we generated ourselves came back headed
+    `sku_categories_draft` and was rejected as "必須列がありません", an error
+    describing a consequence rather than the cause. Blank spacer rows arrive the
+    same way.
 
-    The line number is tracked so row issues keep pointing at the line the
-    operator sees in Excel — the whole point of reporting line numbers.
+    Only lines BEFORE the header are skipped, which is the same rule comments
+    follow. Filtering `#` globally would silently drop a data row whose first
+    cell legitimately starts with one (a 備考 column, say) — and a silently
+    dropped row in a stocktake means the stock is wrong and nobody knows.
+
+    When nothing resolves within `HEADER_SEARCH_LIMIT`, the FIRST non-comment
+    line is returned so the caller reports the missing columns against what the
+    operator actually sent, rather than against some row further down that they
+    would not recognise.
+
+    The line number is the true line of the header found, because row issues are
+    numbered from it and must point at the line the operator sees in Excel.
     """
+    first: list[str] | None = None
+    first_line = 0
     lineno = 0
     for row in reader:
         lineno += 1
         if _is_comment(row, spec):
             continue
-        return row, lineno
-    return None, lineno
+        if first is None:
+            first, first_line = row, lineno
+        if not resolve_header(row, spec)[1]:
+            return row, lineno
+        if lineno >= HEADER_SEARCH_LIMIT:
+            break
+    return first, first_line
 
 
 def resolve_header(header: list[str], spec: CsvSpec) -> tuple[dict[str, int], list[str]]:

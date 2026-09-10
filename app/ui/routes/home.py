@@ -24,6 +24,7 @@ from app.models import (
     SyncAttemptStatusEnum,
 )
 from app.services.data_quality import summary_tiles
+from app.services.reconcile import of_run_type
 from app.ui.auth import OperatorDep
 from app.ui.deps import templates
 
@@ -55,7 +56,10 @@ async def home(
     pending_reconcile = await session.scalar(
         select(func.count())
         .select_from(ReconcileRun)
-        .where(ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value)
+        .where(
+            of_run_type(),
+            ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value,
+        )
     )
 
     # How many DEFECT classes are non-zero — not how many rows are wrong. One

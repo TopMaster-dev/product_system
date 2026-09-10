@@ -44,7 +44,8 @@ from app.models import (
     ReconcileRun,
     ReconcileRunStatusEnum,
 )
-from app.services.reconcile import ReconcileService
+from app.models.enums import ReconcileRunTypeEnum
+from app.services.reconcile import ReconcileService, of_run_type
 from app.ui.auth import OperatorDep
 from app.ui.csv_export import csv_response
 from app.ui.csv_intake import ColumnSpec, CsvSpec, OnEmpty, inspect, int_validator
@@ -230,7 +231,10 @@ async def reconcile_list(
     runs = (
         (
             await session.execute(
-                select(ReconcileRun).order_by(ReconcileRun.started_at.desc()).limit(100)
+                select(ReconcileRun)
+                .where(of_run_type())
+                .order_by(ReconcileRun.started_at.desc())
+                .limit(100)
             )
         )
         .scalars()
@@ -239,7 +243,10 @@ async def reconcile_list(
     pending_runs = await session.scalar(
         select(func.count())
         .select_from(ReconcileRun)
-        .where(ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value)
+        .where(
+            of_run_type(),
+            ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value,
+        )
     )
     return templates.TemplateResponse(
         request,
@@ -262,7 +269,10 @@ async def reconcile_detail(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     run = await session.get(ReconcileRun, run_id)
-    if run is None:
+    # A stocktake or Shopify-audit run rendered here would offer the CROSS MALL
+    # wording and actions over a different kind of count. Treated as not found
+    # rather than 403: this screen simply does not address those runs.
+    if run is None or run.run_type != ReconcileRunTypeEnum.RECONCILE.value:
         return RedirectResponse(url="/admin/reconcile?flash=notfound", status_code=303)
     diff_rows = (
         (
@@ -329,6 +339,12 @@ async def diff_skip(
 async def _diff_action(
     session: AsyncSession, run_id: int, diff_id: int, operator: str, *, approve: bool
 ) -> Response:
+    # The detail screen already refuses runs of another type, but these POSTs
+    # are reachable by id alone. A screen that will not DISPLAY a stocktake must
+    # not MUTATE one either; the same guard belongs on both.
+    run = await session.get(ReconcileRun, run_id)
+    if run is None or run.run_type != ReconcileRunTypeEnum.RECONCILE.value:
+        return RedirectResponse(url="/admin/reconcile?flash=notfound", status_code=303)
     try:
         async with session.begin():
             svc = ReconcileService(session)

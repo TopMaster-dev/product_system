@@ -26,27 +26,13 @@ import sys
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.adapters.shopify import ShopifyAdapter
-from app.config import get_settings
+from app.cli._adapters import build_shopify_adapter
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ChannelSkuMapping, MasterSku
 
 log = get_logger(__name__)
 SessionFactory = async_sessionmaker[AsyncSession]
-
-
-def build_shopify_adapter() -> ShopifyAdapter:
-    settings = get_settings()
-    if not settings.shopify_shop_domain or not settings.shopify_access_token:
-        raise RuntimeError("Shopify credentials are missing from settings; cannot sync images.")
-    return ShopifyAdapter(
-        shop_domain=settings.shopify_shop_domain,
-        access_token=settings.shopify_access_token,
-        webhook_secret=settings.shopify_webhook_secret,
-        api_version=settings.shopify_api_version,
-        location_id=settings.shopify_location_id,
-    )
 
 
 def resolve_images(
@@ -71,7 +57,7 @@ def resolve_images(
 
 
 async def run(*, dry_run: bool, session_factory: SessionFactory | None = None) -> int:
-    adapter = build_shopify_adapter()
+    adapter = build_shopify_adapter(purpose="sync images")
     async with adapter:
         variants = await adapter.list_variant_skus()
     with_image = sum(1 for v in variants if v.get("image_url"))

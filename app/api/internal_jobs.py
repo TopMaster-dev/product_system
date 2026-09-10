@@ -28,6 +28,25 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/internal/jobs", tags=["internal"])
 
 
+def _job_result(job: str, exit_code: int) -> dict[str, str]:
+    """Turn a CLI exit code into an HTTP outcome Cloud Scheduler can see.
+
+    Cloud Scheduler judges a run by the HTTP status and nothing else. A non-zero
+    exit reported as 200 is invisible: no retry, no alert, and a green row in the
+    scheduler console for a job that failed. This project has been bitten by that
+    three times — the BigQuery export returning 200 "partial", the bundle push
+    doing the same, and the daily reconciliation returning 200 "skipped" for
+    seven weeks while never running at all.
+
+    So: non-zero exit becomes a 500. The scheduler retries, the alert fires, and
+    a failure looks like a failure.
+    """
+    if exit_code == 0:
+        return {"status": "ok", "exit_code": "0"}
+    log.error("internal.job_failed", job=job, exit_code=exit_code)
+    raise HTTPException(status_code=500, detail=f"{job} failed: exit {exit_code}")
+
+
 @router.post("/bq-export")
 async def trigger_bq_export() -> dict[str, str]:
     """Daily BigQuery export.
@@ -147,14 +166,14 @@ async def trigger_rollup_daily(mode: str = "incremental") -> dict[str, str]:
 async def trigger_poll_shopify(lookback_minutes: int = 20) -> dict[str, str]:
     code = await poll_channels.run("shopify", lookback_minutes=lookback_minutes)
     log.info("internal.poll_shopify.done", exit_code=code, lookback_minutes=lookback_minutes)
-    return {"status": "ok", "exit_code": str(code)}
+    return _job_result("poll-shopify", code)
 
 
 @router.post("/poll-rakuten")
 async def trigger_poll_rakuten(lookback_minutes: int = 10) -> dict[str, str]:
     code = await poll_channels.run("rakuten", lookback_minutes=lookback_minutes)
     log.info("internal.poll_rakuten.done", exit_code=code, lookback_minutes=lookback_minutes)
-    return {"status": "ok", "exit_code": str(code)}
+    return _job_result("poll-rakuten", code)
 
 
 @router.post("/reconcile")
@@ -165,11 +184,27 @@ async def trigger_reconcile() -> dict[str, str]:
     admin UI (per D-6). No-ops (does not error) when the URI is unset."""
     uri = get_settings().reconcile_csv_uri
     if not uri:
-        log.warning("internal.reconcile.no_csv_uri")
-        return {"status": "skipped", "reason": "reconcile_csv_uri not configured"}
+        # This returned 200 "skipped" until 2026-09-09, and Cloud Scheduler
+        # recorded a success every morning for seven weeks while the daily
+        # reconciliation never ran even once. `reconcile_csv_uri` was never set
+        # in Terraform, so the stock baseline seeded on 2026-07-20 went
+        # uncorrected — which is how it stayed 6x what both sales channels held.
+        #
+        # A scheduler calling an endpoint that is not configured to do anything
+        # is a misconfiguration, not a no-op. It must be loud.
+        log.error("internal.reconcile.no_csv_uri")
+        await get_slack_notifier().notify(
+            level="critical",
+            title="日次在庫照合が未設定です",
+            message=(
+                "reconcile_csv_uri が未設定のため、日次のCROSS MALL在庫照合が"
+                "実行されていません。在庫数の検証が行われていない状態です。"
+            ),
+        )
+        raise HTTPException(status_code=500, detail="reconcile_csv_uri not configured")
     code = await reconcile_inventory.run(uri, triggered_by="cloud_scheduler")
     log.info("internal.reconcile.done", exit_code=code)
-    return {"status": "ok" if code == 0 else "error", "exit_code": str(code)}
+    return _job_result("reconcile", code)
 
 
 @router.post("/bundle-push")
@@ -178,7 +213,10 @@ async def trigger_bundle_push() -> dict[str, str]:
     each parent's derived availability and pushes it; safe to run periodically."""
     code = await push_bundle_availability.run(dry_run=False, triggered_by="cloud_scheduler")
     log.info("internal.bundle_push.done", exit_code=code)
-    return {"status": "ok" if code == 0 else "partial", "exit_code": str(code)}
+    # This said "partial" with HTTP 200 when pushes failed. "partial" behind a
+    # 200 is the exact wording and the exact mechanism that hid the broken
+    # BigQuery export for months.
+    return _job_result("bundle-push", code)
 
 
 @router.post("/tasks/run")

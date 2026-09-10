@@ -121,6 +121,34 @@ query ListVariants($first: Int!, $cursor: String) {
 # Shopify caps productVariants(first:) at 250; paginate to read the whole shop.
 _LIST_PAGE_SIZE = 250
 
+# The stock audit (P2-035) reads sku + on-hand for the WHOLE shop, so it asks for
+# both in one page rather than one round trip per variant like `_ON_HAND_QUERY`.
+#
+# A review predicted this shape would be rejected outright at ~1000 cost points.
+# Measured against the live shop on 2026-09-08 it costs 46 at first:250 — the
+# whole catalogue is 3 pages, ~1.4s, against a 2000-point bucket refilling at
+# 100/s. `inventoryLevel` is a single object, not a connection, so it does not
+# multiply the page cost the way a nested connection would.
+STOCK_LEVELS_QUERY = """
+query AuditStock($first: Int!, $cursor: String, $locId: ID!) {
+  productVariants(first: $first, after: $cursor) {
+    pageInfo { hasNextPage endCursor }
+    edges {
+      node {
+        sku
+        inventoryItem {
+          id
+          tracked
+          inventoryLevel(locationId: $locId) {
+            quantities(names: ["on_hand", "available"]) { name quantity }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 _ON_HAND_QUERY = """
 query OnHand($itemId: ID!, $locId: ID!) {
   inventoryItem(id: $itemId) {
@@ -336,6 +364,69 @@ class ShopifyAdapter(ChannelAdapter):
                 )
                 if 0 < max_total <= len(out):
                     return out
+            info = conn.get("pageInfo") or {}
+            if not info.get("hasNextPage"):
+                break
+            cursor = info.get("endCursor")
+            if not cursor:
+                break
+        return out
+
+    async def fetch_stock_levels(self) -> list[dict[str, Any]]:
+        """Read-only: every variant's SKU and on-hand at the primary location.
+
+        The whole shop in a handful of round trips — see STOCK_LEVELS_QUERY for
+        the measured cost. `get_on_hand` remains the right call for ONE sku; this
+        is for the daily audit, where per-variant calls would be ~700 requests.
+
+        Returns one row per VARIANT, not per SKU. Shopify permits the same SKU on
+        several variants, each with its own inventory item, and how to combine
+        them is a policy question the caller has to answer visibly — an adapter
+        that silently summed them would manufacture a stock difference nobody
+        could trace. Variants with a blank SKU are dropped: they cannot be
+        matched to a master and are not ours to audit.
+        """
+        location_id = await self._resolve_location_id()
+        out: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            body = await self._graphql(
+                STOCK_LEVELS_QUERY,
+                {"first": _LIST_PAGE_SIZE, "cursor": cursor, "locId": location_id},
+            )
+            conn = ((body.get("data") or {}).get("productVariants")) or {}
+            for edge in conn.get("edges") or []:
+                node = edge.get("node") or {}
+                sku = (node.get("sku") or "").strip()
+                if not sku:
+                    continue
+                item = node.get("inventoryItem") or {}
+                level = item.get("inventoryLevel")
+                if not level:
+                    # Not stocked at this location. Absent is not zero: reporting
+                    # it as 0 would propose zeroing our stock for the SKU.
+                    continue
+                quantities = {
+                    q.get("name"): int(q.get("quantity") or 0)
+                    for q in level.get("quantities") or []
+                }
+                out.append(
+                    {
+                        "sku": sku,
+                        "on_hand": quantities.get("on_hand", 0),
+                        # `available` is on_hand minus what is committed to
+                        # unfulfilled orders. Which of the two our snapshots
+                        # correspond to is a question the audit has to answer
+                        # from data, so both are carried.
+                        "available": quantities.get("available", 0),
+                        # When Shopify is not tracking a variant's quantity it
+                        # still reports a level, and it reports 0. That 0 means
+                        # "not counted here", not "none in stock" — comparing it
+                        # against a real holding manufactures a difference.
+                        "tracked": bool(item.get("tracked")),
+                        "inventory_item_id": item.get("id") or "",
+                    }
+                )
             info = conn.get("pageInfo") or {}
             if not info.get("hasNextPage"):
                 break

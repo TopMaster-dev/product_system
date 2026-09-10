@@ -1317,3 +1317,108 @@ async def test_alerts_sku_picker_excludes_archived_masters(admin_client, _test_e
     r = await admin_client.get("/admin/alerts?status=open", headers=_auth_header())
     assert "PICK-LIVE" in r.text
     assert "PICK-ARCHIVED" not in r.text
+
+
+# --- run_type isolation (migration 0012) ----------------------------------
+#
+# reconcile_runs now holds three kinds of run. The daily CROSS MALL
+# reconciliation, the Shopify stock audit that replaces it, and the physical
+# stocktake all share one approval path — the only code that deliberately
+# overwrites a snapshot — so the ONLY thing keeping them apart is the run_type
+# filter on every query. Miss one and an audit run becomes work the operator is
+# told to approve.
+
+
+async def _make_run(engine, run_type: str, status: str = "pending_approval") -> int:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models import ReconcileRun
+
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session, session.begin():
+        run = ReconcileRun(
+            source="test",
+            run_type=run_type,
+            status=status,
+            triggered_by="pytest",
+        )
+        session.add(run)
+        await session.flush()
+        return int(run.id)
+
+
+async def test_a_shopify_audit_run_is_absent_from_the_reconcile_list(
+    admin_client, _test_engine
+) -> None:
+    audit_id = await _make_run(_test_engine, "shopify_audit")
+    reconcile_id = await _make_run(_test_engine, "reconcile")
+
+    r = await admin_client.get("/admin/reconcile", headers=_auth_header())
+    assert r.status_code == 200
+    assert f"/admin/reconcile/{reconcile_id}" in r.text
+    assert f"/admin/reconcile/{audit_id}" not in r.text
+
+
+async def test_the_dashboard_badge_does_not_count_other_run_types(
+    admin_client, _test_engine
+) -> None:
+    """The count docs/23 records as missed by every area design."""
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models import ReconcileRun, ReconcileRunStatusEnum
+    from app.services.reconcile import of_run_type
+
+    await _make_run(_test_engine, "stocktake")
+    await _make_run(_test_engine, "shopify_audit")
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session:
+        filtered = await session.scalar(
+            select(func.count())
+            .select_from(ReconcileRun)
+            .where(
+                of_run_type(),
+                ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value,
+            )
+        )
+        unfiltered = await session.scalar(
+            select(func.count())
+            .select_from(ReconcileRun)
+            .where(ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value)
+        )
+    assert unfiltered >= filtered + 2, "the two runs just created must be excluded"
+
+    r = await admin_client.get("/admin/", headers=_auth_header())
+    assert r.status_code == 200
+
+
+async def test_the_detail_screen_refuses_a_run_of_another_type(admin_client, _test_engine) -> None:
+    """Rendering a stocktake here would offer CROSS MALL wording and actions
+    over a different kind of count."""
+    audit_id = await _make_run(_test_engine, "shopify_audit")
+    r = await admin_client.get(
+        f"/admin/reconcile/{audit_id}", headers=_auth_header(), follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert "flash=notfound" in r.headers["location"]
+
+
+async def test_existing_rows_default_to_the_crossmall_reconciliation(_test_engine) -> None:
+    """server_default in 0012. Without it every pre-existing row would land
+    NULL and vanish from the screens the moment the filters went in."""
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session, session.begin():
+        await session.execute(
+            text(
+                "INSERT INTO reconcile_runs (source, status, diff_count, applied_count,"
+                " triggered_by, started_at) VALUES ('legacy', 'applied', 0, 0, 'pytest', now())"
+            )
+        )
+        got = await session.scalar(
+            text("SELECT run_type FROM reconcile_runs WHERE source = 'legacy' LIMIT 1")
+        )
+    assert got == "reconcile"

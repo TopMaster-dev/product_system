@@ -142,9 +142,48 @@ def test_a_hash_inside_data_is_not_a_comment() -> None:
     assert rows == [{"備考": "#1 人気", "sku_code": "N23gold"}]
 
 
+def test_a_title_row_above_the_header_is_tolerated() -> None:
+    """Excel writes the sheet name on line 1 when it exports a named range.
+
+    We hand these files out to be edited and returned, so this is the normal
+    shape of a returned file, not a malformed one. A draft we generated came
+    back headed `sku_categories_draft` and was rejected as 必須列がありません —
+    an error naming a consequence rather than the cause.
+    """
+    result = inspect(_csv("sku_categories_draft\nsku_code,実数\nH1,3\n"), SPEC)
+    assert not result.fatal
+    assert result.valid_rows == 1
+
+
+def test_blank_rows_above_the_header_are_tolerated() -> None:
+    """Spacer rows arrive the same way a title row does."""
+    assert not inspect(_csv("\n\nsku_code,実数\nH1,3\n"), SPEC).fatal
+
+
+def test_row_issues_are_numbered_from_the_real_header_line() -> None:
+    """Line numbers exist so the operator can find the row in Excel. If the
+    header search reported its own line wrongly, every issue would point off."""
+    result = inspect(_csv("title\nsku_code,実数\nH1,abc\n"), SPEC)
+    assert [i["line"] for i in result.row_issues] == [3], result.row_issues
+
+
+def test_the_header_search_is_bounded() -> None:
+    """Scanning the whole file would let a genuinely headerless CSV match some
+    unlucky row far below and import against the wrong columns."""
+    body = "".join(f"junk{i},{i}\n" for i in range(20)) + "sku_code,実数\nH1,3\n"
+    assert inspect(_csv(body), SPEC).fatal
+
+
 def test_comment_skipping_can_be_disabled() -> None:
+    """`comment_prefix=""` stops `#` being read as guidance. Because the header
+    search already skips any leading row that fails to resolve the required
+    columns, a `#` line above the header no longer decides the outcome — what
+    the setting still changes is that the `#` row is CONSIDERED as a header
+    candidate rather than passed over."""
     spec = CsvSpec(columns=SPEC.columns, comment_prefix="")
-    assert inspect(_csv("# not a comment\nsku_code,実数\nH1,3\n"), spec).fatal
+    result = inspect(_csv("# not a comment\nsku_code,実数\nH1,3\n"), spec)
+    assert not result.fatal
+    assert result.valid_rows == 1
 
 
 def test_file_of_only_comments_reports_no_header() -> None:
