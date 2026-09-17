@@ -149,6 +149,38 @@ query AuditStock($first: Int!, $cursor: String, $locId: ID!) {
 }
 """
 
+# P2-034. CROSS MALL has supplied the product master until now; when it shuts
+# down, Shopify becomes the only place a new product or a new colour/size first
+# appears. This reads the catalogue so those can be discovered instead of being
+# hand-registered — which is how N128 and B73 came to be absent from the master
+# entirely while selling 123 units.
+#
+# `selectedOptions` is what makes this more than `_LIST_VARIANTS_QUERY`: it gives
+# 色/サイズ as structured pairs rather than a "gold / 20cm" title that would have
+# to be parsed back apart. `status` is carried so that drafts and archived
+# products — which are visible to the API but not for sale — can be left out.
+CATALOGUE_QUERY = """
+query Catalogue($first: Int!, $cursor: String) {
+  productVariants(first: $first, after: $cursor) {
+    pageInfo { hasNextPage endCursor }
+    edges {
+      node {
+        sku
+        title
+        selectedOptions { name value }
+        image { url }
+        product {
+          id
+          title
+          status
+          featuredImage { url }
+        }
+      }
+    }
+  }
+}
+"""
+
 _ON_HAND_QUERY = """
 query OnHand($itemId: ID!, $locId: ID!) {
   inventoryItem(id: $itemId) {
@@ -425,6 +457,60 @@ class ShopifyAdapter(ChannelAdapter):
                         # against a real holding manufactures a difference.
                         "tracked": bool(item.get("tracked")),
                         "inventory_item_id": item.get("id") or "",
+                    }
+                )
+            info = conn.get("pageInfo") or {}
+            if not info.get("hasNextPage"):
+                break
+            cursor = info.get("endCursor")
+            if not cursor:
+                break
+        return out
+
+    async def fetch_catalogue(self) -> list[dict[str, Any]]:
+        """Read-only: every live variant with its 色/サイズ options (P2-034).
+
+        One row per VARIANT. Blank SKUs are dropped — they cannot be matched to a
+        master and cannot be registered as one either.
+
+        Only ACTIVE products are returned. Drafts and archived products are
+        visible to the Admin API but are not for sale, and registering them would
+        put products in the master that no channel can sell.
+
+        `options` is the variant's selectedOptions as a name->value mapping, with
+        Shopify's own option names preserved rather than normalised here: which
+        name means 色 and which means サイズ is a judgement the caller has to make
+        visibly, because the shop is free to call them anything.
+        """
+        out: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            body = await self._graphql(
+                CATALOGUE_QUERY, {"first": _LIST_PAGE_SIZE, "cursor": cursor}
+            )
+            conn = ((body.get("data") or {}).get("productVariants")) or {}
+            for edge in conn.get("edges") or []:
+                node = edge.get("node") or {}
+                sku = (node.get("sku") or "").strip()
+                if not sku:
+                    continue
+                product = node.get("product") or {}
+                if (product.get("status") or "").upper() != "ACTIVE":
+                    continue
+                image = (node.get("image") or {}).get("url") or (
+                    product.get("featuredImage") or {}
+                ).get("url")
+                out.append(
+                    {
+                        "sku": sku,
+                        "variant_title": node.get("title") or "",
+                        "product_id": product.get("id") or "",
+                        "product_title": product.get("title") or "",
+                        "options": {
+                            (o.get("name") or ""): (o.get("value") or "")
+                            for o in node.get("selectedOptions") or []
+                        },
+                        "image_url": image or "",
                     }
                 )
             info = conn.get("pageInfo") or {}

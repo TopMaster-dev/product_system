@@ -273,22 +273,26 @@ async def run(
             print("\n  ※ 差分は登録していません")
             return 0
 
-        async with session.begin():
-            svc = ReconcileService(session)
-            created = await svc.start_run(
-                source=SOURCE,
-                triggered_by=triggered_by,
-                diffs=iter(diffs),
-                run_type=ReconcileRunTypeEnum.SHOPIFY_AUDIT,
-                counted_by=SOURCE,
-                counted_on=to_jst_date(moment),
-                scope_note=(
-                    "Shopify在庫との自動突合。Shopifyが返したSKUのみを対象とし、"
-                    "未報告のSKUはゼロ化しない"
-                ),
-                counted_sku_count=summary["matched_masters"],
-            )
-            run_id = created.id
+        # NOT `async with session.begin()`. `collect_diffs` above reads on this
+        # same session, which autobegins a transaction; opening a second one
+        # raises InvalidRequestError. Only the --dry-run path had ever been
+        # exercised, so this would have failed on the audit's first real run.
+        svc = ReconcileService(session)
+        created = await svc.start_run(
+            source=SOURCE,
+            triggered_by=triggered_by,
+            diffs=iter(diffs),
+            run_type=ReconcileRunTypeEnum.SHOPIFY_AUDIT,
+            counted_by=SOURCE,
+            counted_on=to_jst_date(moment),
+            scope_note=(
+                "Shopify在庫との自動突合。Shopifyが返したSKUのみを対象とし、"
+                "未報告のSKUはゼロ化しない"
+            ),
+            counted_sku_count=summary["matched_masters"],
+        )
+        run_id = created.id
+        await session.commit()
 
     log.info("shopify_audit.done", run_id=run_id, **summary)
     print(f"\n--- Shopify 在庫突合 完了 (run #{run_id}) ---")

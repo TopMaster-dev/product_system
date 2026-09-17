@@ -233,7 +233,7 @@ def resolve_rakuten(idx: RakutenIndex, manage: str | None, color: str, size: str
 # Add-on / accessory products (e.g. a 長さ変更用 chain extension) carry another
 # product's token mid-name ('...necklace #N19 長さ変更用 ※...一緒にご購入...') and must
 # NOT be folded into that jewelry token's group.
-_ADDON_MARKERS = ("長さ変更用", "一緒にご購入", "длина")  # last is a guard, never matches
+_ADDON_MARKERS = ("長さ変更用", "一緒にご購入")
 
 
 def product_token(code: str, xm_name: dict[str, str], rk: RakutenIndex) -> str | None:

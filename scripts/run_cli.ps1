@@ -13,12 +13,21 @@
 #   -DryRun を付けると CLI に --dry-run を渡す。破壊的な操作は必ず
 #   「--dry-run の出力をレビュー → 本実行」の2段で行うこと（docs/24 参照）。
 
+#   -Apply は -DryRun の逆で、既定が参照のみのCLI (sync_shopify_masters) に
+#   書き込みを指示する。既定が書き込みのCLIに -DryRun で歯止めをかけるのと
+#   同じ2段階を、向きを変えて維持するためのもの。
+
 param(
     [Parameter(Mandatory = $true)][string]$Cli,
     [string]$Args = "",
     [switch]$DryRun,
+    [switch]$Apply,
     [switch]$WithShopify
 )
+
+# 既定で参照のみ、--apply を付けたときだけ書き込むCLI。
+# マスタ行を新規作成するため、フラグなしの実行が安全側になるよう反転させてある。
+$APPLY_OPT_IN = @("sync_shopify_masters", "link_shared_stock")
 
 $ErrorActionPreference = "Stop"
 
@@ -77,8 +86,14 @@ try {
     Write-Host ("  BQ -> " + $env:GCP_PROJECT_ID + ":" + $env:BIGQUERY_DATASET)
     py -m alembic current
 
+    $optIn = $APPLY_OPT_IN -contains $Cli
+    if ($Apply -and -not $optIn) {
+        throw "-Apply は $($APPLY_OPT_IN -join ', ') 専用です。他のCLIは既定が本実行で、-DryRun で抑止します。"
+    }
+
     $cmd = "py -m app.cli.$Cli"
     if ($DryRun) { $cmd += " --dry-run" }
+    if ($Apply)  { $cmd += " --apply" }
     if ($Args)   { $cmd += " $Args" }
 
     Section "実行: $cmd"
@@ -86,7 +101,9 @@ try {
     # 本当に危険な実行のときに読み飛ばされる。
     # inspect_* は引数なしの参照専用CLI。export_unmapped_worksheet はDBを読み
     # 取ってローカルにCSVを書くだけで、DBもチャネルも変更しない。
-    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^inspect_') -or ($Cli -eq 'export_unmapped_worksheet')
+    # $APPLY_OPT_IN のCLIは -Apply が無ければ何も書かないので、警告を出すと
+    # 「確認したのに何も起きなかった」という読み方を招く。
+    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^inspect_') -or ($Cli -eq 'export_unmapped_worksheet') -or ($optIn -and -not $Apply)
     if (-not $DryRun -and -not $readOnly) {
         Write-Host "  [注意] 本実行です。--dry-run の出力を確認済みであることを前提とします。" -ForegroundColor Yellow
     }
