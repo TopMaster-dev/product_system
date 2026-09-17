@@ -66,20 +66,25 @@ resource "google_cloud_scheduler_job" "shopify_poll" {
   }
 }
 
-# Daily CROSS MALL reconciliation — JST 06:00 = UTC 21:00 of the prior day.
-# Reads the stock CSV at settings.reconcile_csv_uri and creates a ReconcileRun
-# in pending_approval; the operator approves the diffs in the admin UI (D-6).
-# No-ops safely until reconcile_csv_uri is configured.
-resource "google_cloud_scheduler_job" "reconcile_daily" {
-  name        = "product-system-reconcile-daily"
-  description = "Daily CROSS MALL inventory reconciliation (creates a pending-approval run)."
+# Daily stock audit against Shopify (P2-035) — JST 06:00 = UTC 21:00 prior day.
+# Creates a ReconcileRun in pending_approval; the operator approves the diffs in
+# the admin UI (D-6). Nothing reaches inventory unattended.
+#
+# Replaces product-system-reconcile-daily (P2-036). That job read a CROSS MALL
+# CSV from `reconcile_csv_uri`, which was never set, so it returned HTTP 200
+# "skipped" every morning for seven weeks while the daily check never ran once.
+# CROSS MALL shuts down in October 2026; the audit needs no CSV and no URI, it
+# reads the shop the service is already authenticated against.
+resource "google_cloud_scheduler_job" "shopify_audit_daily" {
+  name        = "product-system-shopify-audit-daily"
+  description = "Daily Shopify stock audit (creates a pending-approval run)."
   schedule    = "0 21 * * *" # UTC; equivalent to 06:00 JST.
   time_zone   = "Etc/UTC"
   region      = var.region
 
   http_target {
     http_method = "POST"
-    uri         = "${google_cloud_run_v2_service.app.uri}/internal/jobs/reconcile"
+    uri         = "${google_cloud_run_v2_service.app.uri}/internal/jobs/shopify-audit"
     oidc_token {
       service_account_email = google_service_account.app.email
     }
@@ -144,7 +149,7 @@ resource "google_cloud_scheduler_job" "rollup_hourly" {
 }
 
 # 04:10 JST = 19:10 UTC. After the 03:00 JST BigQuery export so the two do not
-# contend for the same shared vCPU, and before the 06:00 JST reconcile so the
+# contend for the same shared vCPU, and before the 06:00 JST audit so the
 # numbers are current when the day's operations begin.
 resource "google_cloud_scheduler_job" "rollup_nightly_repair" {
   name        = "product-system-rollup-nightly-repair"

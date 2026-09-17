@@ -16,42 +16,47 @@ import pytest
 from fastapi import HTTPException
 
 from app.api import internal_jobs
-from app.config import Settings
 
 pytestmark = pytest.mark.unit
 
 
-async def test_reconcile_fails_loudly_when_uri_unset(monkeypatch) -> None:
-    """This used to return 200 "skipped", and that is how the daily stock
-    reconciliation never ran for seven weeks while Cloud Scheduler recorded a
-    success every morning. `reconcile_csv_uri` was never set in Terraform, so
-    the baseline seeded on 2026-07-20 was never corrected — and it stayed at
-    roughly six times what both sales channels held.
-
-    A scheduler calling an endpoint that is not configured to do anything is a
-    misconfiguration, not a no-op.
-    """
-    monkeypatch.setattr(internal_jobs, "get_settings", lambda: Settings(reconcile_csv_uri=""))
-    with pytest.raises(HTTPException) as raised:
-        await internal_jobs.trigger_reconcile()
-    assert raised.value.status_code == 500
-
-
-async def test_reconcile_runs_when_uri_configured(monkeypatch) -> None:
-    monkeypatch.setattr(
-        internal_jobs, "get_settings", lambda: Settings(reconcile_csv_uri="gs://bucket/stock.csv")
-    )
+async def test_the_shopify_audit_endpoint_runs_the_audit(monkeypatch) -> None:
+    """The replacement for the CROSS MALL reconciliation (P2-036). It takes no
+    configuration, which is the point: its predecessor needed a CSV URI that was
+    never set, so it returned 200 "skipped" every morning for seven weeks while
+    the daily stock check never ran once."""
     seen: dict[str, object] = {}
 
-    async def fake_run(csv_path, *, triggered_by):
-        seen["csv"] = csv_path
+    async def fake_run(*, triggered_by):
         seen["triggered_by"] = triggered_by
         return 0
 
-    monkeypatch.setattr(internal_jobs.reconcile_inventory, "run", fake_run)
-    result = await internal_jobs.trigger_reconcile()
+    monkeypatch.setattr(internal_jobs.audit_shopify_stock, "run", fake_run)
+    result = await internal_jobs.trigger_shopify_audit()
     assert result == {"status": "ok", "exit_code": "0"}
-    assert seen == {"csv": "gs://bucket/stock.csv", "triggered_by": "cloud_scheduler"}
+    assert seen == {"triggered_by": "cloud_scheduler"}
+
+
+async def test_a_failing_shopify_audit_is_a_500(monkeypatch) -> None:
+    """Losing the only external stock check must not read as success. Its
+    predecessor's silence is what this whole file is about."""
+
+    async def failed(*, triggered_by):
+        return 1
+
+    monkeypatch.setattr(internal_jobs.audit_shopify_stock, "run", failed)
+    with pytest.raises(HTTPException) as raised:
+        await internal_jobs.trigger_shopify_audit()
+    assert raised.value.status_code == 500
+
+
+def test_the_retired_reconcile_endpoint_is_gone() -> None:
+    """P2-036. Leaving it mounted invites a scheduler to be pointed back at a
+    job whose CROSS MALL input no longer exists."""
+    assert not hasattr(internal_jobs, "trigger_reconcile")
+    paths = {r.path for r in internal_jobs.router.routes}  # type: ignore[attr-defined]
+    assert "/internal/jobs/reconcile" not in paths
+    assert "/internal/jobs/shopify-audit" in paths
 
 
 async def test_bundle_push_endpoint_invokes_cli(monkeypatch) -> None:

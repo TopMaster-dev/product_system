@@ -27,7 +27,7 @@ The service does not commit; the caller owns transaction boundaries.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
@@ -82,6 +82,34 @@ def of_run_type(
     already meant: before 0012 every row was a CROSS MALL run.
     """
     return ReconcileRun.run_type == str(run_type)
+
+
+#: The kinds of run that answer the same question — "does our recorded stock
+#: still match an external source?" — and so share one approval queue.
+#:
+#: CROSS MALL shuts down in October 2026 and its daily reconciliation retires
+#: with it (P2-036); the Shopify audit takes over the same role, so it takes
+#: over the same screen. The physical stocktake is deliberately NOT here: it is
+#: a count of what is on the shelf rather than a comparison against a channel,
+#: it arrives in irregular batches an operator plans for, and mixing the two
+#: queues would bury one in the other.
+EXTERNAL_CHECK_TYPES: tuple[ReconcileRunTypeEnum, ...] = (
+    ReconcileRunTypeEnum.RECONCILE,
+    ReconcileRunTypeEnum.SHOPIFY_AUDIT,
+)
+
+
+def of_run_types(
+    run_types: Sequence[ReconcileRunTypeEnum | str] = EXTERNAL_CHECK_TYPES,
+) -> ColumnElement[bool]:
+    """Predicate restricting a query to a NAMED SET of run kinds.
+
+    Same contract as `of_run_type`, for the screens that legitimately cover more
+    than one kind. Passing the set explicitly is the point — a query with no
+    run_type filter at all is what the source guard in
+    `tests/test_reconcile_run_type.py` fails the build over.
+    """
+    return ReconcileRun.run_type.in_([str(t) for t in run_types])
 
 
 class ReconcileService:

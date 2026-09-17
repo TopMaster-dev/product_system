@@ -11,6 +11,26 @@ resource "google_cloud_run_v2_service" "app" {
   # incompatibly. Cloud Run is stateless so destroy+create is safe.
   deletion_protection = false
 
+  # This service is dual-managed: terraform defines it, and releases go out with
+  # `gcloud run deploy` (scripts/deploy_to_cloud_run.ps1). The three attributes
+  # below are therefore always drifted, and they surfaced in the plan for an
+  # unrelated scheduler change on 2026-09-17 — `-target` pulls in the resources
+  # a target depends on, and every scheduler job depends on this service for its
+  # URI. A plan that always carries an unexplained service update is a plan
+  # people stop reading.
+  #
+  #   client / client_version  Cloud Run records which tool last deployed. gcloud
+  #                            writes its own values; terraform wants them back.
+  #                            Cosmetic, and it never converges.
+  #   scaling                  Present on the live service, absent from this
+  #                            config, so terraform proposes REMOVING it.
+  #
+  # Ignoring preserves whatever is live, which is the safe direction for all
+  # three. Set scaling here explicitly if it ever needs to be managed as code.
+  lifecycle {
+    ignore_changes = [client, client_version, scaling]
+  }
+
   template {
     service_account = google_service_account.app.email
 

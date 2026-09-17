@@ -12,13 +12,12 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException
 
 from app.cli import (
+    audit_shopify_stock,
     export_to_bq,
     poll_channels,
     push_bundle_availability,
     rebuild_daily_metrics,
-    reconcile_inventory,
 )
-from app.config import get_settings
 from app.logging import get_logger
 from app.notifications.slack import get_slack_notifier
 from app.services.handlers import dispatch
@@ -176,35 +175,23 @@ async def trigger_poll_rakuten(lookback_minutes: int = 10) -> dict[str, str]:
     return _job_result("poll-rakuten", code)
 
 
-@router.post("/reconcile")
-async def trigger_reconcile() -> dict[str, str]:
-    """Daily CROSS MALL reconciliation. Reads the stock CSV at the configured
-    `reconcile_csv_uri` (gs://…) and creates a ReconcileRun in pending_approval —
-    nothing is applied to inventory until an operator approves the diffs in the
-    admin UI (per D-6). No-ops (does not error) when the URI is unset."""
-    uri = get_settings().reconcile_csv_uri
-    if not uri:
-        # This returned 200 "skipped" until 2026-09-09, and Cloud Scheduler
-        # recorded a success every morning for seven weeks while the daily
-        # reconciliation never ran even once. `reconcile_csv_uri` was never set
-        # in Terraform, so the stock baseline seeded on 2026-07-20 went
-        # uncorrected — which is how it stayed 6x what both sales channels held.
-        #
-        # A scheduler calling an endpoint that is not configured to do anything
-        # is a misconfiguration, not a no-op. It must be loud.
-        log.error("internal.reconcile.no_csv_uri")
-        await get_slack_notifier().notify(
-            level="critical",
-            title="日次在庫照合が未設定です",
-            message=(
-                "reconcile_csv_uri が未設定のため、日次のCROSS MALL在庫照合が"
-                "実行されていません。在庫数の検証が行われていない状態です。"
-            ),
-        )
-        raise HTTPException(status_code=500, detail="reconcile_csv_uri not configured")
-    code = await reconcile_inventory.run(uri, triggered_by="cloud_scheduler")
-    log.info("internal.reconcile.done", exit_code=code)
-    return _job_result("reconcile", code)
+@router.post("/shopify-audit")
+async def trigger_shopify_audit() -> dict[str, str]:
+    """Daily stock audit against Shopify (P2-035), the external check that
+    replaces the CROSS MALL reconciliation (P2-036).
+
+    Creates a ReconcileRun in pending_approval with run_type='shopify_audit';
+    nothing reaches inventory until an operator approves the diffs in the admin
+    UI, exactly as the CROSS MALL job worked (D-6).
+
+    The job it replaces returned 200 "skipped" for seven weeks because its CSV
+    URI was never configured, so nobody learned the daily check had never run.
+    This one needs no configuration: it reads the shop it is already
+    authenticated against, and a failure is a 500.
+    """
+    code = await audit_shopify_stock.run(triggered_by="cloud_scheduler")
+    log.info("internal.shopify_audit.done", exit_code=code)
+    return _job_result("shopify-audit", code)
 
 
 @router.post("/bundle-push")

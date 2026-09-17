@@ -69,7 +69,8 @@ def test_every_module_that_reads_runs_names_a_run_type() -> None:
         if rel in UNFILTERED_ALLOWED:
             continue
         source = path.read_text(encoding="utf-8")
-        if READS_RUNS.search(source) and "of_run_type" not in source:
+        names_a_type = "of_run_type(" in source or "of_run_types(" in source
+        if READS_RUNS.search(source) and not names_a_type:
             offenders.append(rel)
     assert not offenders, (
         "these read reconcile_runs without naming a run_type — a Shopify audit or "
@@ -78,9 +79,26 @@ def test_every_module_that_reads_runs_names_a_run_type() -> None:
 
 
 def test_the_reconcile_screen_guards_reads_and_writes_alike() -> None:
-    """The detail GET refuses another kind; the approve/skip POSTs are reachable
-    by id alone and must refuse it too. A screen that will not display a run
-    must not mutate it."""
+    """The detail GET refuses a kind it does not address; the approve/skip POSTs
+    are reachable by id alone and must refuse it too. A screen that will not
+    display a run must not mutate it.
+
+    Since P2-036 the screen covers a SET of kinds rather than one, because the
+    Shopify audit inherited the retiring CROSS MALL reconciliation's queue. The
+    guard therefore tests membership, but it still has to be on both paths."""
     source = (APP_DIR / "ui" / "routes" / "reconcile.py").read_text(encoding="utf-8")
-    guards = source.count("run.run_type != ReconcileRunTypeEnum.RECONCILE.value")
+    guards = source.count("run.run_type not in _SHOWN_HERE")
     assert guards >= 2, "expected the guard on both the detail view and the diff actions"
+
+
+def test_the_audit_shares_the_reconcile_queue_and_the_stocktake_does_not() -> None:
+    """P2-036: CROSS MALL retires and the Shopify audit answers the same
+    question through the same approval path, so it belongs in the same queue.
+    The stocktake is a count of the shelf, arrives in planned batches, and would
+    bury the daily check if it landed in the same list."""
+    from app.models import ReconcileRunTypeEnum
+    from app.services.reconcile import EXTERNAL_CHECK_TYPES
+
+    assert ReconcileRunTypeEnum.RECONCILE in EXTERNAL_CHECK_TYPES
+    assert ReconcileRunTypeEnum.SHOPIFY_AUDIT in EXTERNAL_CHECK_TYPES
+    assert ReconcileRunTypeEnum.STOCKTAKE not in EXTERNAL_CHECK_TYPES

@@ -54,6 +54,10 @@ logs/
 *.tfstate
 *.tfstate.*
 .terraform/
+# Saved plans. `terraform show -json` on one of these prints every attribute
+# of every resource, including the Cloud SQL password in the service env.
+tfplan
+*.tfplan
 infra/terraform/terraform.tfvars
 # Ignore all real tfvars (may hold secrets) but keep the tracked *.example templates.
 *.tfvars

@@ -44,8 +44,11 @@ from app.models import (
     ReconcileRun,
     ReconcileRunStatusEnum,
 )
-from app.models.enums import ReconcileRunTypeEnum
-from app.services.reconcile import ReconcileService, of_run_type
+from app.services.reconcile import (
+    EXTERNAL_CHECK_TYPES,
+    ReconcileService,
+    of_run_types,
+)
 from app.ui.auth import OperatorDep
 from app.ui.csv_export import csv_response
 from app.ui.csv_intake import ColumnSpec, CsvSpec, OnEmpty, inspect, int_validator
@@ -54,6 +57,13 @@ from app.ui.deps import templates
 router = APIRouter(prefix="/reconcile")
 
 MAX_ROW_ISSUES = 50
+
+#: The run kinds this screen addresses. Since P2-036 it is the home of the
+#: Shopify audit as well: CROSS MALL retires in October 2026 and the audit
+#: answers the same question against the same approval path, so it inherits
+#: the same queue rather than needing a second one. The stocktake does not
+#: appear here - it gets its own screen in W9.
+_SHOWN_HERE = frozenset(str(t) for t in EXTERNAL_CHECK_TYPES)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +242,7 @@ async def reconcile_list(
         (
             await session.execute(
                 select(ReconcileRun)
-                .where(of_run_type())
+                .where(of_run_types())
                 .order_by(ReconcileRun.started_at.desc())
                 .limit(100)
             )
@@ -244,7 +254,7 @@ async def reconcile_list(
         select(func.count())
         .select_from(ReconcileRun)
         .where(
-            of_run_type(),
+            of_run_types(),
             ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value,
         )
     )
@@ -269,10 +279,10 @@ async def reconcile_detail(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     run = await session.get(ReconcileRun, run_id)
-    # A stocktake or Shopify-audit run rendered here would offer the CROSS MALL
-    # wording and actions over a different kind of count. Treated as not found
-    # rather than 403: this screen simply does not address those runs.
-    if run is None or run.run_type != ReconcileRunTypeEnum.RECONCILE.value:
+    # A stocktake rendered here would offer this screen's wording and actions
+    # over a different kind of count. Treated as not found rather than 403: the
+    # screen simply does not address those runs.
+    if run is None or run.run_type not in _SHOWN_HERE:
         return RedirectResponse(url="/admin/reconcile?flash=notfound", status_code=303)
     diff_rows = (
         (
@@ -343,7 +353,7 @@ async def _diff_action(
     # are reachable by id alone. A screen that will not DISPLAY a stocktake must
     # not MUTATE one either; the same guard belongs on both.
     run = await session.get(ReconcileRun, run_id)
-    if run is None or run.run_type != ReconcileRunTypeEnum.RECONCILE.value:
+    if run is None or run.run_type not in _SHOWN_HERE:
         return RedirectResponse(url="/admin/reconcile?flash=notfound", status_code=303)
     try:
         async with session.begin():

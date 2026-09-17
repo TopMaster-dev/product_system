@@ -93,7 +93,6 @@ class Settings(BaseSettings):
     # export that the scheduled reconcile job reads. Empty disables the
     # scheduled job (it logs and no-ops); the admin-UI CSV upload path is
     # independent of this setting.
-    reconcile_csv_uri: str = ""
 
     @property
     def is_production(self) -> bool:

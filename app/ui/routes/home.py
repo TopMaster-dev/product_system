@@ -24,7 +24,7 @@ from app.models import (
     SyncAttemptStatusEnum,
 )
 from app.services.data_quality import summary_tiles
-from app.services.reconcile import of_run_type
+from app.services.reconcile import of_run_types
 from app.ui.auth import OperatorDep
 from app.ui.deps import templates
 
@@ -57,7 +57,7 @@ async def home(
         select(func.count())
         .select_from(ReconcileRun)
         .where(
-            of_run_type(),
+            of_run_types(),
             ReconcileRun.status == ReconcileRunStatusEnum.PENDING_APPROVAL.value,
         )
     )
