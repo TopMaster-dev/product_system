@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% from "_charts.html" import share_bar_list %}
+{% block title %}カテゴリ別売上{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl font-semibold text-ink-900">カテゴリ別売上</h1>
+    <p class="text-sm text-ink-500 mt-0.5">
+      {{ period.first_day.strftime('%Y-%m-%d') }} 〜 {{ period.last_day.strftime('%Y-%m-%d') }}
+      <span class="text-ink-400">（{{ period.days }}日間）</span>
+    </p>
+  </div>
+
+  <form method="get" class="flex items-end gap-2">
+    <div>
+      <label class="block text-xs text-ink-500 mb-1">期間</label>
+      <select name="period" class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white">
+        {% for p in presets %}
+          <option value="{{ p }}" {% if p == period.preset %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-ink-500 mb-1">チャネル</label>
+      <select name="channel" class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white">
+        <option value="">すべて</option>
+        {% for c in channels %}
+          <option value="{{ c }}" {% if c == filter.channel %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit"
+            class="text-sm font-semibold bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 transition">表示</button>
+  </form>
+</div>
+
+{% set unclassified = rows | selectattr('category_id', 'none') | first %}
+{% if rows | length == 1 %}
+  {# 未分類行だけ。カテゴリ登録前の状態で、空表よりも理由を出すほうが有用。 #}
+  <div class="mb-4 rounded-lg border border-ink-300 bg-ink-50 px-4 py-3 text-sm text-ink-700">
+    カテゴリが未登録のため、すべての売上が「未分類」に集計されています。
+    <a href="/admin/categories" class="underline font-medium">カテゴリ登録</a> を行うと、
+    大分類・中分類ごとの売上をご確認いただけるようになります。
+  </div>
+{% elif unclassified and total > 0 and (unclassified.total_sales_jpy / total) > 0.05 %}
+  <div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+    売上の {{ '%.1f'|format(unclassified.total_sales_jpy / total * 100) }}% がカテゴリ未設定です。
+    <span class="text-xs text-amber-800">カテゴリ別の構成比は、この分を除いた比率ではなく全体に対する比率で表示しています。</span>
+  </div>
+{% endif %}
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="lg:col-span-2 bg-white rounded-xl border border-ink-200 overflow-hidden">
+    <div class="scroll-area overflow-x-auto">
+      <table class="data-table w-full text-sm">
+        <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
+          <tr>
+            <th class="px-4 py-3 text-left font-semibold">カテゴリ</th>
+            <th class="px-4 py-3 text-right font-semibold">販売数量</th>
+            <th class="px-4 py-3 text-right font-semibold">売上高</th>
+            <th class="px-4 py-3 text-right font-semibold">構成比</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-ink-100">
+          {% for row in rows %}
+            {# 親行は子を含んだ合計。構成比は全体に対する比率で、合計すると100%になる。 #}
+            <tr class="hover:bg-ink-50/60 transition {% if row.category_id is none %}bg-ink-50/40{% endif %}">
+              <td class="px-4 py-2.5 font-medium {% if row.category_id is none %}text-ink-500{% else %}text-ink-800{% endif %}">
+                {{ row.name }}
+              </td>
+              <td class="px-4 py-2.5 text-right tabular-nums text-ink-700">{{ '{:,}'.format(row.total_quantity) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums font-medium text-ink-900">¥{{ '{:,}'.format(row.total_sales_jpy|int) }}</td>
+              <td class="px-4 py-2.5 text-right tabular-nums text-ink-600">
+                {% if total > 0 %}{{ '%.1f'|format(row.total_sales_jpy / total * 100) }}%{% else %}—{% endif %}
+              </td>
+            </tr>
+            {% for child in row.children %}
+              <tr class="hover:bg-ink-50/60 transition">
+                <td class="px-4 py-2 pl-10 text-ink-600 text-xs">{{ child.name }}</td>
+                <td class="px-4 py-2 text-right tabular-nums text-ink-600 text-xs">{{ '{:,}'.format(child.total_quantity) }}</td>
+                <td class="px-4 py-2 text-right tabular-nums text-ink-700 text-xs">¥{{ '{:,}'.format(child.total_sales_jpy|int) }}</td>
+                <td class="px-4 py-2 text-right tabular-nums text-ink-400 text-xs">
+                  {% if total > 0 %}{{ '%.1f'|format(child.total_sales_jpy / total * 100) }}%{% else %}—{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+        <tfoot class="border-t-2 border-ink-200 bg-ink-50">
+          <tr>
+            <td class="px-4 py-3 font-semibold text-ink-800">合計</td>
+            <td class="px-4 py-3 text-right tabular-nums font-semibold text-ink-800">
+              {{ '{:,}'.format(rows | sum(attribute='total_quantity')) }}
+            </td>
+            <td class="px-4 py-3 text-right tabular-nums font-semibold text-ink-900">¥{{ '{:,}'.format(total|int) }}</td>
+            <td class="px-4 py-3 text-right tabular-nums text-ink-600">{% if total > 0 %}100.0%{% else %}—{% endif %}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-xl border border-ink-200 p-4">
+    <h2 class="text-sm font-semibold text-ink-800 mb-3">構成比</h2>
+    {{ share_bar_list(shares, message='この期間の売上はありません') }}
+    <p class="text-[11px] text-ink-400 mt-3 leading-relaxed">
+      中分類の売上は大分類に合算しています。
+      商品を特定できなかった受注明細は、カテゴリを持たないためこの表には現れません。
+    </p>
+  </div>
+</div>
+{% endblock %}

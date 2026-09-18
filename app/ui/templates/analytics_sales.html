@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% from "_charts.html" import line_chart %}
+{% block title %}売上明細{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl font-semibold text-ink-900">売上明細</h1>
+    <p class="text-sm text-ink-500 mt-0.5">
+      {{ period.first_day.strftime('%Y-%m-%d') }} 〜 {{ period.last_day.strftime('%Y-%m-%d') }}
+      <span class="text-ink-400">（{{ period.days }}日間）</span>
+    </p>
+  </div>
+  <a href="/admin/analytics" class="text-sm text-brand-600 hover:text-brand-700 font-medium">← 概要へ</a>
+</div>
+
+{#
+  絞込は GET のフォーム1つにまとめる。期間・粒度・チャネル・カテゴリが別々のリンクだと
+  組み合わせのたびに他の選択が消え、「絞り込んだら期間が戻った」という挙動になる。
+#}
+<form method="get" class="bg-white rounded-xl border border-ink-200 p-3 mb-4 flex flex-wrap items-end gap-3">
+  <div>
+    <label class="block text-xs text-ink-500 mb-1">期間</label>
+    <select name="period" class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white">
+      {% for p in presets %}
+        <option value="{{ p }}" {% if p == period.preset %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-xs text-ink-500 mb-1">粒度</label>
+    <select name="granularity" class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white">
+      {% for key, label in granularities %}
+        <option value="{{ key }}" {% if key == granularity %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-xs text-ink-500 mb-1">チャネル</label>
+    <select name="channel" class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white">
+      <option value="">すべて</option>
+      {% for c in channels %}
+        <option value="{{ c }}" {% if c == filter.channel %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label class="block text-xs text-ink-500 mb-1">カテゴリ</label>
+    <select name="category" class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white max-w-[16rem]">
+      <option value="">すべて</option>
+      {# 未分類は「絞り込まない」とは別の選択肢。カテゴリ登録中は最も見たい行になる。 #}
+      <option value="{{ unclassified_value }}" {% if filter.unclassified_only %}selected{% endif %}>
+        未分類（{{ categories.unclassified_count }}件）
+      </option>
+      {% for root in categories.roots %}
+        <option value="{{ root.category.id }}" {% if filter.category_id == root.category.id %}selected{% endif %}>
+          {{ root.category.name }}
+        </option>
+        {% for child in root.children %}
+          <option value="{{ child.category.id }}" {% if filter.category_id == child.category.id %}selected{% endif %}>
+            　{{ root.category.name }} / {{ child.category.name }}
+          </option>
+        {% endfor %}
+      {% endfor %}
+    </select>
+  </div>
+
+  <button type="submit"
+          class="text-sm font-semibold bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 transition">
+    表示
+  </button>
+  {% if filter.is_narrowed %}
+    <a href="?period={{ period.preset }}&granularity={{ granularity }}"
+       class="text-sm text-ink-500 hover:text-ink-700">絞込を解除</a>
+  {% endif %}
+
+  <div class="ml-auto flex items-end gap-4">
+    <div class="text-right">
+      <div class="text-xs text-ink-500">期間合計</div>
+      <div class="text-lg font-semibold tabular-nums text-ink-900">¥{{ '{:,}'.format(period_sales|int) }}</div>
+    </div>
+    <div class="text-right">
+      <div class="text-xs text-ink-500">数量</div>
+      <div class="text-lg font-semibold tabular-nums text-ink-900">{{ '{:,}'.format(period_quantity) }}</div>
+    </div>
+  </div>
+</form>
+
+{% if categories.total_categories == 0 %}
+  <div class="mb-4 rounded-lg border border-ink-300 bg-ink-50 px-4 py-3 text-xs text-ink-600">
+    カテゴリが未登録のため、カテゴリ別の絞込はご利用いただけません。
+    <a href="/admin/categories" class="underline font-medium">カテゴリ登録</a> を行うと、
+    この画面で大分類・中分類別の売上をご確認いただけるようになります。
+  </div>
+{% endif %}
+
+<div class="bg-white rounded-xl border border-ink-200 p-4 mb-4">
+  <h2 class="text-sm font-semibold text-ink-800 mb-3">
+    売上推移{% if filter.is_narrowed %}<span class="text-ink-400 font-normal">（絞込中）</span>{% endif %}
+    <a href="/admin/analytics/sales/trend.csv?period={{ period.preset }}&granularity={{ granularity }}&channel={{ filter.channel or '' }}&category={{ selected_category }}"
+       class="float-right text-xs font-semibold text-brand-600 hover:text-brand-700">CSV出力</a>
+  </h2>
+  {{ line_chart(trend, message='条件に一致する売上はありません') }}
+</div>
+
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="px-4 py-3 border-b border-ink-200 flex items-center justify-between">
+    <h2 class="text-sm font-semibold text-ink-800">売上上位SKU</h2>
+    <div class="flex items-center gap-3">
+      <span class="text-xs text-ink-400">売上高順・画面は上位{{ rows|length }}件</span>
+      {# 絞込をそのまま引き継ぐ。画面と別の範囲が落ちてくるのが最も気づかれにくい。 #}
+      <a href="/admin/analytics/sales/export.csv?period={{ period.preset }}&channel={{ filter.channel or '' }}&category={{ selected_category }}"
+         class="text-xs font-semibold text-brand-600 hover:text-brand-700">CSV出力（全件）</a>
+    </div>
+  </div>
+  <div class="scroll-area overflow-x-auto">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">SKU</th>
+          <th class="px-4 py-3 text-left font-semibold">商品名</th>
+          <th class="px-4 py-3 text-left font-semibold">カテゴリ</th>
+          <th class="px-4 py-3 text-right font-semibold">数量</th>
+          <th class="px-4 py-3 text-right font-semibold">売上高</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for row in rows %}
+          <tr class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-2.5 font-mono text-xs whitespace-nowrap">
+              <a href="/admin/analytics/sku/{{ row.master_sku_id }}?period={{ period.preset }}"
+                 class="text-brand-600 hover:text-brand-700 font-medium">{{ row.sku_code }}</a>
+            </td>
+            <td class="px-4 py-2.5 text-ink-800">{{ row.name }}</td>
+            <td class="px-4 py-2.5 text-xs">
+              {% if row.category_name %}
+                <span class="text-ink-600">{{ row.category_name }}</span>
+              {% else %}
+                <span class="text-ink-400">未分類</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-right tabular-nums text-ink-700">{{ '{:,}'.format(row.quantity) }}</td>
+            <td class="px-4 py-2.5 text-right tabular-nums font-medium text-ink-900">¥{{ '{:,}'.format(row.gross_sales_jpy|int) }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="5" class="px-4 py-12 text-center text-sm text-ink-500">
+              条件に一致する売上はありません。
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="text-[11px] text-ink-400 mt-3 leading-relaxed">
+  セット商品の売上は親SKUに計上されます。
+  商品を特定できなかった受注明細（未マッピング）はこの表に現れないため、
+  上位SKUの合計は<a href="/admin/analytics" class="underline">概要</a>の売上高と一致しません。
+</p>
+{% endblock %}

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% from "_charts.html" import line_chart, share_bar_list, kpi_tile %}
+{% block title %}分析ダッシュボード{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl font-semibold text-ink-900">分析ダッシュボード</h1>
+    <p class="text-sm text-ink-500 mt-0.5">
+      {{ period.first_day.strftime('%Y-%m-%d') }} 〜 {{ period.last_day.strftime('%Y-%m-%d') }}
+      <span class="text-ink-400">（{{ period.days }}日間）</span>
+    </p>
+  </div>
+
+  {# 期間切替。今日を含めないのは、途中の1日が毎朝「売上急減」に見えるため。 #}
+  <div class="flex items-center gap-1 bg-ink-100 rounded-lg p-1">
+    {% for p in presets %}
+      <a href="?period={{ p }}"
+         class="px-3 py-1.5 rounded-md text-xs font-semibold transition
+                {% if p == period.preset %}bg-white text-ink-900 shadow-sm{% else %}text-ink-500 hover:text-ink-700{% endif %}">
+        {{ p }}
+      </a>
+    {% endfor %}
+  </div>
+</div>
+
+{#
+  出所バナー。3つの状態はいずれも「数字は出ているが読み方が違う」ケースで、
+  脚注にすると読まれない。赤 > 黄 > 青の順で、最も重いものだけを主張させる。
+#}
+{% if source.has_drift %}
+  <div class="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3">
+    <div class="text-sm font-semibold text-red-800">在庫数とイベント履歴が一致していません（{{ source.snapshot_drift_count }}件）</div>
+    <p class="text-xs text-red-700 mt-1">
+      この画面の在庫に関する数値は信頼できません。
+      <a href="/admin/data-quality" class="underline font-medium">データ品質</a> を確認し、
+      解消してから在庫指標をご利用ください。売上に関する数値は影響を受けません。
+    </p>
+  </div>
+{% elif source.is_stale %}
+  <div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+    <div class="text-sm font-semibold text-amber-900">集計が {{ '%.0f'|format(source.stale_hours) }} 時間更新されていません</div>
+    <p class="text-xs text-amber-800 mt-1">
+      表示中の数値は最終集計時点のものです。直近の受注が反映されていない可能性があります。
+    </p>
+  </div>
+{% endif %}
+
+{% if kpis.unmapped_is_material %}
+  <div class="mb-4 rounded-lg border border-ink-300 bg-ink-50 px-4 py-3">
+    <div class="text-sm font-semibold text-ink-800">
+      売上の {{ '%.1f'|format(kpis.unmapped_ratio * 100) }}% が商品未特定です
+    </div>
+    <p class="text-xs text-ink-600 mt-1">
+      チャネル別構成には「未マッピング」として計上しています。商品別・カテゴリ別の集計には含まれないため、
+      この比率が高いほど内訳の精度が下がります。
+      <a href="/admin/data-quality" class="underline font-medium">楽天SKU管理番号の整備</a> で解消します。
+    </p>
+  </div>
+{% endif %}
+
+{# KPI。売上・数量・受注は期間の合計、在庫と欠品は期間末の残高。 #}
+<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+  {{ kpi_tile('売上高', '¥{:,}'.format(kpis.total_with_unmapped_jpy|int), deltas.sales.change,
+              hint='未マッピング分を含む') }}
+  {{ kpi_tile('販売数量', '{:,}'.format(kpis.sold_quantity), deltas.quantity.change) }}
+  {{ kpi_tile('受注件数', '{:,}'.format(kpis.order_count), deltas.orders.change) }}
+  {{ kpi_tile('総在庫数', '{:,}'.format(kpis.total_on_hand_qty), none,
+              hint='期間末時点の残高') }}
+  {{ kpi_tile('欠品SKU数', '{:,}'.format(kpis.out_of_stock_sku_count), none,
+              hint='期間末 / 全{:,}件'.format(kpis.sku_count), good_when_up=False) }}
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="lg:col-span-2 bg-white rounded-xl border border-ink-200 p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-ink-800">売上推移</h2>
+      <div class="flex items-center gap-3 text-xs">
+        <span class="flex items-center gap-1.5">
+          <span class="w-3 h-0.5 rounded" style="background:#4F46E5"></span><span class="text-ink-600">当期間</span>
+        </span>
+        <span class="flex items-center gap-1.5">
+          <span class="w-3 h-0.5 rounded" style="background:#CBD5E1"></span>
+          <span class="text-ink-500">前期間（{{ previous.first_day.strftime('%m/%d') }}〜{{ previous.last_day.strftime('%m/%d') }}）</span>
+        </span>
+      </div>
+    </div>
+    {{ line_chart(trend, message='この期間の売上データはまだありません') }}
+  </div>
+
+  <div class="bg-white rounded-xl border border-ink-200 p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-semibold text-ink-800">チャネル別構成</h2>
+      <a href="/admin/analytics/export.csv?period={{ period.preset }}"
+         class="text-xs font-semibold text-brand-600 hover:text-brand-700">CSV出力</a>
+    </div>
+    {{ share_bar_list(shares, message='この期間の売上はありません') }}
+    <p class="text-[11px] text-ink-400 mt-3 leading-relaxed">
+      セット商品の売上は親SKUに計上されます。
+      「未マッピング」は商品を特定できなかった受注明細で、チャネル別の合計には含みます。
+    </p>
+  </div>
+</div>
+
+{# 蓄積開始日を明示する。開始前を含む期間は「売れていない」ではなく「データが無い」。 #}
+<p class="text-xs text-ink-400 mt-4">
+  {% if source.data_start %}集計開始日: {{ source.data_start.strftime('%Y-%m-%d') }}　{% endif %}
+  {% if source.last_rollup_at %}最終集計: {{ source.last_rollup_at.strftime('%Y-%m-%d %H:%M') }} UTC　{% endif %}
+  対象日数: {{ kpis.days_with_data }} / {{ period.days }}日
+  {%- if kpis.days_with_data < period.days %}
+    <span class="text-amber-600">（期間の一部は集計開始前のため数値がありません）</span>
+  {%- endif %}
+</p>
+{% endblock %}

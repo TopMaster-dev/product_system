@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% from "_charts.html" import line_chart %}
+{% block title %}{{ profile.sku_code }} の推移{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+  <div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <h1 class="text-xl font-semibold text-ink-900 font-mono">{{ profile.sku_code }}</h1>
+      {% if profile.is_bundle %}
+        <span class="inline-flex items-center rounded-full bg-violet-50 text-violet-700 px-2 py-0.5 text-xs font-semibold">共有在庫・セット</span>
+      {% endif %}
+      {% if not profile.is_stock_managed %}
+        <span class="inline-flex items-center rounded-full bg-ink-100 text-ink-600 px-2 py-0.5 text-xs font-semibold">在庫管理対象外</span>
+      {% endif %}
+      {% if profile.archived_at %}
+        <span class="inline-flex items-center rounded-full bg-amber-50 text-amber-700 px-2 py-0.5 text-xs font-semibold">アーカイブ済</span>
+      {% endif %}
+    </div>
+    <p class="text-sm text-ink-600 mt-1">{{ profile.name }}</p>
+    <p class="text-xs text-ink-400 mt-0.5">
+      カテゴリ: {% if profile.category_name %}{{ profile.category_name }}{% else %}未分類{% endif %}
+      　{{ period.first_day.strftime('%Y-%m-%d') }} 〜 {{ period.last_day.strftime('%Y-%m-%d') }}
+    </p>
+  </div>
+
+  <div class="flex items-center gap-3">
+    <div class="flex items-center gap-1 bg-ink-100 rounded-lg p-1">
+      {% for p in presets %}
+        <a href="?period={{ p }}"
+           class="px-3 py-1.5 rounded-md text-xs font-semibold transition
+                  {% if p == period.preset %}bg-white text-ink-900 shadow-sm{% else %}text-ink-500 hover:text-ink-700{% endif %}">
+          {{ p }}
+        </a>
+      {% endfor %}
+    </div>
+    <a href="/admin/analytics/sales" class="text-sm text-brand-600 hover:text-brand-700 font-medium">← 売上明細へ</a>
+  </div>
+</div>
+
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">期間売上高</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">¥{{ '{:,}'.format(period_sales|int) }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">期間販売数量</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ '{:,}'.format(period_quantity) }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">現在庫数</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">
+      {% if profile.tracks_stock and days and days[-1].on_hand_qty is not none %}
+        {{ '{:,}'.format(days[-1].on_hand_qty) }}
+      {% else %}
+        <span class="text-ink-400">—</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">期間日数</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ period.days }}</div>
+  </div>
+</div>
+
+{#
+  在庫と売上は別のチャートにする。片方は残高、片方はフローで、
+  同じ軸に載せると尺度の選び方次第で無関係な2本を相関して見せられてしまう。
+#}
+<div class="bg-white rounded-xl border border-ink-200 p-4 mb-4">
+  <h2 class="text-sm font-semibold text-ink-800 mb-3">在庫数の推移</h2>
+  {% if profile.no_stock_reason %}
+    <div class="rounded-lg border border-ink-200 bg-ink-50 px-4 py-6 text-center">
+      <p class="text-sm text-ink-600">{{ profile.no_stock_reason }}</p>
+      <p class="text-xs text-ink-400 mt-1">グラフが空であることは在庫ゼロを意味しません。</p>
+    </div>
+  {% else %}
+    {{ line_chart(stock_chart, message='この期間の在庫記録はありません') }}
+    {% if missing_stock_days %}
+      <p class="text-[11px] text-amber-600 mt-2">
+        {{ missing_stock_days }}日分は在庫の記録がありません。その区間は直前の値で描画しています。
+      </p>
+    {% endif %}
+  {% endif %}
+</div>
+
+<div class="bg-white rounded-xl border border-ink-200 p-4 mb-4">
+  <h2 class="text-sm font-semibold text-ink-800 mb-3">売上高の推移</h2>
+  {{ line_chart(sales_chart, message='この期間の売上はありません') }}
+</div>
+
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="px-4 py-3 border-b border-ink-200">
+    <h2 class="text-sm font-semibold text-ink-800">日次明細</h2>
+  </div>
+  <div class="scroll-area overflow-x-auto max-h-96">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200 sticky top-0">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">日付</th>
+          <th class="px-4 py-3 text-right font-semibold">在庫数</th>
+          <th class="px-4 py-3 text-right font-semibold">販売数量</th>
+          <th class="px-4 py-3 text-right font-semibold">売上高</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for d in days %}
+          <tr class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-2 font-mono text-xs text-ink-600 whitespace-nowrap">{{ d.stat_date.strftime('%Y-%m-%d') }}</td>
+            <td class="px-4 py-2 text-right tabular-nums">
+              {% if d.on_hand_qty is none %}
+                {# 記録なし。0と書くと欠品日を捏造することになる。 #}
+                <span class="text-ink-300">—</span>
+              {% else %}
+                <span class="{% if d.on_hand_qty < 0 %}text-red-600 font-medium{% else %}text-ink-700{% endif %}">{{ '{:,}'.format(d.on_hand_qty) }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2 text-right tabular-nums text-ink-700">{{ '{:,}'.format(d.quantity) }}</td>
+            <td class="px-4 py-2 text-right tabular-nums text-ink-900">¥{{ '{:,}'.format(d.gross_sales_jpy|int) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

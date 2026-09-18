@@ -1,0 +1,405 @@
+"""分析ダッシュボード — 概要 (P2-009 / P2-011 / P2-012).
+
+Everything on this page is read from `daily_kpi_snapshots` and friends, never
+computed live from events. That is what makes a 365-day window answerable, and
+it is also why the provenance banner exists: a materialised number is only as
+current as the job that wrote it, and a stale dashboard looks exactly like a
+fresh one.
+
+Three states get their own band at the top rather than a footnote:
+
+* **snapshot drift** — a stock figure here disagrees with the event log it
+  derives from. Red, because nothing else on the page can be relied on until it
+  is resolved.
+* **stale rollup** — the numbers are real but old.
+* **materially unmapped revenue** — above 5% of the total, the channel shares
+  stop describing the business, and the fix is Rakuten SKU maintenance rather
+  than anything on this screen.
+
+The period ends YESTERDAY, never today. A partial day in a trend line reads as
+a collapse in sales every single morning.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app import __version__
+from app.db import get_session
+from app.services.analytics_query import (
+    Delta,
+    SalesFilter,
+    bucketed_sales,
+    category_sales,
+    channel_share,
+    channels_in_period,
+    daily_sales,
+    period_kpis,
+    provenance,
+    sku_profile,
+    sku_series,
+    top_skus,
+)
+from app.services.categories import load_overview
+from app.services.timeframe import PRESET_DAYS, Period, resolve_period
+from app.ui import charts
+from app.ui.auth import OperatorDep
+from app.ui.csv_export import csv_body, csv_response
+from app.ui.deps import templates
+
+router = APIRouter(prefix="/analytics")
+
+#: Current period vs the one immediately before it. Distinct colours rather
+#: than one solid and one dashed: the comparison line is read as often as the
+#: current one, and dashes disappear at this stroke width.
+CURRENT_COLOR = "#4F46E5"
+PREVIOUS_COLOR = "#CBD5E1"
+
+
+def _series_for(period: Period, sales: dict) -> list[float]:  # type: ignore[type-arg]
+    """One value per day in the window, with absent days as 0.
+
+    A gap is rendered as zero HERE rather than skipped, because the two periods
+    are drawn against a shared x-axis and a shorter series would silently
+    compress the comparison line.
+    """
+    return [float(sales.get(day, 0)) for day in period.dates()]
+
+
+@router.get("")
+async def analytics_overview(
+    request: Request,
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+) -> Response:
+    now = datetime.now(UTC)
+    current = resolve_period(period, now=now)
+    previous = current.previous()
+
+    kpis = await period_kpis(session, current)
+    prior = await period_kpis(session, previous)
+    source = await provenance(session, now=now)
+    shares = await channel_share(session, current)
+
+    current_sales = await daily_sales(session, current)
+    previous_sales = await daily_sales(session, previous)
+
+    # Both lines share the CURRENT period's labels. The comparison window is the
+    # same length by construction, so position n in each is the nth day of its
+    # own period — which is the comparison a reader wants.
+    labels = [day.strftime("%m/%d") for day in current.dates()]
+    trend = charts.line_chart(
+        labels,
+        [
+            ("当期間", _series_for(current, current_sales), CURRENT_COLOR),
+            ("前期間", _series_for(previous, previous_sales), PREVIOUS_COLOR),
+        ],
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "analytics_overview.html",
+        {
+            "operator": operator,
+            "version": __version__,
+            "period": current,
+            "previous": previous,
+            "presets": list(PRESET_DAYS),
+            "kpis": kpis,
+            "source": source,
+            "trend": trend,
+            "shares": charts.share_bars([(label, float(v)) for label, v in shares]),
+            "deltas": {
+                "sales": Delta.of(kpis.gross_sales_jpy, prior.gross_sales_jpy),
+                "quantity": Delta.of(kpis.sold_quantity, prior.sold_quantity),
+                "orders": Delta.of(kpis.order_count, prior.order_count),
+            },
+        },
+    )
+
+
+#: Bucket sizes the detail screen offers. A month bucket over a 7-day window is
+#: one bar, which is not wrong but is not a chart either — the template says so
+#: rather than silently rejecting the combination, because the reader may be
+#: switching presets and about to widen the window.
+GRANULARITIES = (("day", "日次"), ("week", "週次"), ("month", "月次"))
+
+#: The query-string value that means "SKUs with no category". Not an id, and
+#: not the absence of the parameter, which means "no category filter" — see
+#: SalesFilter on why those are three states and not two.
+UNCLASSIFIED = "none"
+
+
+@router.get("/sales")
+async def analytics_sales(
+    request: Request,
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+    granularity: str = "day",
+    channel: str | None = None,
+    category: str | None = None,
+) -> Response:
+    now = datetime.now(UTC)
+    current = resolve_period(period, now=now)
+
+    if granularity not in {key for key, _ in GRANULARITIES}:
+        # Same posture as resolve_period: these arrive from bookmarks and hand
+        # edits, and a 500 is a worse answer than the default view.
+        granularity = "day"
+
+    unclassified = category == UNCLASSIFIED
+    category_id: int | None = None
+    if category and not unclassified and category.isdigit():
+        category_id = int(category)
+
+    where = SalesFilter(
+        channel=channel or None,
+        category_id=category_id,
+        unclassified_only=unclassified,
+    )
+
+    buckets = await bucketed_sales(session, current, granularity=granularity, where=where)
+    rows = await top_skus(session, current, where=where)
+    channels = await channels_in_period(session, current)
+    categories = await load_overview(session)
+
+    labels = [b.bucket.strftime("%m/%d") for b in buckets]
+    trend = charts.line_chart(
+        labels,
+        [("売上高", [float(b.gross_sales_jpy) for b in buckets], CURRENT_COLOR)],
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "analytics_sales.html",
+        {
+            "operator": operator,
+            "version": __version__,
+            "period": current,
+            "presets": list(PRESET_DAYS),
+            "granularity": granularity,
+            "granularities": GRANULARITIES,
+            "channels": channels,
+            "categories": categories,
+            "filter": where,
+            "selected_category": category or "",
+            "unclassified_value": UNCLASSIFIED,
+            "buckets": buckets,
+            "rows": rows,
+            "trend": trend,
+            "period_quantity": sum(b.quantity for b in buckets),
+            "period_sales": sum((b.gross_sales_jpy for b in buckets), start=Decimal(0)),
+        },
+    )
+
+
+def _resolve_filter(channel: str | None, category: str | None) -> SalesFilter:
+    """The query string as a SalesFilter. Shared by the screen and its exports
+    so a download can never describe a different slice than the page it came
+    from — the failure nobody notices until two numbers are compared in a
+    meeting."""
+    unclassified = category == UNCLASSIFIED
+    category_id: int | None = None
+    if category and not unclassified and category.isdigit():
+        category_id = int(category)
+    return SalesFilter(
+        channel=channel or None,
+        category_id=category_id,
+        unclassified_only=unclassified,
+    )
+
+
+def _slice_note(period: Period, where: SalesFilter, granularity: str | None = None) -> list[str]:
+    """A header row naming what the file contains.
+
+    Every export here is a SLICE — a window, sometimes a channel, sometimes one
+    category — and a bare table of numbers in a spreadsheet loses all of that
+    the moment it is forwarded. Without it, two exports of the same screen taken
+    a week apart are indistinguishable.
+    """
+    parts = [f"期間: {period.first_day} 〜 {period.last_day}"]
+    if granularity:
+        parts.append(f"粒度: {granularity}")
+    parts.append(f"チャネル: {where.channel or 'すべて'}")
+    if where.unclassified_only:
+        parts.append("カテゴリ: 未分類のみ")
+    elif where.category_id is not None:
+        parts.append(f"カテゴリID: {where.category_id}")
+    else:
+        parts.append("カテゴリ: すべて")
+    return parts
+
+
+@router.get("/sales/export.csv")
+async def analytics_sales_export(
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+    channel: str | None = None,
+    category: str | None = None,
+) -> Response:
+    """The SKU table, with the screen's filters and WITHOUT its top-50 cut."""
+    current = resolve_period(period, now=datetime.now(UTC))
+    where = _resolve_filter(channel, category)
+    rows = await top_skus(session, current, limit=None, where=where)
+
+    body = csv_body(
+        ["SKUコード", "商品名", "カテゴリ", "販売数量", "売上高(円)"],
+        [
+            [r.sku_code, r.name, r.category_name or "未分類", r.quantity, int(r.gross_sales_jpy)]
+            for r in rows
+        ],
+    )
+    note = csv_body(["# " + " / ".join(_slice_note(current, where))], [])
+    name = f"sales_by_sku_{current.first_day}_{current.last_day}.csv"
+    return csv_response(note + body, filename=name)
+
+
+@router.get("/sales/trend.csv")
+async def analytics_trend_export(
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+    granularity: str = "day",
+    channel: str | None = None,
+    category: str | None = None,
+) -> Response:
+    """The trend series behind the chart, at the granularity on screen."""
+    current = resolve_period(period, now=datetime.now(UTC))
+    if granularity not in {key for key, _ in GRANULARITIES}:
+        granularity = "day"
+    where = _resolve_filter(channel, category)
+    buckets = await bucketed_sales(session, current, granularity=granularity, where=where)
+
+    body = csv_body(
+        ["期間開始", "受注件数", "販売数量", "売上高(円)"],
+        [
+            [b.bucket.isoformat(), b.order_count, b.quantity, int(b.gross_sales_jpy)]
+            for b in buckets
+        ],
+    )
+    note = csv_body(["# " + " / ".join(_slice_note(current, where, granularity))], [])
+    name = f"sales_trend_{current.first_day}_{current.last_day}.csv"
+    return csv_response(note + body, filename=name)
+
+
+@router.get("/export.csv")
+async def analytics_overview_export(
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+) -> Response:
+    """Channel composition, unmapped row included.
+
+    Included rather than dropped for the same reason it is on the screen: the
+    parts have to sum to the headline total, and a spreadsheet is exactly where
+    someone will add them up.
+    """
+    current = resolve_period(period, now=datetime.now(UTC))
+    shares = await channel_share(session, current)
+    total = sum((value for _, value in shares), start=Decimal(0))
+
+    body = csv_body(
+        ["チャネル", "売上高(円)", "構成比(%)"],
+        [
+            [label, int(value), f"{(float(value) / float(total) * 100):.1f}" if total else "0.0"]
+            for label, value in shares
+        ],
+    )
+    note = csv_body([f"# 期間: {current.first_day} 〜 {current.last_day}"], [])
+    name = f"channel_share_{current.first_day}_{current.last_day}.csv"
+    return csv_response(note + body, filename=name)
+
+
+#: Stock is a level and sales are a flow, so they never share an axis. Two
+#: charts stacked, not one with a second scale: a dual axis lets any pair of
+#: unrelated series be made to look correlated by choosing the scaling.
+STOCK_COLOR = "#0EA5E9"
+
+
+@router.get("/sku/{master_sku_id}")
+async def analytics_sku(
+    request: Request,
+    operator: OperatorDep,
+    master_sku_id: int,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+) -> Response:
+    current = resolve_period(period, now=datetime.now(UTC))
+    profile = await sku_profile(session, master_sku_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="SKU not found")
+
+    days = await sku_series(session, master_sku_id, current)
+    labels = [d.stat_date.strftime("%m/%d") for d in days]
+
+    # A day with no stock row carries None. Carrying the last known level
+    # forward would draw a line through a period we have no record of; zero
+    # would invent an out-of-stock day. Neither is honest, so the gap is drawn
+    # at the level it was last seen and the footnote says how many days lack data.
+    last_known = 0.0
+    stock_values: list[float] = []
+    for day in days:
+        if day.on_hand_qty is not None:
+            last_known = float(day.on_hand_qty)
+        stock_values.append(last_known)
+
+    return templates.TemplateResponse(
+        request,
+        "analytics_sku.html",
+        {
+            "operator": operator,
+            "version": __version__,
+            "period": current,
+            "presets": list(PRESET_DAYS),
+            "profile": profile,
+            "days": days,
+            "missing_stock_days": sum(1 for d in days if d.on_hand_qty is None),
+            "stock_chart": charts.line_chart(
+                labels, [("在庫数", stock_values, STOCK_COLOR)] if profile.tracks_stock else []
+            ),
+            "sales_chart": charts.line_chart(
+                labels, [("売上高", [float(d.gross_sales_jpy) for d in days], CURRENT_COLOR)]
+            ),
+            "period_quantity": sum(d.quantity for d in days),
+            "period_sales": sum((d.gross_sales_jpy for d in days), start=Decimal(0)),
+        },
+    )
+
+
+@router.get("/categories")
+async def analytics_categories(
+    request: Request,
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+    channel: str | None = None,
+) -> Response:
+    current = resolve_period(period, now=datetime.now(UTC))
+    where = SalesFilter(channel=channel or None)
+    rows = await category_sales(session, current, where=where)
+    channels = await channels_in_period(session, current)
+
+    total = sum((r.total_sales_jpy for r in rows), start=Decimal(0))
+    return templates.TemplateResponse(
+        request,
+        "analytics_categories.html",
+        {
+            "operator": operator,
+            "version": __version__,
+            "period": current,
+            "presets": list(PRESET_DAYS),
+            "channels": channels,
+            "filter": where,
+            "rows": rows,
+            "total": total,
+            "shares": charts.share_bars([(r.name, float(r.total_sales_jpy)) for r in rows]),
+        },
+    )
