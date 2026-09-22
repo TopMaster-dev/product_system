@@ -26,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
+from app.csv_export import csv_response
 from app.db import get_session
 from app.logging import get_logger
 from app.models import MAX_CATEGORY_LEVEL, MasterSku, ProductCategory
@@ -38,7 +39,6 @@ from app.services.categories import (
 )
 from app.services.sku_scope import operational_conditions
 from app.ui.auth import OperatorDep
-from app.ui.csv_export import csv_response
 from app.ui.deps import templates
 
 router = APIRouter()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.ui.csv_intake import (
+from app.csv_intake import (
     ColumnSpec,
     CsvDecodeError,
     CsvSpec,

@@ -16,7 +16,7 @@ import io
 
 import pytest
 
-from app.ui.csv_export import UTF8_BOM, csv_body, csv_response
+from app.csv_export import UTF8_BOM, csv_body, csv_response
 
 pytestmark = pytest.mark.unit
 

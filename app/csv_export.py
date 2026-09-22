@@ -17,6 +17,12 @@ UTF-8 with a BOM is the one encoding that works on every locale without asking
 the recipient to do anything, so it is what every export uses. It also
 round-trips: `csv_intake` tries `utf-8-sig` first, so a file exported here can
 be edited and re-uploaded — which is exactly the categories workflow.
+
+NOT UNDER `app/ui/`, for the same reason as `csv_intake`: `app/ui/__init__.py`
+imports every route, so a CLI writing one CSV file was pulling in the entire
+web layer to join some strings. Depending on FastAPI is fine here — `Response`
+is just a return type — but depending on `app.ui` is what created the import
+cycle that made `app.cli.import_categories` unrunnable.
 """
 
 from __future__ import annotations

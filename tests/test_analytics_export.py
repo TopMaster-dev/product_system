@@ -19,9 +19,9 @@ from decimal import Decimal
 
 import pytest
 
+from app.csv_export import UTF8_BOM, csv_body
 from app.services.analytics_query import SalesFilter, SkuRow
 from app.services.timeframe import Period
-from app.ui.csv_export import UTF8_BOM, csv_body
 from app.ui.routes.analytics import UNCLASSIFIED, _resolve_filter, _slice_note
 
 pytestmark = pytest.mark.unit

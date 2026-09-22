@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
 from app.config import Settings, get_settings
+from app.csv_export import csv_response
 from app.db import get_session
 from app.logging import get_logger
 from app.models import (
@@ -51,7 +52,6 @@ from app.services.stock_status import (
     status_rank,
 )
 from app.ui.auth import OperatorDep
-from app.ui.csv_export import csv_response
 from app.ui.deps import templates
 
 router = APIRouter()

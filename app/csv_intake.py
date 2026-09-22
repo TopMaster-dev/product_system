@@ -19,6 +19,18 @@ What it handles that every uploader needs:
 `inspect()` never touches the database: it is the "検証" step of the
 upload → 検証 → 確認 → 実行 flow, so the operator sees problems before anything
 is written.
+
+NOT UNDER `app/ui/`, although every upload screen uses it. This module depends
+on nothing but the standard library, while `app/ui/__init__.py` eagerly imports
+every route — so importing it from a service or a CLI pulled in the whole UI,
+and any route that imported that service closed the loop. `app.services.
+categories` and `app.cli.import_categories` were unrunnable for exactly that
+reason: `ImportError: cannot import name 'load_overview' from partially
+initialized module`. Moving the file removes the cycle rather than deferring it
+with a function-local import.
+
+`csv_export` stays in `app/ui/` deliberately — it returns a FastAPI `Response`,
+so it genuinely belongs to the UI layer. This one only parses bytes.
 """
 
 from __future__ import annotations

@@ -21,9 +21,9 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.csv_intake import ColumnSpec, CsvSpec, Inspection, OnEmpty, inspect, iter_rows
 from app.models import MasterSku, ProductCategory
 from app.services.sku_scope import operational_conditions
-from app.ui.csv_intake import ColumnSpec, CsvSpec, Inspection, OnEmpty, inspect, iter_rows
 
 #: The client fills this in Excel, so the header comes back in Japanese as often
 #: as not. `category_code` uses OnEmpty.KEEP: a blank cell is how a SKU gets

@@ -30,6 +30,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
+from app.csv_export import csv_body, csv_response
 from app.db import get_session
 from app.services.analytics_query import (
     Delta,
@@ -55,7 +56,6 @@ from app.services.velocity import (
 )
 from app.ui import charts
 from app.ui.auth import OperatorDep
-from app.ui.csv_export import csv_body, csv_response
 from app.ui.deps import templates
 
 router = APIRouter(prefix="/analytics")

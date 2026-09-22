@@ -47,6 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.csv_intake import ColumnSpec, CsvSpec, iter_rows
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import (
@@ -55,7 +56,6 @@ from app.models import (
     InventorySnapshot,
     MasterSku,
 )
-from app.ui.csv_intake import ColumnSpec, CsvSpec, iter_rows
 
 log = get_logger(__name__)
 SessionFactory = async_sessionmaker[AsyncSession]

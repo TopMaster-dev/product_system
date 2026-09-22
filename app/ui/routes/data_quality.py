@@ -17,10 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
 from app.config import Settings, get_settings
+from app.csv_export import csv_response
 from app.db import get_session
 from app.services.data_quality import rakuten_sku_report, summary_tiles
 from app.ui.auth import OperatorDep
-from app.ui.csv_export import csv_response
 from app.ui.deps import templates
 
 router = APIRouter()
