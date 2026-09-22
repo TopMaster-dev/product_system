@@ -22,7 +22,8 @@ param(
     [string]$Args = "",
     [switch]$DryRun,
     [switch]$Apply,
-    [switch]$WithShopify
+    [switch]$WithShopify,
+    [switch]$WithRakuten
 )
 
 # 既定で参照のみ、--apply を付けたときだけ書き込むCLI。
@@ -79,6 +80,21 @@ try {
         $env:SHOPIFY_ACCESS_TOKEN = (gcloud secrets versions access latest `
                 --secret=shopify-access-token --project=$PROJECT_ID).Trim()
         Write-Host "  shop=$env:SHOPIFY_SHOP_DOMAIN token_len=$($env:SHOPIFY_ACCESS_TOKEN.Length)"
+    }
+
+    if ($WithRakuten) {
+        Section "楽天RMS 認証情報を Secret Manager から取得"
+        # .Trim() は必須。Windows 由来のシークレットは末尾 CR が付き、
+        # base64(serviceSecret:licenseKey) が壊れて全リクエストが 401 になる。
+        # アダプタ側でも strip しているが、ここで落としておくと
+        # inspect_rakuten_auth が「空白が含まれていた」と報告できる。
+        $env:RAKUTEN_SERVICE_SECRET = (gcloud secrets versions access latest `
+                --secret=rakuten-service-secret --project=$PROJECT_ID).Trim()
+        $env:RAKUTEN_LICENSE_KEY = (gcloud secrets versions access latest `
+                --secret=rakuten-license-key --project=$PROJECT_ID).Trim()
+        $env:RAKUTEN_SHOP_URL = ([regex]'rakuten_shop_url\s*=\s*"([^"]+)"').Match($tfvars).Groups[1].Value
+        # 値そのものは出さない。長さだけで取得できたかは判断できる。
+        Write-Host "  secret_len=$($env:RAKUTEN_SERVICE_SECRET.Length) key_len=$($env:RAKUTEN_LICENSE_KEY.Length)"
     }
 
     Section "接続先の確認"

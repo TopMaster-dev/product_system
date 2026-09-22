@@ -7,10 +7,13 @@ in `app/cli/` (scheduler) or dispatch a registered task handler (Cloud Tasks).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
+from app.api.auth_internal import require_internal_caller
 from app.cli import (
     audit_shopify_stock,
     export_to_bq,
@@ -24,25 +27,85 @@ from app.services.handlers import dispatch
 
 log = get_logger(__name__)
 
-router = APIRouter(prefix="/internal/jobs", tags=["internal"])
+# The dependency guards EVERY route on this router, including any added later.
+# Listing endpoints individually is how one gets forgotten, and the one most
+# worth forgetting is `tasks/run`, which dispatches a caller-supplied payload.
+router = APIRouter(
+    prefix="/internal/jobs",
+    tags=["internal"],
+    dependencies=[Depends(require_internal_caller)],
+)
 
 
-def _job_result(job: str, exit_code: int) -> dict[str, str]:
-    """Turn a CLI exit code into an HTTP outcome Cloud Scheduler can see.
+#: How long a job stays quiet after alerting, per instance. Cloud Scheduler
+#: retries on its own cadence, so a job broken for weeks would otherwise send
+#: roughly a hundred identical messages a day — and a channel that noisy gets
+#: muted, which recreates the silence the alert existed to break.
+#:
+#: Per INSTANCE, deliberately: Cloud Run may hold several, so this is a damper
+#: rather than a guarantee. It degrades toward MORE alerts, never fewer, which
+#: is the right direction for the only signal that order ingestion has stopped.
+ALERT_QUIET_MINUTES = 60
 
-    Cloud Scheduler judges a run by the HTTP status and nothing else. A non-zero
-    exit reported as 200 is invisible: no retry, no alert, and a green row in the
-    scheduler console for a job that failed. This project has been bitten by that
-    three times — the BigQuery export returning 200 "partial", the bundle push
-    doing the same, and the daily reconciliation returning 200 "skipped" for
-    seven weeks while never running at all.
+_last_alert: dict[str, datetime] = {}
 
-    So: non-zero exit becomes a 500. The scheduler retries, the alert fires, and
-    a failure looks like a failure.
+
+async def _alert_job_failure(job: str, detail: str) -> None:
+    """Tell somebody. The reason this exists, in one paragraph:
+
+    Rakuten order polling returned 401 from RMS for 24.7 days — from 2026-08-25
+    until it was found by hand on 2026-09-19 — during which roughly 265 orders
+    never reached the system and their stock never moved. The job WAS failing
+    loudly in HTTP terms. Nothing was watching, because Slack alerts had been
+    wired to the BigQuery export and the analytics rollup and not to the polls,
+    which are the only thing that decrements stock.
     """
+    now = datetime.now(UTC)
+    last = _last_alert.get(job)
+    if last is not None and now - last < timedelta(minutes=ALERT_QUIET_MINUTES):
+        log.info("internal.alert_suppressed", job=job)
+        return
+    _last_alert[job] = now
+    await get_slack_notifier().notify(
+        level="critical",
+        title=f"定期ジョブ {job} が失敗しています",
+        message=(
+            f"{job} が失敗しました。受注取込の場合、停止している間の販売は"
+            "在庫から引かれず、売上にも計上されません。"
+            f"なお同一ジョブの通知は{ALERT_QUIET_MINUTES}分間抑制されます。"
+        ),
+        fields=[("detail", detail[:300])],
+    )
+
+
+async def _run_job(job: str, work: Awaitable[int]) -> dict[str, str]:
+    """Run a scheduled job and make every way it can fail visible.
+
+    Cloud Scheduler judges a run by the HTTP status and nothing else, so a
+    failure reported inside a 200 gets no retry, no alert and a green row. This
+    project has been bitten by that three times — the BigQuery export's
+    "partial", the bundle push's "partial", and the daily reconciliation's
+    "skipped" for seven weeks while it never ran.
+
+    Both failure shapes route through here, because they are equally silent and
+    the second is what actually happened:
+
+    * a non-zero EXIT CODE, which the CLI returns for a handled failure;
+    * an EXCEPTION, which is how an expired credential arrives. The Rakuten 401
+      propagated straight past the exit-code check, so an alert placed there
+      would have missed the outage it was written for.
+    """
+    try:
+        exit_code = await work
+    except Exception as exc:
+        log.exception("internal.job_crashed", job=job)
+        await _alert_job_failure(job, repr(exc))
+        raise HTTPException(status_code=500, detail=f"{job} crashed: {exc}") from exc
+
     if exit_code == 0:
         return {"status": "ok", "exit_code": "0"}
     log.error("internal.job_failed", job=job, exit_code=exit_code)
+    await _alert_job_failure(job, f"exit code {exit_code}")
     raise HTTPException(status_code=500, detail=f"{job} failed: exit {exit_code}")
 
 
@@ -163,16 +226,20 @@ async def trigger_rollup_daily(mode: str = "incremental") -> dict[str, str]:
 
 @router.post("/poll-shopify")
 async def trigger_poll_shopify(lookback_minutes: int = 20) -> dict[str, str]:
-    code = await poll_channels.run("shopify", lookback_minutes=lookback_minutes)
-    log.info("internal.poll_shopify.done", exit_code=code, lookback_minutes=lookback_minutes)
-    return _job_result("poll-shopify", code)
+    result = await _run_job(
+        "poll-shopify", poll_channels.run("shopify", lookback_minutes=lookback_minutes)
+    )
+    log.info("internal.poll_shopify.done", exit_code=0, lookback_minutes=lookback_minutes)
+    return result
 
 
 @router.post("/poll-rakuten")
 async def trigger_poll_rakuten(lookback_minutes: int = 10) -> dict[str, str]:
-    code = await poll_channels.run("rakuten", lookback_minutes=lookback_minutes)
-    log.info("internal.poll_rakuten.done", exit_code=code, lookback_minutes=lookback_minutes)
-    return _job_result("poll-rakuten", code)
+    result = await _run_job(
+        "poll-rakuten", poll_channels.run("rakuten", lookback_minutes=lookback_minutes)
+    )
+    log.info("internal.poll_rakuten.done", exit_code=0, lookback_minutes=lookback_minutes)
+    return result
 
 
 @router.post("/shopify-audit")
@@ -189,21 +256,26 @@ async def trigger_shopify_audit() -> dict[str, str]:
     This one needs no configuration: it reads the shop it is already
     authenticated against, and a failure is a 500.
     """
-    code = await audit_shopify_stock.run(triggered_by="cloud_scheduler")
-    log.info("internal.shopify_audit.done", exit_code=code)
-    return _job_result("shopify-audit", code)
+    result = await _run_job(
+        "shopify-audit", audit_shopify_stock.run(triggered_by="cloud_scheduler")
+    )
+    log.info("internal.shopify_audit.done", exit_code=0)
+    return result
 
 
 @router.post("/bundle-push")
 async def trigger_bundle_push() -> dict[str, str]:
     """Batched bundle/shared-stock availability push to Shopify (D-6). Recomputes
     each parent's derived availability and pushes it; safe to run periodically."""
-    code = await push_bundle_availability.run(dry_run=False, triggered_by="cloud_scheduler")
-    log.info("internal.bundle_push.done", exit_code=code)
     # This said "partial" with HTTP 200 when pushes failed. "partial" behind a
     # 200 is the exact wording and the exact mechanism that hid the broken
     # BigQuery export for months.
-    return _job_result("bundle-push", code)
+    result = await _run_job(
+        "bundle-push",
+        push_bundle_availability.run(dry_run=False, triggered_by="cloud_scheduler"),
+    )
+    log.info("internal.bundle_push.done", exit_code=0)
+    return result
 
 
 @router.post("/tasks/run")

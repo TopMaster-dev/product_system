@@ -57,6 +57,19 @@ class Settings(BaseSettings):
     cloud_tasks_target_url: str = ""
     cloud_tasks_invoker_sa: str = ""
 
+    # Internal job endpoint auth. `allUsers` holds run.invoker so Shopify
+    # webhooks can reach the service, which leaves /internal/jobs/* open too;
+    # these verify the Google-signed token the schedulers already send.
+    #
+    # Defaults to "audit" — log the verdict, admit the request — because
+    # switching straight to "enforce" would 401 every scheduled job at once if
+    # anything about the token is not as expected. Flip to "enforce" once the
+    # logs show production agreeing.
+    internal_jobs_auth_mode: str = "audit"
+    #: Empty falls back to cloud_tasks_invoker_sa: Cloud Scheduler and Cloud
+    #: Tasks both sign as that same service account.
+    internal_jobs_allowed_sa: str = ""
+
     # Admin UI
     admin_username: str = "admin"
     admin_password: str = "change_me_in_production"  # noqa: S105

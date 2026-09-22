@@ -11,6 +11,7 @@ which ran zero times in seven weeks while reporting success every morning.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -169,3 +170,122 @@ async def test_a_successful_poll_reports_ok(monkeypatch) -> None:
 
     monkeypatch.setattr(internal_jobs.poll_channels, "run", ok)
     assert (await internal_jobs.trigger_poll_shopify())["status"] == "ok"
+
+
+# --- a job that CRASHES must alert, not just a job that exits non-zero -----
+#
+# Rakuten polling returned 401 from RMS for 24.7 days, from 2026-08-25 until it
+# was found by hand. Roughly 265 orders never arrived and their stock never
+# moved. The endpoint DID fail loudly in HTTP terms the whole time; nobody was
+# told, because Slack alerts were wired to the BigQuery export and the analytics
+# rollup and not to the polls — the only jobs that decrement stock.
+#
+# The 401 also arrives as an EXCEPTION, not an exit code, so an alert placed on
+# the exit-code branch alone would have missed the outage it was written for.
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.sent: list[dict[str, object]] = []
+
+    async def notify(self, *, level, title, message, fields=None):
+        self.sent.append({"level": level, "title": title, "fields": fields})
+        return True
+
+
+@pytest.fixture(autouse=True)
+def _reset_alert_throttle():
+    """The throttle is module state, so one test's alert would silence the next."""
+    internal_jobs._last_alert.clear()
+    yield
+    internal_jobs._last_alert.clear()
+
+
+async def test_an_expired_credential_alerts_rather_than_only_500ing(monkeypatch) -> None:
+    """The actual outage, held still. An adapter raising must reach Slack."""
+
+    async def raises(channel: str, *, lookback_minutes: int) -> int:
+        raise RuntimeError("Client error '401 Unauthorized' for url searchOrder")
+
+    recorder = _Recorder()
+    monkeypatch.setattr(internal_jobs.poll_channels, "run", raises)
+    monkeypatch.setattr(internal_jobs, "get_slack_notifier", lambda: recorder)
+
+    with pytest.raises(HTTPException) as raised:
+        await internal_jobs.trigger_poll_rakuten()
+
+    assert raised.value.status_code == 500
+    assert len(recorder.sent) == 1
+    assert recorder.sent[0]["level"] == "critical"
+
+
+async def test_a_non_zero_exit_alerts_too(monkeypatch) -> None:
+    async def failed(channel: str, *, lookback_minutes: int) -> int:
+        return 1
+
+    recorder = _Recorder()
+    monkeypatch.setattr(internal_jobs.poll_channels, "run", failed)
+    monkeypatch.setattr(internal_jobs, "get_slack_notifier", lambda: recorder)
+
+    with pytest.raises(HTTPException):
+        await internal_jobs.trigger_poll_shopify()
+    assert len(recorder.sent) == 1
+
+
+async def test_a_succeeding_job_alerts_nobody(monkeypatch) -> None:
+    async def ok(channel: str, *, lookback_minutes: int) -> int:
+        return 0
+
+    recorder = _Recorder()
+    monkeypatch.setattr(internal_jobs.poll_channels, "run", ok)
+    monkeypatch.setattr(internal_jobs, "get_slack_notifier", lambda: recorder)
+
+    assert (await internal_jobs.trigger_poll_shopify())["status"] == "ok"
+    assert recorder.sent == []
+
+
+async def test_repeat_failures_are_throttled_so_the_channel_stays_readable(monkeypatch) -> None:
+    """Cloud Scheduler retries on its own cadence. A job broken for weeks would
+    otherwise send about a hundred identical messages a day, and a channel that
+    noisy gets muted — which recreates the silence the alert exists to break."""
+
+    async def failed(channel: str, *, lookback_minutes: int) -> int:
+        return 1
+
+    recorder = _Recorder()
+    monkeypatch.setattr(internal_jobs.poll_channels, "run", failed)
+    monkeypatch.setattr(internal_jobs, "get_slack_notifier", lambda: recorder)
+
+    for _ in range(5):
+        with pytest.raises(HTTPException):
+            await internal_jobs.trigger_poll_rakuten()
+
+    assert len(recorder.sent) == 1
+
+
+async def test_the_throttle_is_per_job_not_global(monkeypatch) -> None:
+    """Rakuten failing must not mask Shopify failing. They are different
+    outages and one is not evidence about the other."""
+
+    async def failed(channel: str, *, lookback_minutes: int) -> int:
+        return 1
+
+    recorder = _Recorder()
+    monkeypatch.setattr(internal_jobs.poll_channels, "run", failed)
+    monkeypatch.setattr(internal_jobs, "get_slack_notifier", lambda: recorder)
+
+    for endpoint in (internal_jobs.trigger_poll_rakuten, internal_jobs.trigger_poll_shopify):
+        with pytest.raises(HTTPException):
+            await endpoint()
+
+    assert len(recorder.sent) == 2
+
+
+def test_every_scheduled_job_routes_through_the_alerting_helper() -> None:
+    """The gap was not that alerting was hard — it was that it had been added
+    to two jobs and not the rest. This fails if a new endpoint is added without
+    it."""
+    source = Path("app/api/internal_jobs.py").read_text(encoding="utf-8")
+    # Each scheduled job either calls _run_job or handles its own notification.
+    assert source.count("_run_job(") >= 4
+    assert "_job_result" not in source
