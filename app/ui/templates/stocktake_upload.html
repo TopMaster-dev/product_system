@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}棚卸の取込{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between gap-3 mb-4">
+  <h1 class="text-xl font-semibold text-ink-900">棚卸の取込</h1>
+  <a href="/admin/stocktake" class="text-sm text-brand-600 hover:text-brand-700 font-medium">← 棚卸履歴へ</a>
+</div>
+
+{% if flash %}
+  <div class="mb-4 rounded-lg border px-4 py-3 text-sm
+              {% if flash.level == 'error' %}border-red-300 bg-red-50 text-red-800{% else %}border-emerald-300 bg-emerald-50 text-emerald-800{% endif %}">
+    {{ flash.message }}
+  </div>
+{% endif %}
+
+{#
+  数えなかったSKUには一切触れない。分割実施では毎回400件以上がシートに載らないため、
+  ここを取り違えると初回で全カテゴリの在庫をゼロにする提案が並ぶ。
+#}
+<div class="mb-4 rounded-lg border border-ink-300 bg-ink-50 px-4 py-3">
+  <div class="text-sm font-semibold text-ink-800">シートに無いSKUは変更されません</div>
+  <p class="text-xs text-ink-600 mt-1 leading-relaxed">
+    アップロードしたファイルに含まれる商品だけを対象とします。
+    今回数えていないカテゴリの在庫数が、ゼロになったり変更されたりすることはありません。
+    実数欄が空欄の行も「未計数」として扱い、対象外とします。
+  </p>
+</div>
+
+<form method="post" enctype="multipart/form-data" action="/admin/stocktake/upload"
+      class="bg-white rounded-xl border border-ink-200 p-5 space-y-5">
+
+  <div class="grid sm:grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm font-medium text-ink-800 mb-1">
+        棚卸実施日 <span class="text-red-600">*</span>
+      </label>
+      {# 入力日ではなく「数えた日」。後から履歴を読む人が知りたいのはこちら。 #}
+      <input type="date" name="counted_on" value="{{ today }}" required
+             class="w-full text-sm border border-ink-300 rounded-md px-3 py-2" />
+      <p class="text-xs text-ink-400 mt-1">実際に数えた日を入力してください。取込日ではありません</p>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-ink-800 mb-1">実施者</label>
+      <input type="text" name="counted_by" placeholder="{{ operator }}"
+             class="w-full text-sm border border-ink-300 rounded-md px-3 py-2" />
+      <p class="text-xs text-ink-400 mt-1">空欄の場合は {{ operator }} として記録します</p>
+    </div>
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium text-ink-800 mb-2">今回の対象範囲</label>
+    <div class="flex flex-wrap gap-3">
+      {% for code, name in categories %}
+        <label class="inline-flex items-center gap-2 text-sm border border-ink-300 rounded-md px-3 py-1.5 cursor-pointer hover:bg-ink-50">
+          <input type="checkbox" name="categories" value="{{ name }}" class="rounded border-ink-300" />
+          <span class="text-ink-700">{{ name }}</span>
+        </label>
+      {% endfor %}
+    </div>
+    <p class="text-xs text-ink-400 mt-2 leading-relaxed">
+      記録用です。ここでの選択が取込対象を絞るわけではありません。
+      <strong>差分の無かったカテゴリは履歴に痕跡が残らない</strong>ため、
+      「どこまで数えたか」を後から辿れるようにするための項目です。
+    </p>
+  </div>
+
+  <div>
+    <label class="block text-sm font-medium text-ink-800 mb-1">
+      カウントシート <span class="text-red-600">*</span>
+    </label>
+    <input type="file" name="file" accept=".csv" required
+           class="w-full text-sm border border-ink-300 rounded-md px-3 py-2 bg-white" />
+    <p class="text-xs text-ink-400 mt-1">
+      出力したカウントシートに実数を記入したものをそのままアップロードしてください。
+      列の追加や並べ替えは問題ありません。
+    </p>
+  </div>
+
+  <div class="flex items-center gap-3 pt-1">
+    <button type="submit"
+            class="text-sm font-semibold bg-brand-600 hover:bg-brand-700 text-white rounded-md px-5 py-2 transition">
+      内容を確認する
+    </button>
+    <span class="text-xs text-ink-400">この時点では在庫は変更されません</span>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}棚卸履歴{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl font-semibold text-ink-900">棚卸履歴</h1>
+    {% if pending_runs %}
+      <p class="text-sm text-amber-600 mt-0.5">承認待ちが {{ pending_runs }} 件あります</p>
+    {% endif %}
+  </div>
+  <a href="/admin/stocktake/upload"
+     class="text-sm font-semibold bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-2 transition">
+    カウントシートを取り込む
+  </a>
+</div>
+
+{% if flash %}
+  <div class="mb-4 rounded-lg border px-4 py-3 text-sm
+              {% if flash.level == 'error' %}border-red-300 bg-red-50 text-red-800{% else %}border-emerald-300 bg-emerald-50 text-emerald-800{% endif %}">
+    {{ flash.message }}
+  </div>
+{% endif %}
+
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="scroll-area overflow-x-auto">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold whitespace-nowrap">棚卸日</th>
+          <th class="px-4 py-3 text-left font-semibold">対象範囲</th>
+          <th class="px-4 py-3 text-left font-semibold">実施者</th>
+          <th class="px-4 py-3 text-right font-semibold">計数</th>
+          <th class="px-4 py-3 text-right font-semibold">差分</th>
+          <th class="px-4 py-3 text-right font-semibold">反映</th>
+          <th class="px-4 py-3 text-left font-semibold">状態</th>
+          <th class="px-4 py-3 text-right font-semibold"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for run in runs %}
+          <tr class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-3 text-xs font-mono text-ink-700 whitespace-nowrap">
+              {{ run.counted_on or run.started_at.strftime('%Y-%m-%d') }}
+            </td>
+            {# 差分ゼロのカテゴリは行を残さないので、ここが唯一の実施記録になる。 #}
+            <td class="px-4 py-3 text-ink-700">{{ run.scope_note or '—' }}</td>
+            <td class="px-4 py-3 text-xs text-ink-600">{{ run.counted_by or '—' }}</td>
+            <td class="px-4 py-3 text-right tabular-nums text-ink-600">{{ run.counted_sku_count or '—' }}</td>
+            <td class="px-4 py-3 text-right tabular-nums font-medium text-ink-800">{{ run.diff_count }}</td>
+            <td class="px-4 py-3 text-right tabular-nums text-ink-600">{{ run.applied_count }}</td>
+            <td class="px-4 py-3">
+              {% set s = run.status %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                           {% if s == 'pending_approval' %}bg-amber-50 text-amber-700 ring-1 ring-amber-200
+                           {% elif s == 'applied' %}bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200
+                           {% elif s == 'cancelled' %}bg-ink-100 text-ink-600 ring-1 ring-ink-300
+                           {% else %}bg-ink-100 text-ink-600{% endif %}">
+                {% if s == 'pending_approval' %}承認待ち
+                {% elif s == 'applied' %}反映済
+                {% elif s == 'cancelled' %}取消
+                {% elif s == 'running' %}実行中
+                {% else %}{{ s }}{% endif %}
+              </span>
+            </td>
+            <td class="px-4 py-3 text-right">
+              <a href="/admin/stocktake/{{ run.id }}"
+                 class="text-brand-600 hover:text-brand-700 text-xs font-semibold">詳細</a>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="8" class="px-4 py-16 text-center">
+              <div class="flex flex-col items-center gap-2 text-ink-500">
+                <div class="text-sm">棚卸の履歴はまだありません。</div>
+                <div class="text-xs text-ink-400">
+                  カウントシートを出力し、実数を記入したうえで取り込んでください。
+                </div>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="text-[11px] text-ink-400 mt-3 leading-relaxed">
+  「差分」は、システムの在庫数と実数が食い違った商品の件数です。
+  一致した商品は記録に残らないため、どの範囲を数えたかは「対象範囲」欄でご確認ください。
+</p>
+{% endblock %}

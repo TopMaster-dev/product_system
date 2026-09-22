@@ -119,7 +119,7 @@ try {
     # 取ってローカルにCSVを書くだけで、DBもチャネルも変更しない。
     # $APPLY_OPT_IN のCLIは -Apply が無ければ何も書かないので、警告を出すと
     # 「確認したのに何も起きなかった」という読み方を招く。
-    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^inspect_') -or ($Cli -eq 'export_unmapped_worksheet') -or ($optIn -and -not $Apply)
+    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^inspect_') -or ($Cli -match '^export_.*worksheets?$') -or ($optIn -and -not $Apply)
     if (-not $DryRun -and -not $readOnly) {
         Write-Host "  [注意] 本実行です。--dry-run の出力を確認済みであることを前提とします。" -ForegroundColor Yellow
     }

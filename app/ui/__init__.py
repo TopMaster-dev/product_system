@@ -18,6 +18,7 @@ from app.ui.routes.inventory import router as inventory_router
 from app.ui.routes.manual import router as manual_router
 from app.ui.routes.mappings import router as mappings_router
 from app.ui.routes.reconcile import router as reconcile_router
+from app.ui.routes.stocktake import router as stocktake_router
 from app.ui.routes.sync_errors import router as sync_errors_router
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -31,6 +32,7 @@ router.include_router(events_router)
 router.include_router(alerts_router)
 router.include_router(categories_router)
 router.include_router(analytics_router)
+router.include_router(stocktake_router)
 router.include_router(data_quality_router)
 router.include_router(manual_router)
 
