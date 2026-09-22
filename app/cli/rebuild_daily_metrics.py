@@ -56,9 +56,23 @@ from app.models import (
     SkuDailyStock,
 )
 from app.services.analytics_rollup import AnalyticsRollupService, is_today
-from app.services.timeframe import to_jst_date
+from app.services.timeframe import Period, to_jst_date
+from app.services.velocity import DEFAULT_WINDOW_DAYS, refresh_velocities
 
 log = get_logger(__name__)
+
+
+def velocity_window(now: datetime) -> Period:
+    """The trailing window velocity is measured over, ending YESTERDAY.
+
+    Today is excluded for the same reason the analytics presets exclude it:
+    a partial day drags the average down every morning, and a threshold
+    derived from it would quietly stop flagging SKUs before lunchtime.
+    """
+    last = to_jst_date(now) - timedelta(days=1)
+    return Period(last - timedelta(days=DEFAULT_WINDOW_DAYS - 1), last, f"{DEFAULT_WINDOW_DAYS}d")
+
+
 SessionFactory = async_sessionmaker[AsyncSession]
 
 #: Arbitrary but fixed. Postgres advisory locks are a single global namespace,
@@ -78,6 +92,8 @@ DEFAULT_MAX_DAYS = 120
 @dataclass(slots=True)
 class RebuildOutcome:
     days_rebuilt: int = 0
+    #: Rows written to sku_velocity. 0 when nothing was rebuilt.
+    velocity_rows: int = 0
     first_date: date | None = None
     last_date: date | None = None
     skipped_locked: bool = False
@@ -231,6 +247,33 @@ async def run(
                 outcome.days_rebuilt += 1
                 outcome.first_date = outcome.first_date or day
                 outcome.last_date = day
+
+            # Velocity is derived from the rows just rebuilt, so it is refreshed
+            # here rather than on its own schedule — two jobs would mean the
+            # inventory screen's thresholds could lag the stock figures they
+            # judge, and an operator would see "低在庫" against a number that no
+            # longer qualifies.
+            #
+            # Refreshed on EVERY real pass, not only when a day was rebuilt. The
+            # hourly job rebuilds nothing when the last hour was quiet, and
+            # gating on that would leave the table empty after a first deploy
+            # and freeze every threshold during slow trade. The window also
+            # slides daily regardless of new sales: yesterday leaves the 28-day
+            # window whether or not anything sold, so a dormant SKU's rate — and
+            # the threshold derived from it — must fall on its own.
+            #
+            # Its own transaction: this is a projection, and losing it costs a
+            # stale threshold until the next run, whereas failing the whole
+            # rollup over it would discard a completed backfill.
+            try:
+                async with factory() as session, session.begin():
+                    outcome.velocity_rows = await refresh_velocities(
+                        session,
+                        velocity_window(started_at),
+                        now=started_at,
+                    )
+            except Exception:
+                log.exception("rollup.velocity_failed", job=job_name)
 
             if prune_before:
                 outcome.pruned_rows = await _prune(factory, prune_before)

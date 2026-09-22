@@ -217,10 +217,47 @@ class AnalyticsRollupRun(Base, TimestampMixin):
     triggered_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class SkuVelocity(Base):
+    """Materialised sales velocity and the dynamic low-stock threshold (0013).
+
+    One row per master SKU, rewritten by the rollup. Derived entirely from
+    `sku_daily_stock`, so it can be rebuilt at any time and holds no truth of
+    its own.
+
+    It exists because the inventory screen filters, sorts and COUNTS by stock
+    status, and the badge query is written separately from the row query. Both
+    have to read the same threshold or they disagree — the defect the W1
+    consolidation of `stock_status.py` existed to prevent. Expressing the
+    clamped arithmetic in SQL as well as Python would reintroduce it one layer
+    down, so the number is computed once, in `app/services/velocity.py`, and
+    stored.
+    """
+
+    __tablename__ = "sku_velocity"
+
+    master_sku_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("master_skus.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    window_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: The denominator. NOT window_days — a SKU younger than the window would
+    #: otherwise report a fraction of its real rate.
+    days_observed: Mapped[int] = mapped_column(Integer, nullable=False)
+    consumed_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    per_day: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), nullable=False, server_default="0", default=Decimal("0")
+    )
+    low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    confidence: Mapped[str] = mapped_column(String(16), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 __all__ = [
     "AnalyticsRollupRun",
     "DailyKpiSnapshot",
     "DailyUnmappedSales",
     "SkuDailySales",
     "SkuDailyStock",
+    "SkuVelocity",
 ]

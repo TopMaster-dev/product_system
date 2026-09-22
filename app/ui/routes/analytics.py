@@ -45,8 +45,14 @@ from app.services.analytics_query import (
     sku_series,
     top_skus,
 )
+from app.services.analytics_query import provenance as load_provenance
 from app.services.categories import load_overview
-from app.services.timeframe import PRESET_DAYS, Period, resolve_period
+from app.services.timeframe import PRESET_DAYS, Period, resolve_period, to_jst_date
+from app.services.velocity import (
+    CONFIDENCE_LABELS,
+    DEFAULT_COVER_DAYS,
+    stockout_risks,
+)
 from app.ui import charts
 from app.ui.auth import OperatorDep
 from app.ui.csv_export import csv_body, csv_response
@@ -403,3 +409,103 @@ async def analytics_categories(
             "shares": charts.share_bars([(r.name, float(r.total_sales_jpy)) for r in rows]),
         },
     )
+
+
+#: How many rows the risk screen shows. Triage, not an inventory listing — a
+#: page of 600 rows sorted by urgency is read as far as the first screenful
+#: either way, and the CSV carries the rest.
+RISK_LIMIT = 100
+
+
+@router.get("/stockout-risk")
+async def analytics_stockout_risk(
+    request: Request,
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+    cover: int = DEFAULT_COVER_DAYS,
+) -> Response:
+    """欠品リスク一覧 (P2-018).
+
+    Ordered by urgency rather than by SKU: already out, then soonest to run out,
+    then everything with no forecast. The ones with no forecast stay on the page
+    — a SKU has no days-remaining precisely BECAUSE it has already run out, and
+    dropping them would take the most urgent rows off a triage screen.
+    """
+    now = datetime.now(UTC)
+    current = resolve_period(period, now=now)
+    cover_days = max(1, min(90, cover))
+
+    risks = await stockout_risks(
+        session, current, today=to_jst_date(now), cover_days=cover_days, limit=RISK_LIMIT
+    )
+    source = await load_provenance(session, now=now)
+
+    return templates.TemplateResponse(
+        request,
+        "analytics_stockout_risk.html",
+        {
+            "operator": operator,
+            "version": __version__,
+            "period": current,
+            "presets": list(PRESET_DAYS),
+            "cover_days": cover_days,
+            "risks": risks,
+            "source": source,
+            "labels": CONFIDENCE_LABELS,
+            "limit": RISK_LIMIT,
+            "out_of_stock": sum(1 for r in risks if r.on_hand_qty <= 0),
+            "below_threshold": sum(1 for r in risks if r.is_below_threshold),
+            "unforecastable": sum(1 for r in risks if r.days_remaining is None),
+        },
+    )
+
+
+@router.get("/stockout-risk/export.csv")
+async def analytics_stockout_risk_export(
+    operator: OperatorDep,
+    session: AsyncSession = Depends(get_session),
+    period: str | None = None,
+    cover: int = DEFAULT_COVER_DAYS,
+) -> Response:
+    """Every at-risk SKU, not the screen's first hundred."""
+    now = datetime.now(UTC)
+    current = resolve_period(period, now=now)
+    cover_days = max(1, min(90, cover))
+    risks = await stockout_risks(session, current, today=to_jst_date(now), cover_days=cover_days)
+
+    body = csv_body(
+        [
+            "SKUコード",
+            "商品名",
+            "在庫数",
+            "販売速度(個/日)",
+            "データ十分性",
+            "低在庫閾値",
+            "残日数",
+            "欠品予測日",
+        ],
+        [
+            [
+                r.sku_code,
+                r.name,
+                r.on_hand_qty,
+                f"{r.velocity.per_day:.2f}",
+                CONFIDENCE_LABELS[r.velocity.confidence],
+                r.threshold,
+                f"{r.days_remaining:.1f}" if r.days_remaining is not None else "",
+                r.stockout_on.isoformat() if r.stockout_on else "",
+            ]
+            for r in risks
+        ],
+    )
+    note = csv_body(
+        [
+            f"# 期間: {current.first_day} 〜 {current.last_day}"
+            f" / 補充カバー日数: {cover_days}日"
+            " / 残日数が空欄のSKUは販売実績またはデータ期間が不足しています"
+        ],
+        [],
+    )
+    name = f"stockout_risk_{current.first_day}_{current.last_day}.csv"
+    return csv_response(note + body, filename=name)

@@ -25,6 +25,7 @@ from app.models.analytics import (
     DailyUnmappedSales,
     SkuDailySales,
     SkuDailyStock,
+    SkuVelocity,
 )
 from app.models.base import Base, TimestampMixin
 from app.models.bigquery_export_run import BigQueryExportRun
@@ -80,6 +81,7 @@ __all__ = [
     "ReconcileRunTypeEnum",
     "SkuDailySales",
     "SkuDailyStock",
+    "SkuVelocity",
     "SyncAttempt",
     "SyncAttemptStatusEnum",
     "SyncAttemptTypeEnum",

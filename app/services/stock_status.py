@@ -6,8 +6,15 @@ is why the count badges could disagree with the list they label: the badge query
 and the row query expressed "low stock" separately.
 
 Everything here takes the threshold as an ARGUMENT rather than reading a module
-constant. W6 replaces the fixed 10 with a per-SKU value derived from sales
-velocity, and the only thing that has to change then is what gets passed in.
+constant, which is what let W8 replace the fixed 10 with a per-SKU value derived
+from sales velocity (P2-017) without touching a single bucket definition.
+
+A threshold is therefore an `int` OR a SQL expression. `Threshold` names that
+union: the per-SKU form is a column on `sku_velocity`, joined in by the caller,
+and the comparison operators below work identically on either. The one thing
+that must never happen is the badge query and the row query resolving the
+threshold DIFFERENTLY — that is the bug this module exists to prevent, and it
+is why both go through `filter_condition`.
 
 SQL expressions are produced by BUILDER FUNCTIONS, never module-level constants:
 a module-level expression is evaluated at import, so it cannot carry a
@@ -23,6 +30,10 @@ from enum import StrEnum
 from sqlalchemy import ColumnElement, Integer, case, func
 
 from app.models import InventorySnapshot
+
+#: A threshold is either a fixed number or a per-SKU column. Both compare
+#: identically in SQL, so nothing below has to know which it was given.
+Threshold = int | ColumnElement[int]
 
 DEFAULT_LOW_STOCK_THRESHOLD = 10
 
@@ -69,7 +80,7 @@ def qty_expression() -> ColumnElement[int]:
     return func.coalesce(InventorySnapshot.on_hand_qty, 0)
 
 
-def status_rank(threshold: int = DEFAULT_LOW_STOCK_THRESHOLD) -> ColumnElement[int]:
+def status_rank(threshold: Threshold = DEFAULT_LOW_STOCK_THRESHOLD) -> ColumnElement[int]:
     """Sort key matching STATUS_ORDER, so ORDER BY puts problems first."""
     qty = qty_expression()
     return case(
@@ -82,7 +93,7 @@ def status_rank(threshold: int = DEFAULT_LOW_STOCK_THRESHOLD) -> ColumnElement[i
 
 def filter_condition(
     status: StockStatus,
-    threshold: int = DEFAULT_LOW_STOCK_THRESHOLD,
+    threshold: Threshold = DEFAULT_LOW_STOCK_THRESHOLD,
 ) -> ColumnElement[bool]:
     """WHERE clause selecting exactly one bucket. Buckets are mutually
     exclusive: `low` is 1..threshold-1, so it excludes zero and negative."""
@@ -98,7 +109,7 @@ def filter_condition(
 
 def count_expression(
     status: StockStatus,
-    threshold: int = DEFAULT_LOW_STOCK_THRESHOLD,
+    threshold: Threshold = DEFAULT_LOW_STOCK_THRESHOLD,
 ) -> ColumnElement[int]:
     """SUM(CASE ...) counting one bucket, for the badge row.
 

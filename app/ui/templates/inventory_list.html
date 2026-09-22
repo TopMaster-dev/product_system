@@ -3,8 +3,10 @@
 {% block content %}
 
 {#
-  在庫状態の閾値はテンプレートに直書きしない。route が settings.low_stock_threshold
-  を `threshold` として渡す。W6 で SKU ごとの販売速度から算出した値に変わっても、
+  在庫状態の閾値はテンプレートに直書きしない。W8 (P2-017) 以降は SKU ごとに
+  異なるため、各行が自分の `low_stock_threshold` を持って来る。`threshold` は
+  未算出SKU向けのフォールバック値で、絞込の説明文にのみ使う。行の判定に使うと
+  速度の速いSKUが正常と表示されてしまう。かつての固定値10のように、
   ここは書き換え不要。
 #}
 {% set hidden_q = '&include_hidden=1' if include_hidden else '' %}
@@ -86,8 +88,8 @@
       <option value="all" {% if filter_mode == 'all' %}selected{% endif %}>すべて</option>
       <option value="negative" {% if filter_mode == 'negative' %}selected{% endif %}>マイナス</option>
       <option value="zero" {% if filter_mode == 'zero' %}selected{% endif %}>ゼロ</option>
-      <option value="low" {% if filter_mode == 'low' %}selected{% endif %}>低在庫 (1〜{{ threshold - 1 }})</option>
-      <option value="normal" {% if filter_mode == 'normal' %}selected{% endif %}>正常 ({{ threshold }}以上)</option>
+      <option value="low" {% if filter_mode == 'low' %}selected{% endif %}>低在庫（販売速度に応じた閾値未満）</option>
+      <option value="normal" {% if filter_mode == 'normal' %}selected{% endif %}>正常（閾値以上）</option>
       <option value="bestseller" {% if filter_mode == 'bestseller' %}selected{% endif %}>売れ筋（直近の販売上位）</option>
     </select>
   </div>
@@ -120,7 +122,7 @@
   </th>
 {% endmacro %}
 
-{% macro status_pill(qty) %}
+{% macro status_pill(qty, threshold) %}
   {% if qty < 0 %}
     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-50 text-red-700 ring-1 ring-red-200">マイナス</span>
   {% elif qty == 0 %}
@@ -186,7 +188,7 @@
   {% endif %}
 {% endmacro %}
 
-{% macro qty_cell(qty) %}
+{% macro qty_cell(qty, threshold) %}
   {% if qty < 0 %}
     <span class="inline-flex items-center px-2 py-0.5 rounded bg-red-50 text-red-700 ring-1 ring-red-200 font-semibold tabular-nums">{{ qty }}</span>
   {% elif qty == 0 %}
@@ -230,7 +232,7 @@
                 {% endif %}
                 {{ lifecycle_pills(row) }}
               </div>
-              {% if row.id in best_sellers and row.on_hand_qty < threshold %}
+              {% if row.id in best_sellers and row.on_hand_qty < row.low_stock_threshold %}
                 <div class="mt-1 inline-flex items-center gap-1 text-[11px] text-red-600 font-medium">
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                   売れ筋商品が在庫不足です（補充を検討）
@@ -238,8 +240,11 @@
               {% endif %}
             </td>
             <td class="px-4 py-3 font-mono text-xs text-ink-500">{{ row.jan_code or '—' }}</td>
-            <td class="px-4 py-3 text-right">{{ qty_cell(row.on_hand_qty) }}</td>
-            <td class="px-4 py-3">{{ status_pill(row.on_hand_qty) }}</td>
+            <td class="px-4 py-3 text-right">
+              {{ qty_cell(row.on_hand_qty, row.low_stock_threshold) }}
+              <div class="text-[11px] text-ink-400 tabular-nums">閾値 {{ row.low_stock_threshold }}</div>
+            </td>
+            <td class="px-4 py-3">{{ status_pill(row.on_hand_qty, row.low_stock_threshold) }}</td>
             <td class="px-4 py-3 text-xs text-ink-500 font-mono whitespace-nowrap">
               {% if row.updated_at %}{{ row.updated_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
             </td>
@@ -273,13 +278,13 @@
     <div class="bg-white rounded-xl border border-ink-200 p-4 {% if row.archived_at %}opacity-60{% endif %}
                 {% if row.on_hand_qty < 0 %}border-l-4 border-l-red-500
                 {% elif row.on_hand_qty == 0 %}border-l-4 border-l-ink-400
-                {% elif row.on_hand_qty < threshold %}border-l-4 border-l-amber-500{% endif %}">
+                {% elif row.on_hand_qty < row.low_stock_threshold %}border-l-4 border-l-amber-500{% endif %}">
       <div class="flex items-start justify-between gap-3 mb-1">
         <div class="flex items-center gap-2.5 min-w-0">
           {{ thumb(row, 'w-9 h-9') }}
           <div class="font-mono text-xs text-ink-500 font-medium truncate">{{ row.sku_code }}</div>
         </div>
-        <div>{{ qty_cell(row.on_hand_qty) }}</div>
+        <div>{{ qty_cell(row.on_hand_qty, row.low_stock_threshold) }}</div>
       </div>
       <div class="text-sm text-ink-800 mb-1 flex items-center gap-1.5 flex-wrap">
         <span>{{ row.name }}</span>
@@ -288,7 +293,7 @@
         {% endif %}
         {{ lifecycle_pills(row) }}
       </div>
-      {% if row.id in best_sellers and row.on_hand_qty < threshold %}
+      {% if row.id in best_sellers and row.on_hand_qty < row.low_stock_threshold %}
         <div class="mb-2 inline-flex items-center gap-1 text-[11px] text-red-600 font-medium">
           <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           売れ筋商品が在庫不足です（補充を検討）
@@ -296,7 +301,7 @@
       {% endif %}
       <div class="flex items-center justify-between text-xs">
         <div class="flex items-center gap-2">
-          {{ status_pill(row.on_hand_qty) }}
+          {{ status_pill(row.on_hand_qty, row.low_stock_threshold) }}
           <span class="text-ink-400 font-mono">{{ row.jan_code or '—' }}</span>
         </div>
         <div class="flex items-center gap-1">

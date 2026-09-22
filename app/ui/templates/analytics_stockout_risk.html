@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}欠品リスク一覧{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl font-semibold text-ink-900">欠品リスク一覧</h1>
+    <p class="text-sm text-ink-500 mt-0.5">
+      販売速度は {{ period.first_day.strftime('%Y-%m-%d') }} 〜 {{ period.last_day.strftime('%Y-%m-%d') }} の実績から算出
+    </p>
+  </div>
+
+  <form method="get" class="flex items-end gap-2">
+    <div>
+      <label class="block text-xs text-ink-500 mb-1">実績期間</label>
+      <select name="period" class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white">
+        {% for p in presets %}
+          <option value="{{ p }}" {% if p == period.preset %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-ink-500 mb-1">補充カバー日数</label>
+      <input type="number" name="cover" value="{{ cover_days }}" min="1" max="90"
+             class="text-sm border border-ink-300 rounded-md px-2 py-1.5 bg-white w-24" />
+    </div>
+    <button type="submit"
+            class="text-sm font-semibold bg-brand-600 hover:bg-brand-700 text-white rounded-md px-4 py-1.5 transition">表示</button>
+    <a href="/admin/analytics/stockout-risk/export.csv?period={{ period.preset }}&cover={{ cover_days }}"
+       class="text-sm font-semibold text-brand-600 hover:text-brand-700">CSV出力（全件）</a>
+  </form>
+</div>
+
+{#
+  在庫基準そのものが未確定であることを最初に出す。残日数は割り算としては
+  正しくても、分子が実数でなければ事実としては意味を持たない。
+#}
+<div class="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+  <div class="text-sm font-semibold text-amber-900">残日数は在庫数が正しいことを前提にしています</div>
+  <p class="text-xs text-amber-800 mt-1">
+    現在の在庫数の多くはCROSS MALLから引き継いだ帳簿上の数値で、実地棚卸による確定が済んでいません。
+    棚卸の完了までは、この画面の残日数・欠品予測日は<strong>並び順の目安</strong>としてご利用ください。
+    販売速度そのものは受注実績から算出しているため、在庫数の影響を受けません。
+  </p>
+</div>
+
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">在庫切れ</div>
+    <div class="text-2xl font-semibold tabular-nums {% if out_of_stock %}text-red-600{% else %}text-ink-900{% endif %}">{{ out_of_stock }}</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">低在庫</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ below_threshold }}</div>
+    <div class="text-[11px] text-ink-400 mt-1">販売速度に応じた閾値</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">予測不可</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ unforecastable }}</div>
+    <div class="text-[11px] text-ink-400 mt-1">実績またはデータ期間が不足</div>
+  </div>
+  <div class="rounded-xl bg-white border border-ink-200 p-4">
+    <div class="text-xs text-ink-500 mb-1">補充カバー日数</div>
+    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ cover_days }}<span class="text-sm font-normal text-ink-400"> 日</span></div>
+  </div>
+</div>
+
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="scroll-area overflow-x-auto">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">SKU</th>
+          <th class="px-4 py-3 text-left font-semibold">商品名</th>
+          <th class="px-4 py-3 text-right font-semibold">在庫数</th>
+          <th class="px-4 py-3 text-right font-semibold">販売速度</th>
+          <th class="px-4 py-3 text-left font-semibold">データ</th>
+          <th class="px-4 py-3 text-right font-semibold">残日数</th>
+          <th class="px-4 py-3 text-left font-semibold">欠品予測日</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for r in risks %}
+          <tr class="hover:bg-ink-50/60 transition {% if r.on_hand_qty <= 0 %}bg-red-50/40{% endif %}">
+            <td class="px-4 py-2.5 font-mono text-xs whitespace-nowrap">
+              <a href="/admin/analytics/sku/{{ r.master_sku_id }}?period={{ period.preset }}"
+                 class="text-brand-600 hover:text-brand-700 font-medium">{{ r.sku_code }}</a>
+            </td>
+            <td class="px-4 py-2.5 text-ink-800">{{ r.name }}</td>
+            <td class="px-4 py-2.5 text-right tabular-nums">
+              <span class="{% if r.on_hand_qty < 0 %}text-red-600 font-semibold{% elif r.on_hand_qty == 0 %}text-red-600 font-medium{% elif r.is_below_threshold %}text-amber-600 font-medium{% else %}text-ink-700{% endif %}">
+                {{ '{:,}'.format(r.on_hand_qty) }}
+              </span>
+              <span class="text-[11px] text-ink-400">/ {{ r.threshold }}</span>
+            </td>
+            <td class="px-4 py-2.5 text-right tabular-nums text-ink-700">{{ '%.2f'|format(r.velocity.per_day) }}</td>
+            <td class="px-4 py-2.5">
+              {% set c = r.velocity.confidence.value %}
+              <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold
+                           {% if c == 'good' %}bg-emerald-50 text-emerald-700{% elif c == 'limited' %}bg-amber-50 text-amber-700{% else %}bg-ink-100 text-ink-500{% endif %}">
+                {{ labels[r.velocity.confidence] }}
+              </span>
+            </td>
+            <td class="px-4 py-2.5 text-right tabular-nums">
+              {% if r.days_remaining is none %}
+                {# 「予測なし」と「安全」は違う。数字を入れると後者に見える。 #}
+                <span class="text-ink-300">—</span>
+              {% else %}
+                <span class="{% if r.days_remaining < 7 %}text-red-600 font-semibold{% elif r.days_remaining < 14 %}text-amber-600 font-medium{% else %}text-ink-700{% endif %}">
+                  {{ '%.1f'|format(r.days_remaining) }}
+                </span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-xs font-mono text-ink-600">
+              {% if r.stockout_on %}
+                {{ r.stockout_on.strftime('%Y-%m-%d') }}
+              {% elif r.on_hand_qty <= 0 %}
+                <span class="text-red-600 font-semibold">在庫切れ</span>
+              {% else %}
+                <span class="text-ink-300">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="px-4 py-12 text-center text-sm text-ink-500">
+              対象のSKUがありません。
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="text-[11px] text-ink-400 mt-3 leading-relaxed">
+  在庫切れのSKUを先頭に、次いで残日数の少ない順に並べています。
+  残日数が「—」のSKUは、販売実績がないか、販売速度を算出できるだけのデータ期間がないものです。
+  <strong>安全という意味ではありません。</strong>
+  在庫数の右の数値は、そのSKUの販売速度から算出した低在庫閾値（{{ cover_days }}日分）です。
+  画面には上位{{ limit }}件を表示しています。全件はCSVでご確認ください。
+</p>
+{% endblock %}

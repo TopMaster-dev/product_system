@@ -29,7 +29,13 @@ from app import __version__
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.logging import get_logger
-from app.models import InventoryEvent, InventoryEventTypeEnum, InventorySnapshot, MasterSku
+from app.models import (
+    InventoryEvent,
+    InventoryEventTypeEnum,
+    InventorySnapshot,
+    MasterSku,
+    SkuVelocity,
+)
 from app.services.sku_scope import (
     analysable_conditions,
     archive_blockers,
@@ -112,14 +118,41 @@ def _scope_conditions(q: str, *, include_hidden: bool) -> list[ColumnElement[boo
 
 
 def _from_masters(*selected: Any) -> Select[Any]:
+    """Every query on this page starts here, including the badge counts.
+
+    `sku_velocity` is joined for ALL of them, because the low-stock threshold is
+    now per-SKU (P2-017) and a badge resolving it differently from the list it
+    labels is the exact defect this screen has had before.
+    """
     return (
         select(*selected)
         .select_from(MasterSku)
         .outerjoin(InventorySnapshot, InventorySnapshot.master_sku_id == MasterSku.id)
+        .outerjoin(SkuVelocity, SkuVelocity.master_sku_id == MasterSku.id)
     )
 
 
-def _rows_query(conditions: list[ColumnElement[bool]]) -> Select[Any]:
+def _threshold_expression(fallback: int) -> ColumnElement[int]:
+    """The per-SKU low-stock threshold, with a floor for SKUs that have none.
+
+    A missing row means the rollup has not reached this SKU yet — a brand-new
+    master, or the first hours after deploy. Falling back to the configured
+    fixed value keeps the screen behaving exactly as it did before 0013 rather
+    than treating an unknown rate as a safe one.
+    """
+    return func.coalesce(SkuVelocity.low_stock_threshold, fallback)
+
+
+def _rows_query(
+    conditions: list[ColumnElement[bool]], threshold: ColumnElement[int]
+) -> Select[Any]:
+    """The row set, carrying each SKU's own threshold.
+
+    Selected rather than recomputed per row in Python: the CSV classifies rows
+    with `classify()`, and a second definition of "which threshold applies here"
+    would eventually disagree with the one the WHERE clause used — a file whose
+    status column contradicts the filter that produced it.
+    """
     return _from_masters(
         MasterSku.id,
         MasterSku.sku_code,
@@ -129,6 +162,8 @@ def _rows_query(conditions: list[ColumnElement[bool]]) -> Select[Any]:
         MasterSku.archived_at,
         MasterSku.is_stock_managed,
         qty_expression().label("on_hand_qty"),
+        threshold.label("low_stock_threshold"),
+        SkuVelocity.per_day.label("velocity_per_day"),
         InventorySnapshot.updated_at,
     ).where(*conditions)
 
@@ -137,7 +172,7 @@ def _apply_bucket(
     stmt: Select[Any],
     filter_mode: str,
     best_sellers: set[int],
-    threshold: int,
+    threshold: ColumnElement[int],
 ) -> Select[Any]:
     if filter_mode == _FILTER_BESTSELLER:
         return stmt.where(MasterSku.id.in_(best_sellers or {-1}))
@@ -147,8 +182,9 @@ def _apply_bucket(
     return stmt
 
 
-def _sort_columns(threshold: int) -> dict[str, Any]:
-    """Built per request so the threshold can vary (W6 makes it per-SKU)."""
+def _sort_columns(threshold: ColumnElement[int]) -> dict[str, Any]:
+    """Built per request. The threshold is a joined column since 0013, so the
+    sort key cannot be a module-level constant."""
     return {
         "status": status_rank(threshold),
         "sku": MasterSku.sku_code,
@@ -162,7 +198,9 @@ def _sort_columns(threshold: int) -> dict[str, Any]:
 _SORT_KEYS = frozenset({"status", "sku", "name", "qty", "updated"})
 
 
-def _apply_sort(stmt: Select[Any], sort: str, direction: str, threshold: int) -> Select[Any]:
+def _apply_sort(
+    stmt: Select[Any], sort: str, direction: str, threshold: ColumnElement[int]
+) -> Select[Any]:
     col = _sort_columns(threshold)[sort]
     ordered = col.desc() if direction == "desc" else col.asc()
     # Stable tiebreaker so equal-rank rows keep a deterministic order.
@@ -191,7 +229,7 @@ async def inventory_list(
     offset: int = 0,
 ) -> Response:
     sort, dir = _normalize(sort, dir)
-    threshold = settings.low_stock_threshold
+    threshold = _threshold_expression(settings.low_stock_threshold)
     show_hidden = bool(include_hidden)
 
     best_sellers = await best_seller_ids(
@@ -201,7 +239,7 @@ async def inventory_list(
     )
 
     conditions = _scope_conditions(q, include_hidden=show_hidden)
-    stmt = _apply_bucket(_rows_query(conditions), filter, best_sellers, threshold)
+    stmt = _apply_bucket(_rows_query(conditions, threshold), filter, best_sellers, threshold)
     total = await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
     # Badges: SAME conditions as the rows, minus the bucket filter, so each badge
@@ -252,7 +290,11 @@ async def inventory_list(
             "dir": dir,
             "counts": counts,
             "best_sellers": best_sellers,
-            "threshold": threshold,
+            # The SCALAR fallback, not the column expression used in SQL.
+            # Each row carries its own threshold; this is only for copy that
+            # describes the default. Passing the ColumnElement here would make
+            # every Jinja `qty < threshold` truthy and mark the whole page low.
+            "threshold": settings.low_stock_threshold,
             "include_hidden": show_hidden,
             "flash": _flash(request.query_params.get("flash")),
             # Carried on the toggle POSTs so the operator lands back on the same
@@ -277,7 +319,7 @@ async def inventory_export(
 ) -> Response:
     """Export exactly what the screen is showing — same predicates, same order."""
     sort, dir = _normalize(sort, dir)
-    threshold = settings.low_stock_threshold
+    threshold = _threshold_expression(settings.low_stock_threshold)
 
     best_sellers = await best_seller_ids(
         session,
@@ -285,7 +327,7 @@ async def inventory_export(
         top_percent=settings.best_seller_top_percent,
     )
     conditions = _scope_conditions(q, include_hidden=bool(include_hidden))
-    stmt = _apply_bucket(_rows_query(conditions), filter, best_sellers, threshold)
+    stmt = _apply_bucket(_rows_query(conditions, threshold), filter, best_sellers, threshold)
     rows = (await session.execute(_apply_sort(stmt, sort, dir, threshold))).mappings().all()
 
     buf = io.StringIO()
@@ -303,6 +345,8 @@ async def inventory_export(
             "updated_at",
             "stock_managed",
             "archived",
+            "low_stock_threshold",
+            "velocity_per_day",
         ]
     )
     for r in rows:
@@ -312,11 +356,13 @@ async def inventory_export(
                 r["name"],
                 r["jan_code"] or "",
                 r["on_hand_qty"],
-                STATUS_LABELS[classify(r["on_hand_qty"], threshold)],
+                STATUS_LABELS[classify(r["on_hand_qty"], r["low_stock_threshold"])],
                 "はい" if r["id"] in best_sellers else "",
                 r["updated_at"].strftime("%Y-%m-%d %H:%M:%S") if r["updated_at"] else "",
                 "対象" if r["is_stock_managed"] else "対象外",
                 "はい" if r["archived_at"] else "",
+                r["low_stock_threshold"],
+                f"{r['velocity_per_day']:.2f}" if r["velocity_per_day"] is not None else "",
             ]
         )
     return csv_response(buf.getvalue(), filename="inventory.csv")
