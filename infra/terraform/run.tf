@@ -90,6 +90,24 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "CLOUD_TASKS_TARGET_URL"
         value = "https://product-system-4691219310.asia-northeast1.run.app/internal/jobs/tasks/run"
       }
+      # `allUsers` holds run.invoker for the Shopify webhooks (see below), which
+      # leaves /internal/jobs/* reachable too. Cloud Scheduler and Cloud Tasks
+      # both send an OIDC token signed as CLOUD_TASKS_INVOKER_SA;
+      # app/api/auth_internal.py verifies it.
+      #
+      # Shipped as "audit" on 2026-09-22 and promoted to "enforce" on
+      # 2026-09-23 on the evidence, not on a schedule: 14 days of production
+      # logs with zero would_reject / rejected / no_expected_sa, and
+      # internal.auth.ok on all seven endpoints — including tasks/run, the
+      # Cloud Tasks path, which was the last one still unobserved.
+      #
+      # To roll back, set this to "audit" and redeploy. Enforcing wrongly 401s
+      # every scheduled job at once, so the audit verdict is what earns the
+      # promotion.
+      env {
+        name  = "INTERNAL_JOBS_AUTH_MODE"
+        value = "enforce"
+      }
 
       # ---- Shopify ----
       env {
