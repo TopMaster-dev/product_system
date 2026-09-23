@@ -40,6 +40,11 @@ DIRECT_USE_ALLOWED = {
     # filtering a query population.
     "app/cli/import_variant_mappings.py",
     "app/cli/seed_variant_stock.py",
+    # Selects the 在庫管理対象外 population itself, like bundle_push selects
+    # bundle parents: the flag means "this master must have no inventory
+    # events", and the whole job of that CLI is to find the ones that do.
+    # Narrowing to the analysable population would hide every finding.
+    "app/cli/inspect_stock_event_damage.py",
 }
 
 # `MasterSku.is_bundle.is_(...)` style predicate use in a query.
