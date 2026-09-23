@@ -77,23 +77,44 @@ async def run(
             print("  売上の再集計は不要です — 変更がありません")
         return 0
 
+    # The range THIS pass changed. It has to be stated, not detected: the
+    # rebuild picks its days from inventory events created and orders updated
+    # since its last run, and this pass produces neither — it rewrites
+    # `order_items.master_sku_id` and nothing else. Left to detect, it finds
+    # nothing, reports "0日分を再集計しました", and the dashboards keep the old
+    # attribution while the CLI claims success. That happened on the first
+    # production run (2026-09-23), where 734 lines were filled and 0 days
+    # rebuilt.
+    first, last = outcome.filled_first_day, outcome.filled_last_day
+    span = f"--from {first} --to {last} --max-days 0"
+
     if not rebuild_metrics:
         print(
-            "\n  ※ 売上の集計はまだ古いままです。全期間を再構築してください:\n"
-            "     powershell -File scripts/run_cli.ps1 -Cli rebuild_daily_metrics "
-            '-Args "--max-days 0"'
+            "\n  ※ 売上の集計はまだ古いままです。補完した範囲を再構築してください:\n"
+            f"     powershell -File scripts/run_cli.ps1 -Cli rebuild_daily_metrics -Args "
+            f'"{span}"'
         )
         return 0
 
-    print("\n  売上集計を再構築します...")
+    if first is None or last is None:  # pragma: no cover - lines_filled implies a span
+        print("\n  再集計の対象期間を特定できませんでした")
+        return 0
+
+    print(f"\n  売上集計を再構築します  {first} 〜 {last} ...")
     # Imported here, not at module scope: the rebuild is an opt-in tail step,
     # and importing it eagerly drags the rollup machinery into every run.
     from app.cli import rebuild_daily_metrics
 
-    # max_days=0 is "no limit" — the correction reaches back as far as the
-    # oldest line that changed, and a fixed window would silently miss it.
-    rebuilt = await rebuild_daily_metrics.run(max_days=0, job_name="reresolve_order_items")
+    rebuilt = await rebuild_daily_metrics.run(
+        from_date=first,
+        to_date=last,
+        max_days=0,  # no cap; the span is already the exact set of days
+        job_name="reresolve_order_items",
+    )
     print(f"  {rebuilt.days_rebuilt}日分を再集計しました")
+    if rebuilt.days_rebuilt == 0:
+        print("  ※ 0日は異常です。補完した明細があるのに再集計されていません")
+        return 1
     return 0
 
 

@@ -17,7 +17,7 @@ Two rules make the replay match first ingestion, which it did not before:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import select, update
@@ -33,6 +33,7 @@ from app.models import (
 )
 from app.services.exceptions import MappingNotFoundError
 from app.services.inventory import EventSource, InventoryService
+from app.services.timeframe import to_jst_date
 
 #: Same set `OrderIngestService` uses; a cancelled line was never consumed.
 _CANCEL_STATUSES = {"cancelled", "returned"}
@@ -254,6 +255,14 @@ class ReResolution:
     filled_sales_jpy: Decimal = Decimal(0)
     #: Revenue still attributable to nothing, on the same basis.
     unresolved_sales_jpy: Decimal = Decimal(0)
+    #: JST span of the lines actually filled, for the rollup rebuild that has
+    #: to follow. The rebuild picks its own days from inventory events and
+    #: order updates, and this pass produces NEITHER — it rewrites
+    #: `order_items.master_sku_id` and nothing else. Detection therefore sees
+    #: no change at all, so the range has to be handed over explicitly or the
+    #: dashboards keep showing the old attribution for ever.
+    filled_first_day: date | None = None
+    filled_last_day: date | None = None
 
 
 async def reresolve_unmapped_lines(
@@ -286,6 +295,7 @@ async def reresolve_unmapped_lines(
     unmanaged_skipped = 0
     filled_sales = Decimal(0)
     unresolved_sales = Decimal(0)
+    filled_days: list[date] = []
 
     stmt = (
         select(OrderItem, Order)
@@ -325,6 +335,8 @@ async def reresolve_unmapped_lines(
         item.master_sku_id = master_sku_id
         lines_filled += 1
         filled_sales += amount
+        if order.ordered_at is not None:
+            filled_days.append(to_jst_date(order.ordered_at))
         touched[order.id] = order
 
         if not apply_stock:
@@ -362,6 +374,8 @@ async def reresolve_unmapped_lines(
         unresolved=unresolved,
         filled_sales_jpy=filled_sales,
         unresolved_sales_jpy=unresolved_sales,
+        filled_first_day=min(filled_days) if filled_days else None,
+        filled_last_day=max(filled_days) if filled_days else None,
     )
 
 

@@ -15,7 +15,7 @@ and the test below is what stops that turning back into True.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -257,3 +257,64 @@ async def test_a_cancelled_line_contributes_no_revenue_to_either_figure(
 
     assert outcome.lines_filled == 1
     assert outcome.filled_sales_jpy == Decimal("0")
+
+
+# --- 再集計の範囲 ----------------------------------------------------------
+
+
+async def test_the_filled_span_is_recorded_for_the_rebuild(
+    _no_real_inventory: list[tuple[int, int]],
+) -> None:
+    """The rebuild picks its days from inventory events and order updates, and
+    this pass produces neither. Without the span it rebuilds nothing, reports
+    success, and the dashboards keep the old attribution — which is exactly
+    what happened on the first production run."""
+    old = _Order(1)
+    old.ordered_at = datetime(2025, 10, 3, tzinfo=UTC)
+    recent = _Order(2)
+    recent.ordered_at = datetime(2026, 9, 21, tzinfo=UTC)
+    session = _Session(
+        [(_Item("A"), old), (_Item("B"), recent)],
+        lookups=[88, 99],
+        still_unmapped=[],
+    )
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.filled_first_day == date(2025, 10, 3)
+    assert outcome.filled_last_day == date(2026, 9, 21)
+
+
+async def test_an_unresolved_line_does_not_widen_the_rebuild_span() -> None:
+    """Only what changed needs rebuilding. A line nobody could map changed
+    nothing, and rebuilding its day is wasted work on 400 days of history."""
+    unresolvable = _Order(1)
+    unresolvable.ordered_at = datetime(2024, 1, 1, tzinfo=UTC)
+    session = _Session([(_Item("NOPE"), unresolvable)], lookups=[None], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.filled_first_day is None
+
+
+async def test_the_span_is_taken_in_jst() -> None:
+    """15:30 UTC is 00:30 JST the next day. A UTC span can start a day early
+    and, worse, end a day short of the row that actually changed."""
+    order = _Order(1)
+    order.ordered_at = datetime(2026, 9, 21, 15, 30, tzinfo=UTC)
+    session = _Session([(_Item("A"), order)], lookups=[88], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.filled_last_day == date(2026, 9, 22)
+
+
+def test_the_cli_hands_the_rebuild_an_explicit_range() -> None:
+    """Read as source. `max_days=0` means "no cap", NOT "every day", and the
+    difference is silent: detection returns an empty list and the run reports
+    success having rebuilt nothing."""
+    from pathlib import Path
+
+    source = Path("app/cli/reresolve_order_items.py").read_text(encoding="utf-8")
+    assert "from_date=first" in source
+    assert "to_date=last" in source
