@@ -216,7 +216,9 @@ def _flash(token: str | None) -> dict[str, str] | None:
     if parts[0] == "resolved" and len(parts) == 2:
         return {
             "kind": "ok",
-            "message": f"解決しました。保留中の注文 {parts[1]} 件を再処理しました。",
+            # 注文ではなく明細の件数。1件の注文に未知のSKUが複数あれば、
+            # ここで反映されるのはそのうちの一部であり、注文は保留のまま残る。
+            "message": f"解決しました。保留中だった注文明細 {parts[1]} 件に反映しました。",
         }
     if parts[0] == "started":
         return {"kind": "ok", "message": "対応中にしました。"}

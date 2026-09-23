@@ -3,12 +3,20 @@
 When an order arrives whose `channel_sku` has no active mapping, ingestion
 leaves the order in `pending_mapping` state and records a `MappingAlert`.
 Once the operator resolves the alert by creating a `ChannelSkuMapping`, this
-service backfills `master_sku_id` on the parked order items and emits
-`order_consumed` events for them — preserving idempotency end-to-end.
+service backfills `master_sku_id` on the parked order items and applies them to
+stock — preserving idempotency end-to-end.
+
+Two rules make the replay match first ingestion, which it did not before:
+
+* It applies each line through `InventoryService.consume_order_line`, so a
+  共有在庫 parent reaches its pool and a 在庫管理対象外 master writes nothing.
+* It confirms an order only when nothing of it is unmapped. One alert is one
+  channel SKU, and an order can be waiting on several.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, update
@@ -24,6 +32,9 @@ from app.models import (
 )
 from app.services.exceptions import MappingNotFoundError
 from app.services.inventory import EventSource, InventoryService
+
+#: Same set `OrderIngestService` uses; a cancelled line was never consumed.
+_CANCEL_STATUSES = {"cancelled", "returned"}
 
 
 class MappingService:
@@ -150,7 +161,7 @@ class MappingService:
         channel_sku: str,
         master_sku_id: int,
     ) -> int:
-        """Backfill master_sku_id on parked items and emit consumption events."""
+        """Backfill master_sku_id on parked items and apply them to stock."""
         rows = await self._session.execute(
             select(OrderItem, Order)
             .join(Order, Order.id == OrderItem.order_id)
@@ -162,9 +173,12 @@ class MappingService:
             ),
         )
         replayed = 0
+        touched: dict[int, Order] = {}
         for item, order in rows.all():
             item.master_sku_id = master_sku_id
-            await self._inventory.consume_for_order_line(
+            # Same fan-out as first ingestion: a 共有在庫 parent moves its
+            # components, a 在庫管理対象外 master moves nothing.
+            await self._inventory.consume_order_line(
                 master_sku_id=master_sku_id,
                 quantity=item.quantity,
                 source=EventSource(
@@ -174,11 +188,196 @@ class MappingService:
                 ),
                 occurred_at=order.ordered_at,
             )
-            order.status = OrderStatusEnum.CONFIRMED
+            touched[order.id] = order
             replayed += 1
-        if replayed:
-            await self._session.flush()
+
+        if not replayed:
+            return 0
+        await self._session.flush()
+
+        # Confirm only the orders with nothing left unmapped. Resolving one
+        # alert used to mark the whole order 確定, so a two-line order carrying
+        # two unknown SKUs lost its second line: still NULL, never consumed,
+        # and no longer visible to anything that looks for pending_mapping.
+        await _settle_orders(self._session, touched)
         return replayed
 
 
-__all__ = ["MappingNotFoundError", "MappingService"]
+# ---------------------------------------------------------------------------
+# 一括再解決  (bulk re-resolution)
+# ---------------------------------------------------------------------------
+#
+# The alert screen resolves one channel SKU at a time. This resolves whatever
+# is already resolvable, in bulk, for the two moments that produce a backlog:
+# mappings added en masse, and the client correcting 管理番号 on the RMS side.
+#
+# WHY IT SCANS LINES AND NOT ORDERS
+#
+# An order's status is a summary; `master_sku_id IS NULL` is the fact. Lines
+# stranded by the old alert-resolution behaviour sit on orders already marked
+# 確定, so a status-based scan cannot see them at all.
+
+
+@dataclass(slots=True)
+class UnresolvedSku:
+    """One channel SKU that still has no mapping, with the damage behind it."""
+
+    lines: int = 0
+    units: int = 0
+    first_ordered_at: datetime | None = None
+    last_ordered_at: datetime | None = None
+
+    def add(self, *, quantity: int, ordered_at: datetime | None) -> None:
+        self.lines += 1
+        self.units += quantity
+        if ordered_at is None:
+            return
+        if self.first_ordered_at is None or ordered_at < self.first_ordered_at:
+            self.first_ordered_at = ordered_at
+        if self.last_ordered_at is None or ordered_at > self.last_ordered_at:
+            self.last_ordered_at = ordered_at
+
+
+@dataclass(frozen=True, slots=True)
+class ReResolution:
+    lines_filled: int
+    orders_settled: int
+    stock_events: int
+    cancelled_skipped: int
+    unmanaged_skipped: int
+    unresolved: dict[tuple[str, str], UnresolvedSku]
+
+
+async def reresolve_unmapped_lines(
+    session: AsyncSession,
+    *,
+    apply_stock: bool,
+    channel: str | None = None,
+    limit: int | None = None,
+) -> ReResolution:
+    """Fill `master_sku_id` on every line a current mapping can explain.
+
+    `apply_stock` is the whole decision, and it has no safe default:
+
+    * **False** — the historical pass. The physical stocktake and the reconcile
+      already settled what is on the shelf, so replaying months of consumption
+      on top would subtract the same goods a second time. The point of that run
+      is the sales history (P2-011 / P2-042), which reads `master_sku_id`, not
+      the event log. Rebuild the daily rollups afterwards.
+    * **True** — the live pass, for lines whose stock has not been settled
+      since. It matches what first ingestion would have done.
+
+    Nothing here commits; the caller owns the transaction.
+    """
+    inventory = InventoryService(session)
+    unresolved: dict[tuple[str, str], UnresolvedSku] = {}
+    touched: dict[int, Order] = {}
+    lines_filled = 0
+    stock_events = 0
+    cancelled_skipped = 0
+    unmanaged_skipped = 0
+
+    stmt = (
+        select(OrderItem, Order)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(OrderItem.master_sku_id.is_(None))
+        .order_by(Order.ordered_at, OrderItem.id)
+    )
+    if channel:
+        stmt = stmt.where(Order.channel == channel)
+    if limit:
+        stmt = stmt.limit(limit)
+
+    for item, order in (await session.execute(stmt)).all():
+        found = await session.execute(
+            select(ChannelSkuMapping.master_sku_id).where(
+                ChannelSkuMapping.channel == order.channel,
+                ChannelSkuMapping.channel_sku == item.channel_sku,
+                ChannelSkuMapping.marketplace_id.is_(order.marketplace_id),
+                ChannelSkuMapping.is_active.is_(True),
+            ),
+        )
+        master_sku_id = found.scalar_one_or_none()
+        if master_sku_id is None:
+            key = (order.channel, item.channel_sku)
+            unresolved.setdefault(key, UnresolvedSku()).add(
+                quantity=item.quantity, ordered_at=order.ordered_at
+            )
+            continue
+
+        item.master_sku_id = master_sku_id
+        lines_filled += 1
+        touched[order.id] = order
+
+        if not apply_stock:
+            continue
+        if order.status in _CANCEL_STATUSES:
+            # Never consumed, so there is nothing to consume now.
+            cancelled_skipped += 1
+            continue
+
+        application = await inventory.consume_order_line(
+            master_sku_id=master_sku_id,
+            quantity=item.quantity,
+            source=EventSource(
+                channel=order.channel,
+                order_id=order.channel_order_id,
+                line_id=item.line_id,
+            ),
+            occurred_at=order.ordered_at,
+        )
+        if application.unmanaged:
+            unmanaged_skipped += 1
+        stock_events += application.events
+
+    orders_settled = 0
+    if touched:
+        await session.flush()
+        orders_settled = await _settle_orders(session, touched)
+
+    return ReResolution(
+        lines_filled=lines_filled,
+        orders_settled=orders_settled,
+        stock_events=stock_events,
+        cancelled_skipped=cancelled_skipped,
+        unmanaged_skipped=unmanaged_skipped,
+        unresolved=unresolved,
+    )
+
+
+async def _settle_orders(session: AsyncSession, touched: dict[int, Order]) -> int:
+    """Confirm the orders with nothing unmapped left — recomputed, not assumed.
+
+    A partially resolved order must stay `pending_mapping`, or its remaining
+    NULL lines drop out of every view that looks for one.
+    """
+    remaining = await session.execute(
+        select(OrderItem.order_id)
+        .where(
+            OrderItem.order_id.in_(list(touched)),
+            OrderItem.master_sku_id.is_(None),
+        )
+        .distinct(),
+    )
+    still_unmapped = set(remaining.scalars().all())
+
+    settled = 0
+    for order_id, order in touched.items():
+        if order_id in still_unmapped:
+            continue
+        if order.status != OrderStatusEnum.PENDING_MAPPING:
+            continue
+        order.status = OrderStatusEnum.CONFIRMED
+        settled += 1
+    if settled:
+        await session.flush()
+    return settled
+
+
+__all__ = [
+    "MappingNotFoundError",
+    "MappingService",
+    "ReResolution",
+    "UnresolvedSku",
+    "reresolve_unmapped_lines",
+]

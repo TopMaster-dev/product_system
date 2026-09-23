@@ -45,6 +45,28 @@ class EventSource:
     line_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class LineApplication:
+    """What applying ONE order line did to stock, after the bundle fan-out.
+
+    `targets` is how many component rows the line expanded to; zero means the
+    master is 在庫管理対象外 and no event was written by design. `events` counts
+    the rows actually appended, which is zero on a repeat of an already-applied
+    line — that is the idempotent no-op, not a failure.
+    """
+
+    targets: int
+    events: int
+
+    @property
+    def unmanaged(self) -> bool:
+        return self.targets == 0
+
+    @property
+    def applied(self) -> bool:
+        return self.events > 0
+
+
 def compute_bundle_available(components: list[tuple[int, int]]) -> int:
     """Derived bundle availability from (on_hand, quantity_per) per component:
     max(0, min over components of floor(on_hand / quantity_per)). Empty -> 0.
@@ -187,6 +209,87 @@ class InventoryService:
         )
         components = [(cid, qp) for cid, qp in result.all()]
         return components or [(master_sku_id, 1)]
+
+    async def consume_order_line(
+        self,
+        *,
+        master_sku_id: int,
+        quantity: int,
+        source: EventSource,
+        occurred_at: datetime | None = None,
+    ) -> LineApplication:
+        """Decrement stock for one order line, fanning a bundle parent out to
+        its components and writing nothing at all for a 在庫管理対象外 master.
+
+        EVERY path that consumes an order line goes through here — first
+        ingestion, alert resolution, and the reprocess CLI alike. They used to
+        each decide for themselves, and the two replay paths skipped
+        `resolve_consumption`: resolving an alert onto a 共有在庫 parent
+        decremented the parent instead of the shared pool, and resolving one
+        onto a ギフトバッグ wrote an event ingestion would have refused. Both
+        are silent — the numbers are simply wrong afterwards.
+        """
+        targets = await self.resolve_consumption(master_sku_id)
+        events = 0
+        for comp_id, qty_per in targets:
+            written = await self.consume_for_order_line(
+                master_sku_id=comp_id,
+                quantity=quantity * qty_per,
+                source=source,
+                occurred_at=occurred_at,
+            )
+            if written is not None:
+                events += 1
+        return LineApplication(targets=len(targets), events=events)
+
+    async def return_order_line(
+        self,
+        *,
+        master_sku_id: int,
+        quantity: int,
+        source: EventSource,
+        occurred_at: datetime | None = None,
+    ) -> LineApplication:
+        """Credit one order line back, mirroring `consume_order_line` exactly.
+
+        The mirror is the point: an expansion that stopped on the way out must
+        stop on the way back, or a cancellation credits stock the order never
+        took.
+
+        The expansion alone is not enough to guarantee that, because it is
+        evaluated NOW and the consume happened THEN. A line can hold a master
+        SKU and no consume event — `reresolve_order_items` fills the master in
+        on historical lines deliberately without moving stock — so each
+        component is credited only if its own consumption is on record. Without
+        that check, a backdated cancellation on a repaired line invents stock.
+        """
+        targets = await self.resolve_consumption(master_sku_id)
+        events = 0
+        for comp_id, qty_per in targets:
+            if not await self._was_consumed(master_sku_id=comp_id, source=source):
+                continue
+            written = await self.cancel_order_line(
+                master_sku_id=comp_id,
+                quantity=quantity * qty_per,
+                source=source,
+                occurred_at=occurred_at,
+            )
+            if written is not None:
+                events += 1
+        return LineApplication(targets=len(targets), events=events)
+
+    async def _was_consumed(self, *, master_sku_id: int, source: EventSource) -> bool:
+        """Is this component's consumption for this order line on record?"""
+        found = await self._session.execute(
+            select(InventoryEvent.id).where(
+                InventoryEvent.event_type == InventoryEventTypeEnum.ORDER_CONSUMED,
+                InventoryEvent.master_sku_id == master_sku_id,
+                InventoryEvent.source_channel == source.channel,
+                InventoryEvent.source_order_id == source.order_id,
+                InventoryEvent.source_line_id == source.line_id,
+            )
+        )
+        return found.first() is not None
 
     async def get_bundle_available(self, bundle_master_sku_id: int) -> int:
         """Derived availability for a bundle/shared-stock parent (compute-on-read).

@@ -114,20 +114,18 @@ class OrderIngestService:
                 line_id=line.line_id,
             )
             # A bundle/shared-stock line fans out to its components; a normal SKU
-            # consumes itself. All component events share one source — master_sku_id
-            # is in the event UNIQUE, so they don't collide. An empty list means
-            # the master is 在庫管理対象外: no event, by design.
-            targets = await self._inventory.resolve_consumption(mapped_id)
-            if not targets:
+            # consumes itself; a 在庫管理対象外 master writes nothing at all.
+            # `consume_order_line` owns all three — see its docstring for what
+            # went wrong when each caller decided for itself.
+            application = await self._inventory.consume_order_line(
+                master_sku_id=mapped_id,
+                quantity=line.quantity,
+                source=source,
+                occurred_at=payload.ordered_at,
+            )
+            if application.unmanaged:
                 unmanaged += 1
                 continue
-            for comp_id, qty_per in targets:
-                await self._inventory.consume_for_order_line(
-                    master_sku_id=comp_id,
-                    quantity=line.quantity * qty_per,
-                    source=source,
-                    occurred_at=payload.ordered_at,
-                )
             consumed += 1
 
         if pending and not is_cancelled:
@@ -189,26 +187,18 @@ class OrderIngestService:
                 order_id=order.channel_order_id,
                 line_id=item.line_id,
             )
-            # Mirror the consume fan-out: re-expand the (possibly bundle) parent
-            # into components and return each. The OrderItem holds the parent id.
-            # An empty expansion is the 在庫管理対象外 case — it must skip here
-            # exactly as it skipped on consume, or the cancellation would credit
-            # stock the order never took.
-            targets = await self._inventory.resolve_consumption(item.master_sku_id)
-            if not targets:
+            # Mirrors the consume fan-out by construction — same expansion, same
+            # 在庫管理対象外 stop. The OrderItem holds the parent id.
+            application = await self._inventory.return_order_line(
+                master_sku_id=item.master_sku_id,
+                quantity=item.quantity,
+                source=source,
+                occurred_at=occurred_at,
+            )
+            if application.unmanaged:
                 unmanaged += 1
                 continue
-            line_applied = False
-            for comp_id, qty_per in targets:
-                applied = await self._inventory.cancel_order_line(
-                    master_sku_id=comp_id,
-                    quantity=item.quantity * qty_per,
-                    source=source,
-                    occurred_at=occurred_at,
-                )
-                if applied is not None:
-                    line_applied = True
-            if line_applied:
+            if application.applied:
                 compensated += 1
         return compensated, unmanaged
 

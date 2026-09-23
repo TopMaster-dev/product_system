@@ -9,7 +9,7 @@ from app.services.exceptions import (
     ServiceError,
 )
 from app.services.ingest import IngestResult, OrderIngestService
-from app.services.inventory import EventSource, InventoryService
+from app.services.inventory import EventSource, InventoryService, LineApplication
 from app.services.mapping import MappingService
 from app.services.sku_scope import analysable_conditions, operational_conditions
 
@@ -21,6 +21,7 @@ __all__ = [
     "IngestResult",
     "InventoryInsufficientError",
     "InventoryService",
+    "LineApplication",
     "MappingNotFoundError",
     "MappingService",
     "MasterSkuNotFoundError",

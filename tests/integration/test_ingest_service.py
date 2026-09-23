@@ -336,3 +336,35 @@ async def test_unmanaged_line_does_not_block_its_neighbours(db_session) -> None:
     inv = InventoryService(db_session)
     assert await inv.get_current_stock(box) == 0
     assert await inv.get_current_stock(real) == -2
+
+
+async def test_a_line_repaired_without_stock_is_not_credited_on_cancellation(
+    db_session,
+) -> None:
+    """`reresolve_order_items` deliberately fills `master_sku_id` in on
+    historical lines without moving stock, because the physical count already
+    settled the shelf. A backdated cancellation on one of those lines must not
+    then credit stock the order never took — the compensation is driven by what
+    the event log records, not by the line merely carrying a master SKU.
+    """
+    master_id = await _seed_mapping(db_session, channel="shopify", sku="REPAIRED")
+    svc = OrderIngestService(db_session)
+    inventory = InventoryService(db_session)
+
+    # Arrives unmapped, so ingestion parks it and writes no event.
+    await svc.ingest(_normalized(channel_order_id="O-REPAIRED", sku="UNKNOWN-THEN", quantity=3))
+    assert await inventory.get_current_stock(master_id) == 0
+
+    # The repair: the master SKU is filled in, stock untouched.
+    item = (
+        await db_session.execute(select(OrderItem).where(OrderItem.channel_sku == "UNKNOWN-THEN"))
+    ).scalar_one()
+    item.master_sku_id = master_id
+    await db_session.flush()
+
+    result = await svc.ingest(
+        _normalized(channel_order_id="O-REPAIRED", sku="UNKNOWN-THEN", status="cancelled")
+    )
+
+    assert result.cancelled_count == 0
+    assert await inventory.get_current_stock(master_id) == 0
