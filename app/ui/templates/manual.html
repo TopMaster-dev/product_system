@@ -8,13 +8,17 @@
   {% elif kind=='zero' %}bg-ink-100 text-ink-600 ring-ink-300
   {% elif kind=='low' %}bg-amber-50 text-amber-700 ring-amber-200
   {% else %}bg-emerald-50 text-emerald-700 ring-emerald-200{% endif %}">{{ label }}</span>{% endmacro %}
+{% macro note(text) %}<div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700">{{ text }}</div>{% endmacro %}
+{% macro warn(text) %}<div class="mt-3 rounded-lg border border-amber-200 border-l-4 border-l-amber-400 bg-amber-50 px-4 py-3 text-sm text-ink-800">{{ text }}</div>{% endmacro %}
+{% macro head(n, title) %}<div class="flex items-center gap-3 mb-2">{{ num(n) }}<h2 class="text-xl font-semibold text-ink-900">{{ title }}</h2></div>{% endmacro %}
+{% macro sub(t) %}<p class="text-sm font-semibold text-ink-800 mt-4 mb-1.5">{{ t }}</p>{% endmacro %}
 
 {% block content %}
 <div class="max-w-3xl mx-auto">
 
   <!-- Header -->
   <div class="mb-6">
-    <p class="text-[11px] font-semibold tracking-[0.18em] text-brand-600 mb-1.5">在庫管理システム · PHASE 1-B</p>
+    <p class="text-[11px] font-semibold tracking-[0.18em] text-brand-600 mb-1.5">在庫管理システム · PHASE 2</p>
     <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight text-ink-900">管理画面 操作手順書</h1>
     <p class="text-sm text-ink-500 mt-1.5">非エンジニア向け 運用ガイド ― 画面ごとに「何ができるか」「どう操作するか」</p>
   </div>
@@ -31,167 +35,261 @@
   <!-- Menu map -->
   <section class="mb-8">
     <h2 class="text-lg font-semibold text-ink-900 mb-3">画面の全体像（上部メニュー）</h2>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-      {% set menu = [
-        ('s1','1','ダッシュボード','全体の状況をひと目で確認'),
-        ('s2','2','在庫一覧','SKUごとの在庫を確認・検索'),
-        ('s3','3','リコンサイル','CROSS MALL と突き合わせ補正'),
-        ('s4','4','同期エラー','反映失敗の確認・再実行'),
-        ('s5','5','マッピング','SKU対応表の管理'),
-        ('s6','6','アラート','未マッピング注文の解決'),
-        ('s7','7','手動調整','在庫を手で増減'),
-        ('s8','8','イベントログ','在庫の全履歴を検索'),
-      ] %}
-      {% for id, n, t, d in menu %}
-        <a href="#{{ id }}" class="flex gap-3 p-3.5 bg-white border border-ink-200 rounded-xl hover:border-brand-300 hover:shadow-card-hover transition">
-          <span class="flex-shrink-0 mt-0.5 w-6 h-6 rounded-lg bg-brand-600 text-white font-mono text-xs font-semibold flex items-center justify-center">{{ n }}</span>
-          <span class="min-w-0">
-            <span class="block font-semibold text-ink-900 text-sm">{{ t }}</span>
-            <span class="block text-ink-500 text-xs mt-0.5">{{ d }}</span>
-          </span>
-        </a>
-      {% endfor %}
-    </div>
-    <div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700">
-      迷ったら {{ ui('ダッシュボード') }} に戻ってください。<strong class="text-ink-900">赤や黄色の数字は「対応が必要」の合図</strong>です。
-    </div>
+    {% set groups = [
+      ('在庫', [('s2','2','在庫一覧','SKUごとの在庫を確認・検索'), ('s12','12','手動調整','在庫を手で増減')]),
+      ('分析', [('s3','3','概要 / 売上明細','売上と在庫の推移'), ('s4','4','カテゴリ別','分類ごとの売上'), ('s5','5','欠品リスク','販売速度と欠品予測')]),
+      ('運用', [('s6','6','リコンサイル','外部データと突き合わせ補正'), ('s7','7','棚卸','実地棚卸の取込と承認'), ('s8','8','同期エラー','反映失敗の確認・再実行'), ('s9','9','アラート','未マッピング注文の解決'), ('s13','13','イベントログ','在庫の全履歴を検索'), ('s11','11','データ品質','データの不備をまとめて確認')]),
+      ('設定', [('s10','10','マッピング','SKU対応表の管理'), ('s10b','10','カテゴリ','商品の分類を登録')]),
+    ] %}
+    {% for group_label, items in groups %}
+      <p class="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-400 mt-4 mb-2">{{ group_label }}</p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        {% for id, n, t, d in items %}
+          <a href="#{{ id }}" class="flex gap-3 p-3.5 bg-white border border-ink-200 rounded-xl hover:border-brand-300 hover:shadow-card-hover transition">
+            <span class="flex-shrink-0 mt-0.5 w-6 h-6 rounded-lg bg-brand-600 text-white font-mono text-xs font-semibold flex items-center justify-center">{{ n }}</span>
+            <span class="min-w-0">
+              <span class="block font-semibold text-ink-900 text-sm">{{ t }}</span>
+              <span class="block text-ink-500 text-xs mt-0.5">{{ d }}</span>
+            </span>
+          </a>
+        {% endfor %}
+      </div>
+    {% endfor %}
+    {{ note('迷ったら ' ~ ui('ダッシュボード') ~ ' に戻ってください。赤や黄色の数字は「対応が必要」の合図です。') }}
   </section>
 
   <!-- Status legend -->
   <section class="mb-8">
-    <h2 class="text-lg font-semibold text-ink-900 mb-3">在庫状態の色分け（一目で異常在庫が分かります）</h2>
+    <h2 class="text-lg font-semibold text-ink-900 mb-3">在庫状態の色分け</h2>
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
       <div class="bg-white border border-ink-200 rounded-xl p-3.5"><div class="mb-1.5">{{ pill('neg','マイナス') }}</div><p class="text-xs text-ink-500">売れすぎ等。要確認。</p></div>
       <div class="bg-white border border-ink-200 rounded-xl p-3.5"><div class="mb-1.5">{{ pill('zero','ゼロ') }}</div><p class="text-xs text-ink-500">在庫なし（欠品）。</p></div>
-      <div class="bg-white border border-ink-200 rounded-xl p-3.5"><div class="mb-1.5">{{ pill('low','低在庫') }}</div><p class="text-xs text-ink-500">残りわずか（1〜9）。</p></div>
-      <div class="bg-white border border-ink-200 rounded-xl p-3.5"><div class="mb-1.5">{{ pill('ok','正常') }}</div><p class="text-xs text-ink-500">10 以上。</p></div>
+      <div class="bg-white border border-ink-200 rounded-xl p-3.5"><div class="mb-1.5">{{ pill('low','低在庫') }}</div><p class="text-xs text-ink-500">残りわずか。基準はSKUごと。</p></div>
+      <div class="bg-white border border-ink-200 rounded-xl p-3.5"><div class="mb-1.5">{{ pill('ok','正常') }}</div><p class="text-xs text-ink-500">基準を上回っています。</p></div>
     </div>
+    {{ warn('「低在庫」の基準は全商品で同じ数ではありません。よく売れる商品ほど基準が高くなります（次項）。') }}
+  </section>
+
+  <!-- 動的低在庫閾値 -->
+  <section class="mb-8">
+    <h2 class="text-lg font-semibold text-ink-900 mb-3">「低在庫」の基準はSKUごとに変わります</h2>
+    <p class="text-sm text-ink-600 mb-2">以前は全商品いちりつに「9個以下」でしたが、Phase 2 からは<strong>その商品が実際にどれだけ売れているか</strong>から基準を決めています。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li>考え方は「<strong>あと2週間もつ量を下回ったら低在庫</strong>」です。1日1個売れる商品なら14個、1日10個売れる商品なら140個が基準になります。</li>
+      <li>基準の下限は3、上限は200です。ほとんど動かない商品が「在庫1でも正常」になったり、瞬間的に売れた商品の基準が跳ね上がったりしないようにするためです。</li>
+      <li>基準は毎時の自動集計で更新されます。販売実績が変われば基準も変わります。</li>
+    </ul>
+    {{ note('同じ在庫数でも、商品によって ' ~ pill('low','低在庫') ~ ' になったりならなかったりします。異常ではありません。') }}
   </section>
 
   <!-- 1 ダッシュボード -->
   <section id="s1" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('1') }}<h2 class="text-xl font-semibold text-ink-900">ダッシュボード</h2></div>
+    {{ head('1', 'ダッシュボード') }}
     <p class="text-sm text-ink-600 mb-2">トップ画面です。カードをクリックすると各画面へ移動します。</p>
     <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
       <li><strong>未解決アラート</strong>（赤）: 対応表が無くて止まっている注文の件数。0 以外なら対応が必要です。</li>
       <li><strong>同期エラー（要対応）</strong>（赤）: 在庫反映に失敗した件数。0 以外なら「同期エラー」画面で確認します。</li>
       <li><strong>承認待ちの照合</strong>（黄）: リコンサイルで承認待ちの件数。0 以外なら「リコンサイル」画面で確認します。</li>
     </ul>
-    <div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700"><strong class="text-ink-900">毎日の確認ポイント:</strong> この3つが <strong>0</strong> になっていれば、基本的に運用は正常です。</div>
+    {{ note('毎日の確認ポイント: この3つが 0 になっていれば、基本的に運用は正常です。') }}
   </section>
 
   <!-- 2 在庫一覧 -->
   <section id="s2" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('2') }}<h2 class="text-xl font-semibold text-ink-900">在庫一覧</h2></div>
+    {{ head('2', '在庫一覧') }}
     <p class="text-sm text-ink-600 mb-2">SKUごとの現在の在庫数を確認します。</p>
-    <p class="text-sm font-semibold text-ink-800 mt-4 mb-1.5">検索・絞り込み</p>
+    {{ sub('検索・絞り込み') }}
     <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
       <li>検索ボックスに <strong>SKUコード</strong> または <strong>商品名</strong> の一部を入れて {{ ui('検索') }}。</li>
-      <li>「在庫状態」で <strong>すべて / マイナス / ゼロ / 低在庫（1〜9）/ 正常（10以上）/ 売れ筋</strong> に絞り込めます。</li>
-      <li>画面上部の<strong>件数バッジ</strong>（マイナス◯ / ゼロ◯ / 低在庫◯）は、クリックするとその状態だけに絞り込めます。</li>
+      <li>「在庫状態」で <strong>すべて / マイナス / ゼロ / 低在庫 / 正常 / 売れ筋</strong> に絞り込めます。</li>
+      <li>画面上部の<strong>件数バッジ</strong>は、クリックするとその状態だけに絞り込めます。</li>
     </ul>
-    <p class="text-sm font-semibold text-ink-800 mt-4 mb-1.5">表示・並び替え・出力</p>
+    {{ sub('表示・並び替え・出力') }}
     <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li>「状態」列にラベル（{{ pill('neg','マイナス') }} {{ pill('zero','ゼロ') }} {{ pill('low','低在庫') }} {{ pill('ok','正常') }}）が表示されます。初期表示は<strong>問題のあるSKUが上</strong>（マイナス→ゼロ→低在庫→正常）に並びます。</li>
-      <li>列の見出し（SKU / 商品名 / 在庫数 / 状態 / 最終更新）をクリックすると<strong>並び替え</strong>できます。</li>
+      <li>初期表示は<strong>問題のあるSKUが上</strong>（マイナス→ゼロ→低在庫→正常）に並びます。</li>
+      <li>列の見出しをクリックすると<strong>並び替え</strong>できます。</li>
       <li>右上の {{ ui('CSV出力') }} で、いま表示している条件のまま一覧をダウンロードできます。</li>
-      <li>直近の販売が多いSKUには {{ ui('売れ筋') }} バッジが付きます。売れ筋かつ在庫が少ない場合は「売れ筋商品が在庫不足です」と<strong>警告</strong>が出ます（補充の目安）。</li>
+      <li>直近の販売が多いSKUには {{ ui('売れ筋') }} バッジが付きます。売れ筋かつ在庫が少ない場合は警告が出ます。</li>
       <li>各行の {{ ui('履歴 →') }} から、その SKU の在庫の動きを確認できます。</li>
     </ul>
-    <div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700">ここでは在庫数の<strong>確認</strong>のみです。数を変えるときは「手動調整」または「リコンサイル」を使います。</div>
+    {{ note('ここでは在庫数の確認のみです。数を変えるときは「手動調整」「リコンサイル」「棚卸」を使います。') }}
   </section>
 
-  <!-- 3 リコンサイル -->
+  <!-- 3 分析 -->
   <section id="s3" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('3') }}<h2 class="text-xl font-semibold text-ink-900">リコンサイル（在庫の突き合わせ）／ 在庫CSV取込</h2></div>
-    <p class="text-sm text-ink-600 mb-2">CROSS MALL の<strong>在庫CSV</strong>とシステムの基準在庫を突き合わせ、ズレ（差分）を承認して補正します。<strong>毎日の在庫合わせの中心機能</strong>です。</p>
-    <p class="text-sm font-semibold text-ink-800 mt-4 mb-1.5">3-1. CSVを取り込む</p>
+    {{ head('3', '分析 — 概要 / 売上明細') }}
+    <p class="text-sm text-ink-600 mb-2">売上と在庫の推移を期間で見る画面です。</p>
+    {{ sub('期間の選び方') }}
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li>7日 / 30日 / 90日などのボタン、または日付を指定して表示します。</li>
+      <li>「前期間比」は、<strong>同じ長さの直前の期間</strong>と比べた増減です。30日表示なら、その前の30日と比べています。</li>
+    </ul>
+    {{ sub('数字の読み方（重要）') }}
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li><strong>売上・販売点数・受注件数は「期間の合計」</strong>です。日ごとの数字を足したものです。</li>
+      <li><strong>在庫数は「期間の最終日の数字」</strong>です。合計ではありません。「28日間ずっと5,000個」は140,000個ではなく5,000個です。</li>
+      <li><strong>受注件数は注文の数</strong>です。1つの注文に商品が3点入っていても1件と数えます。</li>
+      <li><strong>キャンセル・返品は売上に含みません。</strong></li>
+      <li><strong>回転率は「その期間での回転」</strong>です。年換算していません。7日間の回転率と90日間の回転率は、そのまま比べられません。</li>
+    </ul>
+    {{ sub('未マッピング売上') }}
+    <p class="text-sm text-ink-700">商品を特定できていない売上です。<strong>売上金額には含めず、別枠で表示</strong>しています。金額が大きいときは画面に注意表示が出ます。「アラート」画面でSKUを対応づけると、正しい商品の売上に移ります。</p>
+    {{ warn('データの蓄積開始日より前の期間を選ぶと、数字は少なく出ます。画面には集計できた日数が表示されるので、期間の日数と食い違っていないか確認してください。') }}
+  </section>
+
+  <!-- 4 カテゴリ別 -->
+  <section id="s4" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('4', '分析 — カテゴリ別') }}
+    <p class="text-sm text-ink-600 mb-2">リング・ネックレスといった分類ごとの売上を見ます。分類は「設定 → カテゴリ」で登録したものです。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li>分類が設定されていない商品は <strong>「未分類」としてまとめて表示</strong>されます。黙って除外はしません。除外すると各分類の合計と全体の合計が合わなくなるためです。</li>
+      <li>大分類の数字には、その下の中分類の売上も含まれます。</li>
+    </ul>
+    {{ note('「未分類」が多いときは、設定 → カテゴリ で分類を登録してください。分類を変えると、過去の集計にもさかのぼって反映されます。') }}
+  </section>
+
+  <!-- 5 欠品リスク -->
+  <section id="s5" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('5', '分析 — 欠品リスク') }}
+    <p class="text-sm text-ink-600 mb-2">「このままだと、いつ在庫が尽きるか」を販売実績から見積もる画面です。補充の優先順位を決めるために使います。</p>
+    {{ sub('列の意味') }}
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li><strong>販売速度</strong>: 1日あたり何個売れているか。<strong>実際に動きのあった日数</strong>で割っています（売れなかった日を分母に入れると、たまにしか売れない商品の速度が実態より遅く出るためです）。</li>
+      <li><strong>残日数</strong>: 現在の在庫を販売速度で割った日数。</li>
+      <li><strong>欠品予測日</strong>: 残日数から計算した、在庫が尽きる見込みの日付。</li>
+    </ul>
+    {{ sub('「データ不足」「予測不可」と出たとき') }}
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li><strong>データ不足</strong>: 実績の日数が足りず、速度の信頼度が低い状態です。数字は参考程度に見てください。</li>
+      <li><strong>予測不可</strong>: 期間中に1個も売れていない、または在庫が0の商品です。<strong>計算できないことを、無理に数字にしていません。</strong>「予測不可」は異常ではありません。</li>
+    </ul>
+    {{ note('欠品予測はあくまで実績からの見積もりです。セールや新商品の投入など、これからの予定は織り込まれていません。') }}
+  </section>
+
+  <!-- 6 リコンサイル -->
+  <section id="s6" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('6', 'リコンサイル（在庫の突き合わせ）／ 在庫CSV取込') }}
+    <p class="text-sm text-ink-600 mb-2">外部の<strong>在庫CSV</strong>とシステムの在庫を突き合わせ、ズレ（差分）を承認して補正します。</p>
     <div class="flex flex-wrap items-center gap-2 text-xs mb-3">
       <span class="px-2.5 py-1 rounded-md bg-white border border-ink-200 font-semibold text-ink-800">アップロード</span><span class="text-ink-400">→</span>
-      <span class="px-2.5 py-1 rounded-md bg-white border border-ink-200 font-semibold text-ink-800">検証</span><span class="text-ink-400">→</span>
-      <span class="px-2.5 py-1 rounded-md bg-white border border-ink-200 font-semibold text-ink-800">確認</span><span class="text-ink-400">→</span>
-      <span class="px-2.5 py-1 rounded-md bg-white border border-ink-200 font-semibold text-ink-800">実行</span>
+      <span class="px-2.5 py-1 rounded-md bg-white border border-ink-200 font-semibold text-ink-800">内容の確認</span><span class="text-ink-400">→</span>
+      <span class="px-2.5 py-1 rounded-md bg-white border border-ink-200 font-semibold text-ink-800">差分を承認</span><span class="text-ink-400">→</span>
+      <span class="px-2.5 py-1 rounded-md bg-white border border-ink-200 font-semibold text-ink-800">確定</span>
     </div>
-    <ol class="list-decimal list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li>「リコンサイル」→ 右上の {{ ui('在庫CSVを取込') }} をクリック。</li>
-      <li><strong>アップロード</strong>: CROSS MALL の在庫CSV（Shift-JIS のまま）を選び {{ ui('検証して確認へ') }}。必須列は <code class="font-mono text-xs bg-ink-100 px-1.5 py-0.5 rounded text-ink-700">商品コード</code> と <code class="font-mono text-xs bg-ink-100 px-1.5 py-0.5 rounded text-ink-700">在庫数量</code>。</li>
-      <li><strong>確認</strong>: 取り込む内容が表示されます。<strong>この時点では在庫は変わりません。</strong>「現在庫 → CSV在庫」と差分が一覧で見え、CSVに問題（文字コード違い・列不足・数値でない行）があれば警告が出ます。</li>
-      <li>問題なければ {{ ui('この内容で実行') }} をクリック。「照合」が作成され差分確認画面へ移動します。</li>
-    </ol>
-    <p class="text-sm font-semibold text-ink-800 mt-4 mb-1.5">3-2. 差分を承認して反映する</p>
-    <ol class="list-decimal list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li>差分ごとに {{ ui('承認') }}（CSVの在庫数に補正）または {{ ui('スキップ') }}（今回は変えない）を選びます。</li>
-      <li>すべて処理すると {{ ui('確定する') }} が押せます。</li>
-      <li>{{ ui('確定する') }} で照合が完了。チャネル（楽天・Shopify）への反映は、この後の<strong>定期同期</strong>で自動的に行われます。</li>
-    </ol>
-    <p class="text-sm font-semibold text-ink-800 mt-4 mb-1.5">3-3. その他</p>
     <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li>承認前の照合は {{ ui('取消') }} できます。各照合は {{ ui('CSV出力') }} で内容をダウンロードできます。</li>
-      <li>リコンサイルは<strong>毎朝自動でも実行</strong>されます（承認待ちの状態で作成）。ダッシュボードの「承認待ちの照合」を見て承認・確定してください。</li>
+      <li>取込の時点では在庫は変わりません。<strong>承認した差分だけ</strong>が在庫に反映されます。</li>
+      <li>承認しなかった差分は「見送り」として記録に残ります。</li>
+      <li>{{ ui('確定') }} を押すと、未承認の差分は見送り扱いになり、その回の照合は終了します。</li>
     </ul>
+    {{ warn('差分が異常に多いときは、取り込んだCSVが正しいか先に確認してください。CSVの中身が間違っていると、そのまま在庫が書き換わります。') }}
   </section>
 
-  <!-- 4 同期エラー -->
-  <section id="s4" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('4') }}<h2 class="text-xl font-semibold text-ink-900">同期エラー</h2></div>
-    <p class="text-sm text-ink-600 mb-2">楽天・Shopify への在庫反映が失敗したときに記録される画面です。</p>
-    <ol class="list-decimal list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li>一覧に、失敗した SKU・チャネル・<strong>日本語の原因と対処</strong>が表示されます（例:「チャネルAPIのレート制限に達しました。数分待ってから再実行してください。」）。</li>
-      <li>原因を確認し、右側の {{ ui('再実行') }} を押すと、<strong>最新の在庫数</strong>で再度反映します（成功=緑 / 再失敗=赤 のメッセージ）。</li>
-      <li>上部のフィルタで、状態・チャネル・SKU で絞り込めます。「詳細データ」で送信内容・エラー詳細も確認できます。</li>
-    </ol>
-    <div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700"><strong class="text-ink-900">対処のコツ:</strong> 一時的なエラー（タイムアウト・混雑）は、少し待って {{ ui('再実行') }} で解決することがほとんどです。何度も失敗する場合は技術担当へご連絡ください。</div>
-  </section>
-
-  <!-- 5 マッピング -->
-  <section id="s5" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('5') }}<h2 class="text-xl font-semibold text-ink-900">マッピング（SKU対応表）</h2></div>
-    <p class="text-sm text-ink-600 mb-2">チャネルのSKU（楽天・Shopify・CROSS MALL）と社内SKUの対応表を管理します。</p>
-    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li>検索・チャネルで絞り込み。</li>
-      <li>{{ ui('マッピング追加') }} で1件ずつ登録、または画面内の取込からCSVで一括登録。</li>
-      <li>{{ ui('CSV出力') }} で現在の対応表をダウンロードできます。</li>
-    </ul>
-    <div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700">通常は初期設定済みです。新商品追加時などに使います。</div>
-  </section>
-
-  <!-- 6 アラート -->
-  <section id="s6" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('6') }}<h2 class="text-xl font-semibold text-ink-900">アラート（未マッピング注文の解決）</h2></div>
-    <p class="text-sm text-ink-600 mb-2">対応表が見つからない注文が来ると、ここに表示されます。上部は <strong>未対応 / 対応中 / 解決済み</strong> の3タブに分かれ、各タブに件数バッジが付きます。「未解決件数」「直近7日の新規」「チャネル別件数」のサマリーも表示されます。</p>
-    <p class="text-sm text-ink-600 mb-2">各行には、注文された <strong>商品名</strong> と <strong>商品管理番号</strong> が表示され、どの商品かを確認できます（楽天の場合は楽天の商品名）。解決時の社内SKU選択にも商品名が表示されるので、どのSKUに紐付けるか選びやすくなっています。</p>
-    <p class="text-sm font-semibold text-ink-800 mt-4 mb-1.5">対応の流れ</p>
-    <ol class="list-decimal list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li><strong>未対応</strong>タブの行で、次のいずれか。
-        <ul class="list-disc list-outside pl-5 space-y-1 mt-1 marker:text-ink-300">
-          <li>すぐ解決 … 正しい社内SKUを選んで {{ ui('解決') }}。対応表が登録され、<strong>保留中の注文が自動で再処理</strong>されます（在庫も反映）。</li>
-          <li>あとで対応 … 担当者名（任意）を入れて {{ ui('対応中にする') }}。行が「対応中」タブへ移動し、誰が対応中かが記録されます。</li>
-        </ul>
-      </li>
-      <li><strong>対応中</strong>タブで、担当者が確認のうえ {{ ui('解決') }} して完了。</li>
-      <li><strong>解決済み</strong>タブで過去の解決を確認。チャネル / チャネルSKU（部分一致）で絞り込みも可能です。</li>
-    </ol>
-    <div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700">ダッシュボードの「未解決アラート」が赤いときは、この画面で解決してください。</div>
-  </section>
-
-  <!-- 7 手動調整 -->
+  <!-- 7 棚卸 -->
   <section id="s7" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('7') }}<h2 class="text-xl font-semibold text-ink-900">手動調整</h2></div>
-    <p class="text-sm text-ink-600 mb-2">棚卸・破損・検品差異などで在庫を手で増減します。<strong>確認画面を挟む</strong>ので誤操作を防げます。</p>
-    <ol class="list-decimal list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
-      <li><strong>SKU を選択</strong>（現在の在庫数がカッコ内に表示）。</li>
-      <li><strong>調整数</strong>を入力（<strong>正の数で増加、負の数で減少</strong>。例: <code class="font-mono text-xs bg-ink-100 px-1.5 py-0.5 rounded text-ink-700">+5</code> / <code class="font-mono text-xs bg-ink-100 px-1.5 py-0.5 rounded text-ink-700">-3</code>）。</li>
-      <li><strong>理由</strong>を入力。よく使う理由は<strong>理由テンプレート</strong>（不良品 / 破損 / 検品NG / 紛失 / 棚卸差異 / POPUP戻り在庫）から選ぶと自動入力されます（自由入力も可）。</li>
-      <li>入力すると <strong>「現在 ◯ → 変更後 ◯」</strong> のプレビューがその場で表示されます。</li>
-      <li>{{ ui('確認画面へ') }} → 内容を再確認し {{ ui('確定して適用') }} で反映（{{ ui('戻る') }} で修正も可）。調整後にマイナスになる場合は拒否されます。</li>
-      <li>画面右の <strong>「最近の手動調整」</strong> に、適用した調整がすぐ反映されます。</li>
-    </ol>
-    <div class="mt-3 rounded-lg border border-ink-200 border-l-4 border-l-brand-500 bg-ink-50 px-4 py-3 text-sm text-ink-700">すべての調整は履歴（イベントログ）に、<strong>理由と操作者付き</strong>で自動記録されます。</div>
+    {{ head('7', '棚卸（実地棚卸）') }}
+    <p class="text-sm text-ink-600 mb-2">実際に数えた在庫数をシステムに反映します。カテゴリごとに分けて、日を分けて実施できます。</p>
+    {{ sub('7-1. カウントシートを用意する') }}
+    <p class="text-sm text-ink-700">技術担当がカテゴリごとのCSVを出力してお渡しします。列は次のとおりです。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500 mt-1.5">
+      <li><code class="text-xs bg-ink-100 px-1 py-0.5 rounded">sku_code</code> … SKUコード（変更しないでください）</li>
+      <li><code class="text-xs bg-ink-100 px-1 py-0.5 rounded">counted_qty</code> … <strong>実際に数えた数を記入する欄</strong>。最初は空欄です</li>
+      <li>商品名 / カテゴリ / システム在庫数 / 備考 … 人が見るための列です</li>
+    </ul>
+    {{ note('システム在庫数は照合用に印字されています。数える前にこの数字を見て、そのまま書き写さないでください。「確認」になってしまい、棚卸の意味がなくなります。') }}
+    {{ sub('7-2. 取り込む') }}
+    <p class="text-sm text-ink-700">{{ ui('棚卸') }} → {{ ui('カウントシートを取り込む') }} から、記入済みのCSVをアップロードします。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500 mt-1.5">
+      <li><strong>棚卸実施日</strong>は「実際に数えた日」を入れてください。取込日ではありません。金曜に数えて月曜に取り込む場合は金曜の日付です。</li>
+      <li><strong>対象範囲</strong>のチェックは記録用です。ここでの選択が取込対象を絞るわけではありません。差分が無かったカテゴリは履歴に痕跡が残らないため、「どこまで数えたか」を後から辿れるようにするための項目です。</li>
+    </ul>
+    {{ sub('7-3. 覚えておいていただきたい3つのルール') }}
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li><strong>シートに無いSKUは変更されません。</strong> リングだけ数えた日にネックレスの在庫がゼロになることはありません。分けて実施して問題ありません。</li>
+      <li><strong>実数欄が空欄の行も「未計数」として対象外</strong>です。数えられなかった商品は空欄のままにしてください。</li>
+      <li><strong>同じSKUが複数行にあるときは、最初の1行だけを採用し、合算はしません。</strong> 2人が同じ棚を数えた可能性があるため、画面に警告が出ます。合算すると在庫が倍になってしまいます。</li>
+    </ul>
+    {{ sub('7-4. 差分を承認する') }}
+    <p class="text-sm text-ink-700">取り込んだ時点では在庫は変わりません。差分一覧でチェックを入れて {{ ui('選択を承認') }} を押すと、その商品だけが実数で上書きされます。誤って承認した場合も、履歴が残るので手動調整で戻せます。</p>
+    {{ warn('「差分」はシステムと実数が食い違った商品の件数です。一致した商品は記録に残らないため、差分0でも「数えていない」わけではありません。どこまで数えたかは「対象範囲」欄で確認してください。') }}
   </section>
 
-  <!-- 8 イベントログ -->
+  <!-- 8 同期エラー -->
   <section id="s8" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
-    <div class="flex items-center gap-3 mb-2">{{ num('8') }}<h2 class="text-xl font-semibold text-ink-900">イベントログ</h2></div>
+    {{ head('8', '同期エラー') }}
+    <p class="text-sm text-ink-600 mb-2">在庫を各チャネルへ反映する処理が失敗したものの一覧です。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li>原因（通信エラー、商品が見つからない等）を確認し、{{ ui('再実行') }} します。</li>
+      <li>何度も同じエラーが出る場合は、マッピングや商品側の設定に原因があることが多いです。</li>
+    </ul>
+  </section>
+
+  <!-- 9 アラート -->
+  <section id="s9" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('9', 'アラート（未マッピング注文の解決）') }}
+    <p class="text-sm text-ink-600 mb-2">注文に含まれる商品コードが、システムのどの商品か分からなかったものの一覧です。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li>{{ ui('未対応') }} {{ ui('対応中') }} {{ ui('解決済') }} のタブで状況を切り替えられます。</li>
+      <li>正しいSKUコードを選んで {{ ui('解決') }} すると、対応表が作られ、止まっていた注文明細に反映されます。</li>
+      <li>1つの注文に未知の商品が複数ある場合、1件解決しても<strong>その注文は保留のまま残ります</strong>。残りも解決すると確定になります。</li>
+    </ul>
+    {{ warn('商品コードが空欄のアラートは解決できません。空欄には複数の商品がまとまっているため、1つの商品に紐づけると他の商品の売上まで巻き込んでしまいます。表示された場合は技術担当へご連絡ください。') }}
+  </section>
+
+  <!-- 10 マッピング / カテゴリ -->
+  <section id="s10" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('10', 'マッピング（SKU対応表）') }}
+    <p class="text-sm text-ink-600 mb-2">各チャネルの商品コードと、システムの商品を対応づける表です。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li>チャネル・商品コードで検索できます。</li>
+      <li>新規登録・編集・無効化ができます。無効にした対応表は新しい注文には使われません。</li>
+    </ul>
+
+    <div id="s10b" class="scroll-mt-20 mt-8">
+      <h3 class="text-lg font-semibold text-ink-900 mb-2">カテゴリ（商品の分類）</h3>
+      <p class="text-sm text-ink-600 mb-2">カテゴリ別の売上分析に使う分類を登録します。</p>
+      {{ sub('登録の手順') }}
+      <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+        <li>まず<strong>大分類</strong>（リング、ネックレスなど）を作成します。</li>
+        <li>必要に応じて、その下に<strong>中分類</strong>を追加します。</li>
+        <li>各商品への割り当ては、画面から個別に設定するほか、<strong>CSVで一括設定</strong>できます。</li>
+      </ul>
+      {{ sub('CSV一括設定') }}
+      <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+        <li>SKUコードとカテゴリコードの2列のCSVをアップロードします。</li>
+        <li>取込前に内容を確認する画面が出ます。ここでは<strong>まだ反映されていません</strong>。</li>
+        <li>分類を変更すると、<strong>過去の集計にもさかのぼって反映</strong>されます。再集計は不要です。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 11 データ品質 -->
+  <section id="s11" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('11', 'データ品質') }}
+    <p class="text-sm text-ink-600 mb-2">データの不備をまとめて確認する画面です。各カードをクリックすると、対応する画面へ移動します。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li><strong>要対応の項目</strong>: 未マッピング、マイナス在庫など、放置すると数字が合わなくなるものです。</li>
+      <li><strong>参考情報</strong>: アーカイブ済み、在庫管理対象外、親商品の件数など。<strong>対応不要</strong>で、現状を把握するためのものです。</li>
+      <li><strong>詳細検査</strong>: 在庫イベントの整合性（イベントの合計と現在庫が一致しているか）まで調べます。負荷が高いので、必要なときだけ実行してください。数秒かかります。</li>
+    </ul>
+    {{ sub('楽天SKU不備レポート') }}
+    <p class="text-sm text-ink-700">楽天側の商品管理番号に不備があるものを一覧にしたものです。仮の番号のままになっている商品や、対応表が作れない商品が分かります。<strong>修正は楽天RMS側で行い</strong>、その後こちらで再取込します。CSVでダウンロードして、修正担当の方へお渡しできます。</p>
+  </section>
+
+  <!-- 12 手動調整 -->
+  <section id="s12" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('12', '手動調整') }}
+    <p class="text-sm text-ink-600 mb-2">在庫数を手で増やす・減らすことができます。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li>SKUを選び、増減する数と<strong>理由</strong>を入力します。理由はよく使うものがテンプレートとして選べます。</li>
+      <li>確認画面で、調整前と調整後の在庫数を確認してから実行します。</li>
+      <li>操作した人・理由・日時はすべて記録に残ります。</li>
+    </ul>
+    {{ warn('手動調整は在庫を直接変更します。棚卸で数を合わせる場合は「棚卸」画面を使うほうが、どの範囲をいつ数えたかが記録に残ります。') }}
+  </section>
+
+  <!-- 13 イベントログ -->
+  <section id="s13" class="scroll-mt-20 border-t border-ink-100 pt-8 mt-8">
+    {{ head('13', 'イベントログ') }}
     <p class="text-sm text-ink-600 mb-2">在庫が動いたすべての履歴を検索できます（注文・キャンセル・手動調整・棚卸・入荷）。</p>
     <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
       <li>SKU・種別・チャネル・期間で絞り込み。</li>
@@ -199,37 +297,64 @@
     </ul>
   </section>
 
+  <!-- 覚えておきたい考え方 -->
+  <section class="border-t border-ink-100 pt-8 mt-8">
+    <h2 class="text-lg font-semibold text-ink-900 mb-3">覚えておきたい考え方</h2>
+
+    {{ sub('「在庫管理対象外」と「アーカイブ」は別のものです') }}
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500">
+      <li><strong>在庫管理対象外</strong>は、ギフトバッグやクーポンのように<strong>そもそも在庫を持たない商品</strong>です。注文が入っても在庫は減りません。在庫の分析からも外れます。以前これを設定していなかったため、ギフトバッグの在庫がマイナス12,509まで進んだことがあります。</li>
+      <li><strong>アーカイブ</strong>は、<strong>取り扱いを終えた商品</strong>です。今の在庫画面からは消えますが、<strong>過去の期間の売上集計には含まれます</strong>。除外すると、その商品が売れていた過去の売上が消えて、前期間との比較が壊れるためです。</li>
+    </ul>
+
+    {{ sub('セット商品・共有在庫は「売上は親、在庫は構成品」') }}
+    <p class="text-sm text-ink-700">長さ違いで在庫を共有している商品や、セット商品では、<strong>売上は注文された商品（親）に計上し、在庫は共有している構成品から減らします</strong>。そのため「売上はあるのに、その商品の在庫が減っていない」ように見えることがあります。仕様であり、不具合ではありません。在庫は共有プール側で減っています。</p>
+
+    {{ sub('数字が変わる操作') }}
+    <p class="text-sm text-ink-700">次の操作をすると、過去にさかのぼって集計の数字が変わります。いずれも<strong>より正確になる方向</strong>の変化です。</p>
+    <ul class="list-disc list-outside pl-5 space-y-1.5 text-sm text-ink-700 marker:text-brand-500 mt-1.5">
+      <li><strong>アラートの解決 / マッピングの追加</strong>: 未マッピングだった売上が、正しい商品の売上に移ります。</li>
+      <li><strong>カテゴリの変更</strong>: カテゴリ別の集計が変わります。</li>
+      <li><strong>過去の注文のキャンセル</strong>: その注文を受けた日の売上から差し引かれます。今日の売上からではありません。</li>
+    </ul>
+    {{ warn('マッピングをまとめて追加したときは、技術担当による再集計が必要になる場合があります。画面の数字が期待と違うときは、まずご連絡ください。') }}
+  </section>
+
   <!-- 早見表 -->
   <section class="border-t border-ink-100 pt-8 mt-8">
     <h2 class="text-lg font-semibold text-ink-900 mb-3">困ったときは（早見表）</h2>
     <div class="bg-white border border-ink-200 rounded-xl overflow-hidden shadow-card">
       <div class="scroll-area overflow-x-auto">
-        <table class="w-full text-sm" style="min-width:460px">
+        <table class="w-full text-sm" style="min-width:520px">
           <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
             <tr><th class="text-left font-semibold px-4 py-3">症状</th><th class="text-left font-semibold px-4 py-3">見る画面</th><th class="text-left font-semibold px-4 py-3">対処</th></tr>
           </thead>
           <tbody class="divide-y divide-ink-100 text-ink-700">
             <tr><td class="px-4 py-3 font-medium text-ink-800">在庫がチャネルに反映されない</td><td class="px-4 py-3">同期エラー</td><td class="px-4 py-3">原因を確認し {{ ui('再実行') }}</td></tr>
             <tr><td class="px-4 py-3 font-medium text-ink-800">注文が処理されず止まっている</td><td class="px-4 py-3">アラート</td><td class="px-4 py-3">正しいSKUで {{ ui('解決') }}</td></tr>
-            <tr><td class="px-4 py-3 font-medium text-ink-800">CROSS MALL と在庫が合わない</td><td class="px-4 py-3">リコンサイル</td><td class="px-4 py-3">CSV取込 → 差分を承認 → 確定</td></tr>
+            <tr><td class="px-4 py-3 font-medium text-ink-800">外部データと在庫が合わない</td><td class="px-4 py-3">リコンサイル</td><td class="px-4 py-3">CSV取込 → 差分を承認 → 確定</td></tr>
             <tr><td class="px-4 py-3 font-medium text-ink-800">在庫数がマイナス</td><td class="px-4 py-3">在庫一覧（マイナスで絞込）</td><td class="px-4 py-3">原因確認のうえ 手動調整 / リコンサイルで補正</td></tr>
-            <tr><td class="px-4 py-3 font-medium text-ink-800">棚卸で数を直したい</td><td class="px-4 py-3">手動調整</td><td class="px-4 py-3">理由を入れて増減</td></tr>
+            <tr><td class="px-4 py-3 font-medium text-ink-800">実地棚卸の結果を反映したい</td><td class="px-4 py-3">棚卸</td><td class="px-4 py-3">カウントシート取込 → 差分を承認</td></tr>
+            <tr><td class="px-4 py-3 font-medium text-ink-800">売上に「未マッピング」が多い</td><td class="px-4 py-3">アラート / データ品質</td><td class="px-4 py-3">SKUを対応づける。解決後は再集計が必要な場合あり</td></tr>
+            <tr><td class="px-4 py-3 font-medium text-ink-800">欠品予測が「予測不可」</td><td class="px-4 py-3">欠品リスク</td><td class="px-4 py-3">対処不要。売れていない、または在庫0の商品です</td></tr>
+            <tr><td class="px-4 py-3 font-medium text-ink-800">同じ在庫数なのに低在庫にならない</td><td class="px-4 py-3">在庫一覧</td><td class="px-4 py-3">対処不要。基準は商品ごとの販売速度で変わります</td></tr>
+            <tr><td class="px-4 py-3 font-medium text-ink-800">カテゴリ別に「未分類」が多い</td><td class="px-4 py-3">設定 → カテゴリ</td><td class="px-4 py-3">CSVで一括設定</td></tr>
           </tbody>
         </table>
       </div>
     </div>
-    <div class="mt-3 rounded-lg border border-amber-200 border-l-4 border-l-amber-400 bg-amber-50 px-4 py-3 text-sm text-ink-800">
-      <strong>リコンサイルの「確定」</strong>と<strong>手動調整</strong>は在庫を実際に変更します。確認画面の内容をよく確認してから実行してください。大量の差分承認など判断に迷う操作は、確定前に技術担当へご相談ください。
-    </div>
+    {{ warn('リコンサイルの「確定」・棚卸の「承認」・手動調整は在庫を実際に変更します。確認画面の内容をよく確認してから実行してください。大量の差分承認など判断に迷う操作は、確定前に技術担当へご相談ください。') }}
   </section>
 
   <!-- Appendix -->
   <section class="border-t border-ink-200 pt-6 mt-10">
     <h2 class="text-[11px] font-semibold tracking-[0.14em] uppercase text-ink-400 mb-3">補足（技術担当者向け）</h2>
     <ul class="list-disc list-outside pl-5 space-y-1.5 text-xs text-ink-500 marker:text-ink-300">
-      <li>認証は Basic 認証（Phase 1-A 実装）。将来的に IAP / IdP へ移行予定。</li>
-      <li>楽天への在庫Pushは、対象カタログが「項目選択肢別在庫」方式のため現状は別途対応が必要（Shopify へは反映されます）。</li>
-      <li>定期ジョブ: リコンサイル（毎朝 JST 06:00・承認待ちで作成）、バンドル在庫Push（毎時）、楽天/Shopify ポーリング、BigQuery エクスポート。</li>
+      <li>管理画面の認証は Basic 認証。内部ジョブのエンドポイントは Google 署名トークンで検証。</li>
+      <li>楽天への在庫Pushは、対象カタログが「項目選択肢別在庫」方式のため別途対応（Shopify へは反映されます）。</li>
+      <li>定期ジョブ: 楽天/Shopify ポーリング、バンドル在庫Push（毎時）、日次集計ロールアップ（毎時＋日次修復）、リコンサイル（毎朝 JST 06:00・承認待ちで作成）、BigQuery エクスポート。</li>
+      <li>分析の数値は日次ロールアップ（<code>daily_kpi_snapshots</code> ほか）を読みます。受注データからの直接集計との突合は <code>verify_analytics_totals</code> で確認できます。</li>
+      <li>マッピングを一括追加した後は <code>reresolve_order_items --rebuild-metrics</code>。在庫は変更せず、売上の帰属のみを補正して該当期間を再集計します。</li>
     </ul>
   </section>
 
