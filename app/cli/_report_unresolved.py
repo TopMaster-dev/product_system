@@ -8,14 +8,23 @@ the next 39 put together.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from app.services.mapping import ReResolution
 
 _MAX_ROWS = 40
 
 
+def _yen(value: Decimal) -> str:
+    """The number 検収 actually asks about. 734明細 could be 4万円 or 40万円."""
+    return f"{value:>12,.0f} 円"
+
+
 def print_report(*, title: str, outcome: ReResolution, dry_run: bool) -> None:
     print(f"\n  === {title} ===" + ("  (dry-run: 保存しません)" if dry_run else ""))
-    print(f"  マスタSKUを補完した明細 {outcome.lines_filled:>5}件")
+    print(
+        f"  マスタSKUを補完した明細 {outcome.lines_filled:>5}件  {_yen(outcome.filled_sales_jpy)}"
+    )
     if outcome.stock_events:
         print(f"  在庫を減らした件数      {outcome.stock_events:>5}件")
     if outcome.cancelled_skipped:
@@ -28,7 +37,10 @@ def print_report(*, title: str, outcome: ReResolution, dry_run: bool) -> None:
         print("\n  マッピング待ちの明細はありません")
         return
 
-    print(f"\n  マッピングが必要なSKU {len(outcome.unresolved)}件 — 影響の大きい順")
+    print(
+        f"\n  マッピングが必要なSKU {len(outcome.unresolved)}件"
+        f"  {_yen(outcome.unresolved_sales_jpy)} — 影響の大きい順"
+    )
     ranked = sorted(outcome.unresolved.items(), key=lambda kv: kv[1].lines, reverse=True)
     for (channel, channel_sku), stat in ranked[:_MAX_ROWS]:
         span = ""

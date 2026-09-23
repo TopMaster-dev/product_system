@@ -16,6 +16,7 @@ and the test below is what stops that turning back into True.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -41,6 +42,7 @@ class _Item:
         self.channel_sku = sku
         self.quantity = quantity
         self.line_id = line_id
+        self.unit_price = Decimal(0)
         self.master_sku_id: int | None = None
 
 
@@ -211,3 +213,47 @@ def test_the_historical_cli_never_applies_stock() -> None:
     source = Path("app/cli/reresolve_order_items.py").read_text(encoding="utf-8")
     assert "apply_stock=False" in source
     assert "apply_stock=True" not in source
+
+
+# --- 金額 ------------------------------------------------------------------
+
+
+async def test_the_filled_revenue_is_reported_not_just_the_line_count(
+    _no_real_inventory: list[tuple[int, int]],
+) -> None:
+    """検収 asks what share of revenue is attributable to nothing. 734明細
+    could be ¥40,000 or ¥400,000, and only the yen figure answers it."""
+    item = _Item("r-sku00000041", quantity=3)
+    item.unit_price = Decimal("1200")
+    session = _Session([(item, _Order(1))], lookups=[88], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.filled_sales_jpy == Decimal("3600")
+
+
+async def test_the_remaining_unmapped_revenue_is_reported_too() -> None:
+    """The half that mapping work still has to reach."""
+    item = _Item("STILL-UNKNOWN", quantity=2)
+    item.unit_price = Decimal("2500")
+    session = _Session([(item, _Order(1))], lookups=[None], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.filled_sales_jpy == Decimal("0")
+    assert outcome.unresolved_sales_jpy == Decimal("5000")
+
+
+async def test_a_cancelled_line_contributes_no_revenue_to_either_figure(
+    _no_real_inventory: list[tuple[int, int]],
+) -> None:
+    """Matching how the KPI counts 未マッピング売上 — otherwise this figure
+    would not be comparable with the one on the screen."""
+    item = _Item("r-sku00000041", quantity=3)
+    item.unit_price = Decimal("1200")
+    session = _Session([(item, _Order(1, status="cancelled"))], lookups=[88], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.lines_filled == 1
+    assert outcome.filled_sales_jpy == Decimal("0")

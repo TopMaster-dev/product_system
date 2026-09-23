@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -246,6 +247,13 @@ class ReResolution:
     cancelled_skipped: int
     unmanaged_skipped: int
     unresolved: dict[tuple[str, str], UnresolvedSku]
+    #: Revenue that moves from 未マッピング to a real SKU, cancelled orders
+    #: excluded to match how the KPI counts it. The line count alone does not
+    #: answer the question 検収 actually asks — 未マッピング売上 is a share of
+    #: revenue, and 734 lines could be ¥40,000 or ¥400,000.
+    filled_sales_jpy: Decimal = Decimal(0)
+    #: Revenue still attributable to nothing, on the same basis.
+    unresolved_sales_jpy: Decimal = Decimal(0)
 
 
 async def reresolve_unmapped_lines(
@@ -276,6 +284,8 @@ async def reresolve_unmapped_lines(
     stock_events = 0
     cancelled_skipped = 0
     unmanaged_skipped = 0
+    filled_sales = Decimal(0)
+    unresolved_sales = Decimal(0)
 
     stmt = (
         select(OrderItem, Order)
@@ -298,15 +308,23 @@ async def reresolve_unmapped_lines(
             ),
         )
         master_sku_id = found.scalar_one_or_none()
+        # Cancelled lines are excluded from both amounts, to match how the KPI
+        # counts 未マッピング売上 — otherwise the figure here would not be
+        # comparable with the one on the screen.
+        live = order.status not in _CANCEL_STATUSES
+        amount = item.quantity * item.unit_price if live else Decimal(0)
+
         if master_sku_id is None:
             key = (order.channel, item.channel_sku)
             unresolved.setdefault(key, UnresolvedSku()).add(
                 quantity=item.quantity, ordered_at=order.ordered_at
             )
+            unresolved_sales += amount
             continue
 
         item.master_sku_id = master_sku_id
         lines_filled += 1
+        filled_sales += amount
         touched[order.id] = order
 
         if not apply_stock:
@@ -342,6 +360,8 @@ async def reresolve_unmapped_lines(
         cancelled_skipped=cancelled_skipped,
         unmanaged_skipped=unmanaged_skipped,
         unresolved=unresolved,
+        filled_sales_jpy=filled_sales,
+        unresolved_sales_jpy=unresolved_sales,
     )
 
 
