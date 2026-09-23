@@ -189,19 +189,26 @@ async def upload_execute(
     if inspection.fatal:
         return RedirectResponse(url="/admin/stocktake/upload?flash=badcsv", status_code=303)
 
-    async with session.begin():
-        run = await ReconcileService(session).start_run(
-            source=SOURCE,
-            triggered_by=operator,
-            diffs=iter(plan.diffs),
-            csv_filename=filename,
-            run_type=_RUN_TYPE,
-            counted_by=counted_by or operator,
-            counted_on=counted_date,
-            scope_note=scope_note(categories, len(plan.counted)),
-            counted_sku_count=len(plan.counted),
-        )
-        run_id = run.id
+    # Explicit commit, NOT `async with session.begin()`. Everything above
+    # already read through this session, which autobegins a transaction —
+    # `begin()` then opens a second one and raises
+    # `InvalidRequestError: A transaction is already begun`. It took the
+    # production smoke test on 2026-09-23 to find: the same mistake had been
+    # fixed in three CLIs weeks earlier, and the guard written for it only
+    # looked at app/cli.
+    run = await ReconcileService(session).start_run(
+        source=SOURCE,
+        triggered_by=operator,
+        diffs=iter(plan.diffs),
+        csv_filename=filename,
+        run_type=_RUN_TYPE,
+        counted_by=counted_by or operator,
+        counted_on=counted_date,
+        scope_note=scope_note(categories, len(plan.counted)),
+        counted_sku_count=len(plan.counted),
+    )
+    run_id = run.id
+    await session.commit()
     return RedirectResponse(url=f"/admin/stocktake/{run_id}?flash=created", status_code=303)
 
 
@@ -331,10 +338,10 @@ async def approve_selected(
     if not diff_ids:
         return RedirectResponse(url=f"/admin/stocktake/{run_id}", status_code=303)
 
-    async with session.begin():
-        service = ReconcileService(session)
-        for diff_id in diff_ids:
-            await service.approve_diff(run_id=run_id, diff_id=diff_id, approved_by=operator)
+    service = ReconcileService(session)
+    for diff_id in diff_ids:
+        await service.approve_diff(run_id=run_id, diff_id=diff_id, approved_by=operator)
+    await session.commit()
     return RedirectResponse(url=f"/admin/stocktake/{run_id}?flash=approved", status_code=303)
 
 
@@ -351,10 +358,10 @@ async def skip_selected(
     if not diff_ids:
         return RedirectResponse(url=f"/admin/stocktake/{run_id}", status_code=303)
 
-    async with session.begin():
-        service = ReconcileService(session)
-        for diff_id in diff_ids:
-            await service.skip_diff(diff_id=diff_id, approved_by=operator)
+    service = ReconcileService(session)
+    for diff_id in diff_ids:
+        await service.skip_diff(diff_id=diff_id, approved_by=operator)
+    await session.commit()
     return RedirectResponse(url=f"/admin/stocktake/{run_id}?flash=approved", status_code=303)
 
 
@@ -367,8 +374,8 @@ async def finalize(
     run = await _load_run(session, run_id)
     if run is None:
         return RedirectResponse(url="/admin/stocktake?flash=notfound", status_code=303)
-    async with session.begin():
-        await ReconcileService(session).finalize_run(run_id=run_id, approved_by=operator)
+    await ReconcileService(session).finalize_run(run_id=run_id, approved_by=operator)
+    await session.commit()
     return RedirectResponse(url=f"/admin/stocktake/{run_id}?flash=finalized", status_code=303)
 
 
@@ -381,8 +388,8 @@ async def cancel(
     run = await _load_run(session, run_id)
     if run is None:
         return RedirectResponse(url="/admin/stocktake?flash=notfound", status_code=303)
-    async with session.begin():
-        await ReconcileService(session).cancel_run(run_id=run_id, cancelled_by=operator)
+    await ReconcileService(session).cancel_run(run_id=run_id, cancelled_by=operator)
+    await session.commit()
     return RedirectResponse(url=f"/admin/stocktake/{run_id}?flash=cancelled", status_code=303)
 
 
