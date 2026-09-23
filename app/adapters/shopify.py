@@ -34,6 +34,25 @@ from app.logging import get_logger
 
 log = get_logger(__name__)
 
+#: Shopify sends no SKU for a variant that has none set, and the empty string
+#: is not an identifier: every such product collapses onto one mapping key, one
+#: alert and one master. Production on 2026-09-23 had 46 lines and ¥385,660
+#: behind a single empty Shopify key, spread over 9 different products.
+#:
+#: The variant id is the identity Shopify does always provide, so it stands in.
+#: The prefix keeps it from ever colliding with a real SKU, and makes the
+#: synthetic key obvious to whoever meets it in the mapping screen.
+SYNTHETIC_SKU_PREFIX = "variant:"
+
+
+def channel_sku_for(sku: Any, variant_id: Any) -> str:
+    """The mapping key for one line. Blank only when Shopify gave us nothing."""
+    real = str(sku or "").strip()
+    if real:
+        return real
+    variant = _strip_gid(variant_id) if variant_id else ""
+    return f"{SYNTHETIC_SKU_PREFIX}{variant}" if variant else ""
+
 
 _ORDERS_QUERY = """
 query Orders($first: Int!, $query: String!, $cursor: String) {
@@ -643,7 +662,7 @@ class ShopifyAdapter(ChannelAdapter):
             items.append(
                 NormalizedOrderLine(
                     line_id=str(ln["id"]),
-                    channel_sku=ln.get("sku") or "",
+                    channel_sku=channel_sku_for(ln.get("sku"), ln.get("variant_id")),
                     channel_product_id=str(ln.get("variant_id") or ""),
                     product_name=(ln.get("name") or ln.get("title") or None),
                     quantity=int(ln.get("quantity") or 0),
@@ -682,7 +701,7 @@ class ShopifyAdapter(ChannelAdapter):
             items.append(
                 NormalizedOrderLine(
                     line_id=_strip_gid(ln["id"]),
-                    channel_sku=ln.get("sku") or "",
+                    channel_sku=channel_sku_for(ln.get("sku"), (ln.get("variant") or {}).get("id")),
                     channel_product_id=_strip_gid((ln.get("variant") or {}).get("id")),
                     product_name=(ln.get("name") or None),
                     quantity=int(ln["quantity"]),

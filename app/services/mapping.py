@@ -31,7 +31,7 @@ from app.models import (
     OrderItem,
     OrderStatusEnum,
 )
-from app.services.exceptions import MappingNotFoundError
+from app.services.exceptions import AmbiguousChannelSkuError, MappingNotFoundError
 from app.services.inventory import EventSource, InventoryService
 from app.services.timeframe import to_jst_date
 
@@ -56,7 +56,17 @@ class MappingService:
         """Map an unmapped channel SKU and replay all pending order lines.
 
         Returns the number of order lines that were replayed.
+
+        Refuses a blank key. It is not one product: every Shopify variant with
+        no SKU set arrives as the empty string, and they all share one alert.
+        Accepting it maps them all onto whatever master the operator picked for
+        the one name the alert happens to show.
         """
+        if not channel_sku.strip():
+            raise AmbiguousChannelSkuError(
+                f"{channel}: 商品コードが空欄の明細は、複数の商品が同じキーになっています。"
+                "1つの商品に紐づけることはできません。"
+            )
         await self._upsert_mapping(
             channel=channel,
             channel_sku=channel_sku,
@@ -263,6 +273,12 @@ class ReResolution:
     #: dashboards keep showing the old attribution for ever.
     filled_first_day: date | None = None
     filled_last_day: date | None = None
+    #: Lines whose channel SKU is blank. Skipped deliberately: the key does
+    #: not identify one product, so any mapping found under it would be
+    #: applied to all of them. Counted rather than dropped, because they are
+    #: real revenue that needs a different fix.
+    blank_key_lines: int = 0
+    blank_key_sales_jpy: Decimal = Decimal(0)
 
 
 async def reresolve_unmapped_lines(
@@ -296,6 +312,8 @@ async def reresolve_unmapped_lines(
     filled_sales = Decimal(0)
     unresolved_sales = Decimal(0)
     filled_days: list[date] = []
+    blank_key_lines = 0
+    blank_key_sales = Decimal(0)
 
     stmt = (
         select(OrderItem, Order)
@@ -309,6 +327,16 @@ async def reresolve_unmapped_lines(
         stmt = stmt.limit(limit)
 
     for item, order in (await session.execute(stmt)).all():
+        live_amount = (
+            item.quantity * item.unit_price if order.status not in _CANCEL_STATUSES else Decimal(0)
+        )
+        if not (item.channel_sku or "").strip():
+            # See `blank_key_lines`. Resolving these needs the variant id, not
+            # a mapping — `inspect_blank_channel_sku` shows what is behind them.
+            blank_key_lines += 1
+            blank_key_sales += live_amount
+            continue
+
         found = await session.execute(
             select(ChannelSkuMapping.master_sku_id).where(
                 ChannelSkuMapping.channel == order.channel,
@@ -321,8 +349,7 @@ async def reresolve_unmapped_lines(
         # Cancelled lines are excluded from both amounts, to match how the KPI
         # counts 未マッピング売上 — otherwise the figure here would not be
         # comparable with the one on the screen.
-        live = order.status not in _CANCEL_STATUSES
-        amount = item.quantity * item.unit_price if live else Decimal(0)
+        amount = live_amount
 
         if master_sku_id is None:
             key = (order.channel, item.channel_sku)
@@ -376,6 +403,8 @@ async def reresolve_unmapped_lines(
         unresolved_sales_jpy=unresolved_sales,
         filled_first_day=min(filled_days) if filled_days else None,
         filled_last_day=max(filled_days) if filled_days else None,
+        blank_key_lines=blank_key_lines,
+        blank_key_sales_jpy=blank_key_sales,
     )
 
 
@@ -409,6 +438,7 @@ async def _settle_orders(session: AsyncSession, touched: dict[int, Order]) -> in
 
 
 __all__ = [
+    "AmbiguousChannelSkuError",
     "MappingNotFoundError",
     "MappingService",
     "ReResolution",

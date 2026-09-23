@@ -152,3 +152,42 @@ async def test_the_replay_consumes_through_the_fanning_method() -> None:
     service, inventory = _service(session)
     await service._replay_pending_lines(channel="rakuten", channel_sku="N108-45", master_sku_id=77)
     assert inventory.calls == [(77, 3)]
+
+
+# --- 空欄キーの拒否 --------------------------------------------------------
+
+
+async def test_resolving_a_blank_channel_sku_is_refused() -> None:
+    """The admin screen's alert for a blank key carries one 商品名 and hides
+    the rest. Accepting it maps every one of them onto that single master."""
+    from app.services.exceptions import AmbiguousChannelSkuError
+
+    session = _Session([], still_unmapped=[])
+    service, _ = _service(session)
+
+    with pytest.raises(AmbiguousChannelSkuError):
+        await service.resolve_alert(channel="shopify", channel_sku="", master_sku_id=77)
+
+
+async def test_a_whitespace_channel_sku_is_refused_too() -> None:
+    from app.services.exceptions import AmbiguousChannelSkuError
+
+    session = _Session([], still_unmapped=[])
+    service, _ = _service(session)
+
+    with pytest.raises(AmbiguousChannelSkuError):
+        await service.resolve_alert(channel="shopify", channel_sku="  ", master_sku_id=77)
+
+
+async def test_the_refusal_happens_before_anything_is_written() -> None:
+    """Otherwise a half-made mapping survives the rejection."""
+    from app.services.exceptions import AmbiguousChannelSkuError
+
+    session = _Session([], still_unmapped=[])
+    service, inventory = _service(session)
+
+    with pytest.raises(AmbiguousChannelSkuError):
+        await service.resolve_alert(channel="shopify", channel_sku="", master_sku_id=77)
+
+    assert session.flushes == 0
+    assert inventory.calls == []

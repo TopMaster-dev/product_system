@@ -318,3 +318,45 @@ def test_the_cli_hands_the_rebuild_an_explicit_range() -> None:
     source = Path("app/cli/reresolve_order_items.py").read_text(encoding="utf-8")
     assert "from_date=first" in source
     assert "to_date=last" in source
+
+
+# --- 空欄の商品コード ------------------------------------------------------
+
+
+async def test_a_blank_channel_sku_is_never_mapped() -> None:
+    """The empty key is not one product: every Shopify variant with no SKU set
+    arrives as "". Mapping it would attribute all of them to one master — in
+    production that was 46 lines and ¥385,660 across 9 different products."""
+    item = _Item("", quantity=2)
+    item.unit_price = Decimal("3500")
+    session = _Session([(item, _Order(1))], lookups=[88], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert item.master_sku_id is None
+    assert outcome.lines_filled == 0
+    assert outcome.blank_key_lines == 1
+    assert outcome.blank_key_sales_jpy == Decimal("7000")
+
+
+async def test_a_whitespace_channel_sku_counts_as_blank() -> None:
+    """A stray space is still not an identifier, and it would not match any
+    mapping either — it would simply vanish from the report."""
+    item = _Item("   ")
+    session = _Session([(item, _Order(1))], lookups=[88], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.blank_key_lines == 1
+    assert item.master_sku_id is None
+
+
+async def test_a_blank_line_is_not_counted_as_unresolved_either() -> None:
+    """It is not waiting for a mapping; it needs the variant id. Listing it
+    among the SKUs to map sends the operator after something impossible."""
+    session = _Session([(_Item(""), _Order(1))], lookups=[], still_unmapped=[])
+
+    outcome = await reresolve_unmapped_lines(session, apply_stock=False)  # type: ignore[arg-type]
+
+    assert outcome.unresolved == {}
+    assert outcome.blank_key_lines == 1

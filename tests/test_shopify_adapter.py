@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from app.adapters import ShopifyAdapter
+from app.adapters.shopify import SYNTHETIC_SKU_PREFIX, channel_sku_for
 
 SHOP_DOMAIN = "test.myshopify.com"
 SECRET = "shpss_test_secret"
@@ -196,3 +197,42 @@ def test_sample_webhook_round_trip() -> None:
     body = json.dumps({"id": 1, "line_items": []}).encode()
     sig = base64.b64encode(hmac.new(SECRET.encode(), body, hashlib.sha256).digest()).decode()
     assert _adapter().verify_webhook({"x-shopify-hmac-sha256": sig}, body)
+
+
+# --- 商品コードが空欄のとき ------------------------------------------------
+
+
+def test_a_line_with_a_real_sku_keeps_it() -> None:
+    assert channel_sku_for("N43gold", "gid://shopify/ProductVariant/552") == "N43gold"
+
+
+def test_a_blank_sku_falls_back_to_the_variant_id() -> None:
+    """The empty string is not an identifier. Every Shopify variant with no SKU
+    set arrives as "", they collapse onto one mapping key, and resolving it maps
+    all of them to one master — 46 lines and ¥385,660 across 9 products, in
+    production on 2026-09-23."""
+    assert channel_sku_for("", "gid://shopify/ProductVariant/552") == "variant:552"
+    assert channel_sku_for(None, "552") == "variant:552"
+
+
+def test_a_whitespace_sku_is_treated_as_blank() -> None:
+    assert channel_sku_for("  ", "552") == "variant:552"
+
+
+def test_a_real_sku_is_stripped() -> None:
+    """A trailing space would otherwise make a second key for one product."""
+    assert channel_sku_for(" N43gold ", "552") == "N43gold"
+
+
+def test_nothing_to_key_on_stays_blank() -> None:
+    """A deleted product can lose its variant too. Inventing a key here would
+    hide that the line is genuinely unidentifiable."""
+    assert channel_sku_for("", None) == ""
+    assert channel_sku_for(None, "") == ""
+
+
+def test_the_synthetic_key_cannot_collide_with_a_real_sku() -> None:
+    """A real SKU containing a colon is fine; the prefix is what separates them,
+    and no Shopify SKU in this catalogue starts with it."""
+    assert channel_sku_for("", "552").startswith(SYNTHETIC_SKU_PREFIX)
+    assert not channel_sku_for("B74:22cm", "552").startswith(SYNTHETIC_SKU_PREFIX)

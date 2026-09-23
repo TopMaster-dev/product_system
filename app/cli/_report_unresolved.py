@@ -32,6 +32,15 @@ def print_report(*, title: str, outcome: ReResolution, dry_run: bool) -> None:
     if outcome.unmanaged_skipped:
         print(f"  在庫管理対象外         {outcome.unmanaged_skipped:>5}件")
     print(f"  確定に更新した受注      {outcome.orders_settled:>5}件")
+    if outcome.blank_key_lines:
+        # Never silently skipped: it is real revenue, and the fix for it is a
+        # different one — the key cannot identify a product at all.
+        print(
+            f"\n  ★ 商品コードが空欄のため対象外  {outcome.blank_key_lines:>4}件"
+            f"  {_yen(outcome.blank_key_sales_jpy)}"
+            "\n    空欄は複数の商品が同じキーになっており、マッピングでは解決できません。"
+            "\n    内訳: powershell -File scripts/run_cli.ps1 -Cli inspect_blank_channel_sku"
+        )
 
     if not outcome.unresolved:
         print("\n  マッピング待ちの明細はありません")

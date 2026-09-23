@@ -35,6 +35,7 @@ from app import __version__
 from app.db import get_session
 from app.models import ChannelEnum, MappingAlert, MappingAlertStatusEnum, MasterSku
 from app.services import MappingService
+from app.services.exceptions import AmbiguousChannelSkuError
 from app.services.sku_scope import operational_conditions
 from app.ui.auth import OperatorDep
 from app.ui.deps import templates
@@ -198,12 +199,19 @@ async def alerts_resolve(
                 url=f"/admin/alerts?status={alert.status}&flash=badsku", status_code=303
             )
         tab = alert.status if alert.status in _OUTSTANDING else "open"
-        replayed = await MappingService(session).resolve_alert(
-            channel=alert.channel,
-            channel_sku=alert.channel_sku,
-            marketplace_id=alert.marketplace_id,
-            master_sku_id=master_sku_id,
-        )
+        try:
+            replayed = await MappingService(session).resolve_alert(
+                channel=alert.channel,
+                channel_sku=alert.channel_sku,
+                marketplace_id=alert.marketplace_id,
+                master_sku_id=master_sku_id,
+            )
+        except AmbiguousChannelSkuError:
+            # Not an error the operator made. The key itself cannot
+            # identify one product, so no choice of SKU would be right.
+            return RedirectResponse(
+                url=f"/admin/alerts?status={tab}&flash=blanksku", status_code=303
+            )
     return RedirectResponse(
         url=f"/admin/alerts?status={tab}&flash=resolved:{replayed}", status_code=303
     )
@@ -224,6 +232,14 @@ def _flash(token: str | None) -> dict[str, str] | None:
         return {"kind": "ok", "message": "対応中にしました。"}
     if parts[0] == "notfound":
         return {"kind": "error", "message": "アラートが見つかりません。"}
+    if parts[0] == "blanksku":
+        return {
+            "kind": "error",
+            "message": (
+                "商品コードが空欄のため、1つの商品に紐づけられません。"
+                "複数の商品が同じ行にまとまっています。"
+            ),
+        }
     if parts[0] == "badsku":
         return {
             "kind": "error",
