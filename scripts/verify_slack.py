@@ -16,16 +16,27 @@ Exit codes:
   2 — usage error
 
 Usage (Cloud Run Job — recommended):
-    gcloud run jobs execute product-system-verify-slack \\
-        --args=--mode=empty --wait
+
+`--args` REPLACES the container args, and the job is configured as
+`command=["python"], args=["scripts/verify_slack.py"]`. So the script path has
+to be passed again or python receives only the flag and dies with
+`unknown option --mode=real` — which is exit 2, the same code as a usage error,
+so it reads like a bad flag rather than a lost argument. Two production runs
+were spent on that on 2026-09-23.
 
     gcloud run jobs execute product-system-verify-slack \\
-        --args=--mode=invalid --wait
+        --region asia-northeast1 --project inventory-496204 \\
+        --args=scripts/verify_slack.py,--mode=empty --wait
 
-    # Only AFTER D-3 client provides SLACK_WEBHOOK_URL:
     gcloud run jobs execute product-system-verify-slack \\
-        --args=--mode=real,\\
-               --webhook-url=https://hooks.slack.com/services/T/B/X --wait
+        --region asia-northeast1 --project inventory-496204 \\
+        --args=scripts/verify_slack.py,--mode=invalid --wait
+
+    # --mode=real reads SLACK_WEBHOOK_URL from the job's env (wired from
+    # Secret Manager), so the URL never reaches a command line or a log.
+    gcloud run jobs execute product-system-verify-slack \\
+        --region asia-northeast1 --project inventory-496204 \\
+        --args=scripts/verify_slack.py,--mode=real --wait
 """
 
 from __future__ import annotations

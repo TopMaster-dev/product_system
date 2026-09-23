@@ -69,9 +69,9 @@ variable "create_verification_jobs" {
 }
 
 variable "slack_webhook_secret_ready" {
-  description = "Wire SLACK_WEBHOOK_URL=slack-webhook-url:latest into the verify-slack job. Leave false until the client delivers the URL (D-3) AND a secret version exists — referencing a version-less secret makes the job fail to start."
+  description = "Wire SLACK_WEBHOOK_URL=slack-webhook-url:latest into the verify-slack job. The gate exists because referencing a version-less secret makes the job fail to start even for --mode=empty. Default flipped to true on 2026-09-23 so it matches reality: slack-webhook-url version 1 is enabled and the deployed job already carries the secret, so the false default only misrepresented the environment."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "recon_verify_bucket" {
