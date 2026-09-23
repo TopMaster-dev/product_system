@@ -29,6 +29,12 @@ class Order(Base, TimestampMixin):
         # Phase 2 (migration 0009): channel-scoped period aggregation for the
         # sales dashboards; ix_orders_ordered_at alone cannot filter by channel.
         Index("ix_orders_channel_ordered_at", "channel", "ordered_at"),
+        # Phase 2 (migration 0014): the hourly rollup asks "which orders were
+        # touched since the last run?". ix_orders_channel_ordered_at cannot
+        # serve it — it leads with `channel`, and a btree cannot seek on a range
+        # over a non-leading column. Without this the job read all 10,859 rows
+        # every hour (EXPLAIN, 2026-09-23).
+        Index("ix_orders_updated_at", "updated_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

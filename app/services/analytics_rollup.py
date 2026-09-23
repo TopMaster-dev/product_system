@@ -130,6 +130,86 @@ def walk_daily_balances(
     return out
 
 
+# ---------------------------------------------------------------------------
+# 索引を使えるかどうかを検証できるように、文の組み立てだけ切り出したもの
+# ---------------------------------------------------------------------------
+#
+# These are the only queries in the system that scan `inventory_events` by
+# time. They run every hour, and the table only grows, so "does the planner
+# have an index it can use?" has to be answerable without a production
+# EXPLAIN — `tests/integration/test_query_plans.py` asserts it on every CI run.
+#
+# They are builders rather than inline SQL for exactly that reason: a test that
+# re-typed the query would prove the test's copy uses an index, not this one's.
+
+
+def changed_event_days_stmt(since: datetime) -> Select[tuple[date]]:
+    """JST days with an inventory event inserted since `since`.
+
+    Filtered on `created_at`, not `occurred_at`: a cancellation backdates its
+    event to the original order day, and a window over `occurred_at` cannot see
+    a row inserted today for sixty days ago. Served by
+    ix_inventory_events_created_at.
+    """
+    return select(jst_date_expr(InventoryEvent.occurred_at).label("d")).where(
+        InventoryEvent.created_at > since
+    )
+
+
+def changed_order_days_stmt(since: datetime) -> Select[tuple[date]]:
+    """JST days with an order touched since `since`. Served by
+    ix_orders_updated_at."""
+    return select(jst_date_expr(Order.ordered_at).label("d")).where(Order.updated_at > since)
+
+
+def opening_balance_stmt(start: datetime, population: list[int]) -> Select[tuple[int, int]]:
+    """Net movement before the day — the opening balance. Served by
+    ix_inventory_events_sku_time (master_sku_id, occurred_at)."""
+    return (
+        select(
+            InventoryEvent.master_sku_id,
+            func.coalesce(func.sum(InventoryEvent.quantity_delta), 0),
+        )
+        .where(
+            InventoryEvent.occurred_at < start,
+            InventoryEvent.master_sku_id.in_(population),
+        )
+        .group_by(InventoryEvent.master_sku_id)
+    )
+
+
+def day_movement_stmt(
+    start: datetime, end: datetime, population: list[int]
+) -> Select[tuple[int, int, int, int]]:
+    """One day's movement per SKU, split into consumed and returned."""
+    return (
+        select(
+            InventoryEvent.master_sku_id,
+            func.coalesce(func.sum(InventoryEvent.quantity_delta), 0),
+            # FILTER belongs to the AGGREGATE, not to abs(): Postgres
+            # rejects `abs(x) FILTER (...)` with "not an aggregate function".
+            func.coalesce(
+                func.sum(func.abs(InventoryEvent.quantity_delta)).filter(
+                    InventoryEvent.event_type == InventoryEventTypeEnum.ORDER_CONSUMED
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(func.abs(InventoryEvent.quantity_delta)).filter(
+                    InventoryEvent.event_type == InventoryEventTypeEnum.CANCELLATION_RETURNED
+                ),
+                0,
+            ),
+        )
+        .where(
+            InventoryEvent.occurred_at >= start,
+            InventoryEvent.occurred_at < end,
+            InventoryEvent.master_sku_id.in_(population),
+        )
+        .group_by(InventoryEvent.master_sku_id)
+    )
+
+
 class AnalyticsRollupService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -146,13 +226,9 @@ class AnalyticsRollupService:
         if since is None:
             return []
 
-        event_days = select(jst_date_expr(InventoryEvent.occurred_at).label("d")).where(
-            InventoryEvent.created_at > since
+        rows = await self._session.execute(
+            changed_event_days_stmt(since).union(changed_order_days_stmt(since))
         )
-        order_days = select(jst_date_expr(Order.ordered_at).label("d")).where(
-            Order.updated_at > since
-        )
-        rows = await self._session.execute(event_days.union(order_days))
         return sorted({d for (d,) in rows.all() if d is not None})
 
     # ---------- one day ----------
@@ -191,45 +267,10 @@ class AnalyticsRollupService:
             return 0
         start, end = jst_day_bounds(day)
 
-        opening_rows = await self._session.execute(
-            select(
-                InventoryEvent.master_sku_id,
-                func.coalesce(func.sum(InventoryEvent.quantity_delta), 0),
-            )
-            .where(
-                InventoryEvent.occurred_at < start,
-                InventoryEvent.master_sku_id.in_(population),
-            )
-            .group_by(InventoryEvent.master_sku_id)
-        )
+        opening_rows = await self._session.execute(opening_balance_stmt(start, population))
         opening = {sku: int(total) for sku, total in opening_rows.all()}
 
-        moved = await self._session.execute(
-            select(
-                InventoryEvent.master_sku_id,
-                func.coalesce(func.sum(InventoryEvent.quantity_delta), 0),
-                # FILTER belongs to the AGGREGATE, not to abs(): Postgres
-                # rejects `abs(x) FILTER (...)` with "not an aggregate function".
-                func.coalesce(
-                    func.sum(func.abs(InventoryEvent.quantity_delta)).filter(
-                        InventoryEvent.event_type == InventoryEventTypeEnum.ORDER_CONSUMED
-                    ),
-                    0,
-                ),
-                func.coalesce(
-                    func.sum(func.abs(InventoryEvent.quantity_delta)).filter(
-                        InventoryEvent.event_type == InventoryEventTypeEnum.CANCELLATION_RETURNED
-                    ),
-                    0,
-                ),
-            )
-            .where(
-                InventoryEvent.occurred_at >= start,
-                InventoryEvent.occurred_at < end,
-                InventoryEvent.master_sku_id.in_(population),
-            )
-            .group_by(InventoryEvent.master_sku_id)
-        )
+        moved = await self._session.execute(day_movement_stmt(start, end, population))
         deltas: dict[tuple[date, int], int] = {}
         consumed: dict[int, int] = {}
         returned: dict[int, int] = {}
