@@ -68,10 +68,19 @@ class SlackNotifier:
         """Send a notification. Returns True if delivered, False if skipped
         (URL not configured, level filtered, or HTTP failed silently)."""
         if not self.is_enabled:
-            log.debug("slack.skip_no_url", level=level, title=title)
+            # WARNING, not debug. "Something asked for an alert and there is
+            # nowhere to send it" is the single most important thing this
+            # module can say, and saying it below the app's log level is how
+            # it went unsaid. Production ran from deploy until 2026-09-23 with
+            # no SLACK_WEBHOOK_URL on the service at all; the Rakuten 401
+            # outage raised alerts every five minutes for three days and every
+            # one of them stopped here, invisibly.
+            log.warning("slack.skip_no_url", level=level, title=title)
             return False
         if not self._should_send(level):
-            log.debug("slack.skip_below_min_level", level=level, min_level=self._min_level)
+            # INFO: a deliberate filter, but still a notification that was
+            # asked for and not sent.
+            log.info("slack.skip_below_min_level", level=level, min_level=self._min_level)
             return False
 
         attachment = self._build_attachment(level, title, message, fields or [])

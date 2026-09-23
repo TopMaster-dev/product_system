@@ -12,6 +12,7 @@ These tests use httpx.MockTransport — no network access. Covers:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -164,3 +165,69 @@ def test_get_slack_notifier_no_arg_is_cached_singleton() -> None:
     from app.notifications.slack import get_slack_notifier
 
     assert get_slack_notifier() is get_slack_notifier()
+
+
+# --- 送れなかったことが見えるか ---------------------------------------------
+#
+# Production ran with no SLACK_WEBHOOK_URL on the Cloud Run service at all: the
+# secret was wired into the verify-slack job and never into the service. The
+# Rakuten 401 outage raised an alert every five minutes for three days and not
+# one was delivered. Nothing showed it, because this path logged at DEBUG and
+# the app runs at INFO — the logs even looked healthy, since the throttle in
+# `_alert_job_failure` logs `internal.alert_suppressed` BEFORE calling notify.
+
+
+class _Recorder:
+    """Stands in for the module logger and records which METHOD was called.
+
+    The level is the whole point of these tests, and structlog's own capture
+    helper cannot see it here: `configure_logging` caches bound loggers, so
+    once any other test in the suite has configured logging, a processor-level
+    capture records nothing. Swapping the logger object is stable regardless of
+    how logging happens to be configured, and still exercises the shipped call.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def _record(self, level: str) -> Callable[..., None]:
+        def log(event: str, **_: object) -> None:
+            self.calls.append((level, event))
+
+        return log
+
+    def __getattr__(self, name: str) -> Callable[..., None]:
+        return self._record(name)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_an_unsendable_alert_is_logged_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """At WARNING, so it survives the production log level. "Something asked
+    for an alert and there is nowhere to send it" is the most important thing
+    this module can say."""
+    recorder = _Recorder()
+    monkeypatch.setattr("app.notifications.slack.log", recorder)
+
+    await SlackNotifier(webhook_url="", min_level="error").notify(
+        level="critical", title="定期ジョブ poll-rakuten が失敗しています", message="401"
+    )
+
+    assert ("warning", "slack.skip_no_url") in recorder.calls, recorder.calls
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_level_filtered_alert_is_still_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deliberate filter, but still a notification asked for and not sent.
+    INFO is enough; silence is not."""
+    recorder = _Recorder()
+    monkeypatch.setattr("app.notifications.slack.log", recorder)
+
+    await SlackNotifier(webhook_url="https://example.invalid/hook", min_level="critical").notify(
+        level="info", title="x", message="y"
+    )
+
+    assert ("info", "slack.skip_below_min_level") in recorder.calls, recorder.calls

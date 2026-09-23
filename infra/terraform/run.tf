@@ -161,6 +161,27 @@ resource "google_cloud_run_v2_service" "app" {
         }
       }
 
+      # ---- Slack ----
+      # The alerting destination. It was wired into the verify-slack JOB
+      # (run_jobs.tf) and never into the SERVICE, so `slack_webhook_url` was
+      # empty everywhere the alerts are actually raised: every job-failure
+      # notification the service produced was dropped before it left the
+      # process, and the skip was logged at DEBUG while the app runs at INFO.
+      #
+      # Found on 2026-09-23 while verifying P2-045. The Rakuten 401 outage
+      # crashed poll-rakuten every five minutes from 09-19 to 09-22 and not one
+      # Slack message was delivered — `internal.alert_suppressed` in the logs
+      # made the alerting look alive, because the throttle runs BEFORE the send.
+      env {
+        name = "SLACK_WEBHOOK_URL"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.app_secrets["slack-webhook-url"].secret_id
+            version = "latest"
+          }
+        }
+      }
+
       # ---- Admin UI Basic Auth ----
       env {
         name  = "ADMIN_USERNAME"
