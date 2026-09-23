@@ -48,13 +48,23 @@ async def _sql(*, include_mapped_keys: bool) -> str:
     return " ".join(session.statements)
 
 
-async def test_the_query_compiles_and_is_scoped_to_rakuten() -> None:
-    """`channel` lives on orders; without the join this reports Shopify's
-    unmapped lines as Rakuten's."""
+async def test_the_query_covers_both_channels() -> None:
+    """`channel` lives on orders, so the join is required either way. Scoping
+    to Rakuten alone was right while Shopify had no backlog; after the 2026-09
+    re-resolution the remaining 177 keys spanned both, and a Rakuten-only sheet
+    would have asked about part of it and silently dropped the rest."""
     sql = await _sql(include_mapped_keys=False)
     assert "JOIN orders" in sql
-    assert "orders.channel = 'rakuten'" in sql
+    assert "'rakuten'" in sql
+    assert "'shopify'" in sql
     assert "order_items.master_sku_id IS NULL" in sql
+
+
+async def test_rows_are_grouped_per_channel() -> None:
+    """One code can exist on both shops and mean different products. Grouping
+    on the code alone would merge them into one row and one answer."""
+    sql = await _sql(include_mapped_keys=False)
+    assert "GROUP BY orders.channel" in sql
 
 
 async def test_keys_that_already_have_a_mapping_are_excluded_by_default() -> None:
@@ -69,6 +79,7 @@ async def test_all_includes_them_for_our_own_review() -> None:
 
 def _row(**overrides: object) -> WorksheetRow:
     base = {
+        "channel": "rakuten",
         "manage_number": "10001",
         "product_name": "馬蹄 ネックレス",
         "lines": 3,
@@ -87,7 +98,7 @@ def test_a_row_fills_every_column() -> None:
 
 def test_the_two_answer_columns_are_left_empty() -> None:
     row = _row().as_csv()
-    assert row[-2:] == ("", ""), "商品コード and 備考 are the client's to fill"
+    assert row[-2:] == ("", ""), "the answer column and 備考 are the client's to fill"
 
 
 def test_the_file_carries_a_bom_and_reads_back_intact(tmp_path) -> None:
@@ -101,9 +112,15 @@ def test_the_file_carries_a_bom_and_reads_back_intact(tmp_path) -> None:
 
     rows = list(csv.reader(io.StringIO(raw.decode("utf-8-sig"))))
     assert tuple(rows[0]) == HEADER
-    assert rows[1][0] == "10001"
-    assert rows[1][1] == "馬蹄 ネックレス"
-    assert rows[1][4] == "12000", "yen render without a decimal point"
+
+    # Looked up by header, not by position. Adding the チャネル column shifted
+    # every index by one and broke this test rather than the export — which is
+    # the wrong thing to notice, and next time might be the export.
+    cell = dict(zip(rows[0], rows[1], strict=True))
+    assert cell["チャネル"] == "rakuten"
+    assert cell["チャネルの商品コード"] == "10001"
+    assert cell["商品名"] == "馬蹄 ネックレス"
+    assert cell["金額合計"] == "12000", "yen render without a decimal point"
 
 
 def test_an_empty_result_still_writes_a_usable_file(tmp_path) -> None:

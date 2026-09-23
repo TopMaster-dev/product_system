@@ -46,24 +46,32 @@ from app.services.timeframe import to_jst_date
 log = get_logger(__name__)
 SessionFactory = async_sessionmaker[AsyncSession]
 
-CHANNEL = "rakuten"
-DEFAULT_OUT = Path("csv_file/phase2/rakuten_unmapped_worksheet.csv")
+#: Channels the sheet can cover. Shopify belongs here too: after the 2026-09
+#: re-resolution the remaining backlog was 177 keys across BOTH channels, and
+#: a Rakuten-only sheet would have asked the client about part of it while
+#: silently dropping the rest.
+CHANNELS = ("rakuten", "shopify")
+DEFAULT_OUT = Path("csv_file/phase2/unmapped_worksheet.csv")
 
 HEADER = (
-    "商品管理番号",
+    "チャネル",
+    # Not 商品管理番号: that is Rakuten's word for it, and this sheet now also
+    # carries Shopify SKUs.
+    "チャネルの商品コード",
     "商品名",
     "受注明細数",
     "数量合計",
     "金額合計",
     "初回受注日",
     "最終受注日",
-    "商品コード",
+    "正しい商品コード ご記入ください",
     "備考",
 )
 
 
 @dataclass(frozen=True, slots=True)
 class WorksheetRow:
+    channel: str
     manage_number: str
     product_name: str
     lines: int
@@ -76,6 +84,7 @@ class WorksheetRow:
         # The last two are the client's to fill: 商品コード, and 備考 where
         # "対象外" marks a page they have since deleted.
         return (
+            self.channel,
             self.manage_number,
             self.product_name,
             self.lines,
@@ -92,10 +101,13 @@ def _jst(moment: datetime | None) -> str:
     return to_jst_date(moment).isoformat() if moment else ""
 
 
-async def collect_rows(session: AsyncSession, *, include_mapped_keys: bool) -> list[WorksheetRow]:
-    """One row per unresolved Rakuten channel_sku, most recent activity first."""
+async def collect_rows(
+    session: AsyncSession, *, include_mapped_keys: bool, channels: tuple[str, ...] = CHANNELS
+) -> list[WorksheetRow]:
+    """One row per unresolved channel_sku, most recent activity first."""
     stmt = (
         select(
+            Order.channel,
             OrderItem.channel_sku,
             func.count().label("lines"),
             func.sum(OrderItem.quantity).label("quantity"),
@@ -106,15 +118,15 @@ async def collect_rows(session: AsyncSession, *, include_mapped_keys: bool) -> l
             func.max(Order.ordered_at).label("last_at"),
         )
         .join(Order, Order.id == OrderItem.order_id)
-        .where(Order.channel == CHANNEL, OrderItem.master_sku_id.is_(None))
-        .group_by(OrderItem.channel_sku)
+        .where(Order.channel.in_(channels), OrderItem.master_sku_id.is_(None))
+        .group_by(Order.channel, OrderItem.channel_sku)
         .order_by(func.max(Order.ordered_at).desc())
     )
     if not include_mapped_keys:
         stmt = stmt.where(
             OrderItem.channel_sku.not_in(
                 select(ChannelSkuMapping.channel_sku).where(
-                    ChannelSkuMapping.channel == CHANNEL,
+                    ChannelSkuMapping.channel.in_(channels),
                     ChannelSkuMapping.is_active.is_(True),
                 )
             )
@@ -128,7 +140,7 @@ async def collect_rows(session: AsyncSession, *, include_mapped_keys: bool) -> l
         await session.execute(
             select(MappingAlert.channel_sku, func.max(MappingAlert.product_name))
             .where(
-                MappingAlert.channel == CHANNEL,
+                MappingAlert.channel.in_(channels),
                 MappingAlert.channel_sku.in_([row.channel_sku for row in aggregated]),
             )
             .group_by(MappingAlert.channel_sku)
@@ -138,6 +150,7 @@ async def collect_rows(session: AsyncSession, *, include_mapped_keys: bool) -> l
 
     return [
         WorksheetRow(
+            channel=row.channel,
             manage_number=row.channel_sku,
             product_name=names.get(row.channel_sku, ""),
             lines=int(row.lines or 0),
