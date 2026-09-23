@@ -12,6 +12,12 @@ WHAT IT LOOKS FOR
 在庫を持たないので、取込は一切イベントを書かない。アラート解決の経路だけが
 書いていた。その分だけ在庫がマイナスに振れている。
 
+ただし在庫管理対象外の指定は遡及しない。フラグを立てる前の通常の受注履歴は
+そのまま残り、多くは棚卸で既に在庫0へ戻っている。初回の本番実行がまさに
+それで、ギフトラッピング2SKUの2027件は全て2026-08-20までの正常な履歴だった。
+そのため出力は「在庫0に戻っていないもの = 要対応」と「決着済み = 参考」を
+分けて表示する。混ぜると、対応不要の2000件が深刻な指摘に見える。
+
 **構成品に展開されなかった親のイベント.** 共有在庫/セットの親が自分自身を
 減らし、共有プールは動いていない。判定は「同じ受注明細に対する構成品の
 イベントが存在しないこと」— 展開されていれば必ず同じ source で残る。
@@ -32,6 +38,7 @@ import argparse
 import asyncio
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Select, func, select
@@ -69,6 +76,30 @@ class DamagedSku:
     events: int
     net_delta: int
     on_hand_qty: int
+    first_at: datetime | None = None
+    last_at: datetime | None = None
+
+    @property
+    def settled(self) -> bool:
+        """Is this SKU's stock already back where it belongs?
+
+        The first production run made the distinction unavoidable. H1
+        (ギフトラッピング) carried 1965 order events summing to -2043 — and a
+        stocktake that put it back to 0 on 2026-08-20, after which nothing was
+        written to it again. Those events are the ordinary history of a SKU
+        that was only later marked 在庫管理対象外; the flag is not retroactive
+        and the cleanup already happened.
+
+        Reporting that as damage is how an inspection gets ignored. What is
+        actually outstanding is an unmanaged SKU still holding a figure.
+        """
+        return self.on_hand_qty == 0
+
+    @property
+    def period(self) -> str:
+        if self.first_at is None or self.last_at is None:
+            return ""
+        return f"{self.first_at:%Y-%m-%d} 〜 {self.last_at:%Y-%m-%d}"
 
 
 def unmanaged_events_stmt() -> Select[Any]:
@@ -88,6 +119,8 @@ def unmanaged_events_stmt() -> Select[Any]:
             func.count(InventoryEvent.id),
             func.sum(InventoryEvent.quantity_delta),
             InventorySnapshot.on_hand_qty,
+            func.min(InventoryEvent.occurred_at),
+            func.max(InventoryEvent.occurred_at),
         )
         .join(InventoryEvent, InventoryEvent.master_sku_id == MasterSku.id)
         .outerjoin(InventorySnapshot, InventorySnapshot.master_sku_id == MasterSku.id)
@@ -117,8 +150,10 @@ async def find_unmanaged_events(session: AsyncSession) -> list[DamagedSku]:
             events=events,
             net_delta=net or 0,
             on_hand_qty=on_hand or 0,
+            first_at=first_at,
+            last_at=last_at,
         )
-        for mid, code, name, kind, events, net, on_hand in rows
+        for mid, code, name, kind, events, net, on_hand, first_at, last_at in rows
     ]
 
 
@@ -161,6 +196,8 @@ def unfanned_parent_events_stmt() -> Select[Any]:
             func.count(InventoryEvent.id),
             func.sum(InventoryEvent.quantity_delta),
             InventorySnapshot.on_hand_qty,
+            func.min(InventoryEvent.occurred_at),
+            func.max(InventoryEvent.occurred_at),
         )
         .join(InventoryEvent, InventoryEvent.master_sku_id == MasterSku.id)
         .outerjoin(InventorySnapshot, InventorySnapshot.master_sku_id == MasterSku.id)
@@ -191,29 +228,52 @@ async def find_unfanned_parent_events(session: AsyncSession) -> list[DamagedSku]
             events=events,
             net_delta=net or 0,
             on_hand_qty=on_hand or 0,
+            first_at=first_at,
+            last_at=last_at,
         )
-        for mid, code, name, events, net, on_hand in rows
+        for mid, code, name, events, net, on_hand, first_at, last_at in rows
     ]
 
 
-def _print_section(title: str, explanation: str, damaged: list[DamagedSku]) -> None:
-    print(f"\n  === {title} ===")
-    if not damaged:
-        print("  該当なし")
-        return
-    print(f"  {explanation}")
-    print(f"\n    {'SKU':<24}{'区分':<16}{'件数':>6}{'在庫への影響':>14}{'現在庫':>8}  商品名")
-    for row in damaged[:_MAX_ROWS]:
-        sign = "+" if row.net_delta > 0 else ""
+def _print_rows(rows: list[DamagedSku]) -> None:
+    print(f"\n    {'SKU':<20}{'区分':<14}{'件数':>6}{'影響':>9}{'現在庫':>8}  {'期間':<26}商品名")
+    for row in rows[:_MAX_ROWS]:
         print(
-            f"    {row.sku_code:<24}{row.note:<16}{row.events:>6}"
-            f"{sign + str(row.net_delta):>14}{row.on_hand_qty:>8}  {row.name[:32]}"
+            f"    {row.sku_code:<20}{row.note:<14}{row.events:>6}{row.net_delta:>+9}"
+            f"{row.on_hand_qty:>8}  {row.period:<26}{row.name[:24]}"
         )
-    if len(damaged) > _MAX_ROWS:
-        print(f"    ... ほか {len(damaged) - _MAX_ROWS}件")
-    total_events = sum(r.events for r in damaged)
-    total_delta = sum(r.net_delta for r in damaged)
-    print(f"\n    合計 {len(damaged)}SKU / {total_events}イベント / 在庫への影響 {total_delta:+}")
+    if len(rows) > _MAX_ROWS:
+        print(f"    ... ほか {len(rows) - _MAX_ROWS}件")
+
+
+def _print_section(title: str, explanation: str, damaged: list[DamagedSku]) -> None:
+    """Outstanding first, settled history second, and never mixed.
+
+    The first production run returned 2027 events across two gift-wrap SKUs,
+    every one of them ordinary pre-flag history already zeroed by a stocktake.
+    Printed as one list it reads as a serious finding, and the next person to
+    run this during 検収 would have chased it. Split, the same data says
+    「対応不要」on its own.
+    """
+    outstanding = [d for d in damaged if not d.settled]
+    settled = [d for d in damaged if d.settled]
+
+    print(f"\n  === {title} ===")
+    if not outstanding:
+        print("  要対応なし")
+    else:
+        print(f"  {explanation}")
+        _print_rows(outstanding)
+        total = sum(r.net_delta for r in outstanding)
+        print(f"\n    要対応 {len(outstanding)}SKU / 在庫のずれ {total:+}")
+
+    if settled:
+        print(
+            f"\n  参考: 在庫0で決着済みのSKUが {len(settled)}件あります — 対応不要。"
+            "\n  フラグを立てる前の通常の受注履歴です。在庫管理対象外の指定は遡及しないため、"
+            "\n  過去のイベントはそのまま残り、棚卸や手動調整で既に決着しています。"
+        )
+        _print_rows(settled)
 
 
 async def run() -> int:
@@ -226,7 +286,7 @@ async def run() -> int:
     _print_section(
         "在庫管理対象外のマスタに書かれた受注イベント",
         "ギフトバッグ等は取込時なら一切イベントを書きません。"
-        "「在庫への影響」の分だけ在庫がずれています。",
+        "在庫0に戻っていないものが残っています。",
         unmanaged,
     )
     _print_section(
@@ -236,8 +296,9 @@ async def run() -> int:
         unfanned,
     )
 
-    if not unmanaged and not unfanned:
-        print("\n  修正が必要なイベントはありません")
+    outstanding = [d for d in unmanaged + unfanned if not d.settled]
+    if not outstanding:
+        print("\n  対応が必要なイベントはありません")
     else:
         print(
             "\n  ※ この一覧は調査のみで、何も変更していません。"
@@ -249,6 +310,9 @@ async def run() -> int:
 
     log.info(
         "stock_event_damage.done",
+        # Outstanding is the number worth alerting on; the totals are context.
+        outstanding_skus=len(outstanding),
+        outstanding_delta=sum(r.net_delta for r in outstanding),
         unmanaged_skus=len(unmanaged),
         unmanaged_events=sum(r.events for r in unmanaged),
         unfanned_skus=len(unfanned),

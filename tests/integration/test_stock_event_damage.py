@@ -19,6 +19,7 @@ from app.models import (
     BundleComponent,
     InventoryEvent,
     InventoryEventTypeEnum,
+    InventorySnapshot,
     MasterSku,
 )
 
@@ -189,3 +190,41 @@ async def test_a_parent_cancellation_that_never_reached_the_pool_is_reported(
 
     assert [d.sku_code for d in found] == ["SET-C"]
     assert found[0].net_delta == 2
+
+
+async def test_the_current_stock_figure_comes_through_from_the_snapshot(db_session) -> None:
+    """What separates 要対応 from 参考. The outer join has to deliver the real
+    number: reading 0 for everything would mark every finding as settled and
+    the report would go permanently quiet."""
+    gift = await _master(
+        db_session, "GIFT-STUCK", is_stock_managed=False, non_inventory_kind="gift"
+    )
+    db_session.add(InventorySnapshot(master_sku_id=gift.id, on_hand_qty=-12))
+    await db_session.flush()
+    await _event(db_session, gift, delta=-12)
+
+    found = await find_unmanaged_events(db_session)
+
+    assert found[0].on_hand_qty == -12
+    assert found[0].settled is False
+
+
+async def test_the_event_period_is_returned(db_session) -> None:
+    """Printed so pre-flag history is recognisable at a glance."""
+    gift = await _master(db_session, "GIFT-SPAN", is_stock_managed=False, non_inventory_kind="gift")
+    await _event(db_session, gift, order_id="O-A", line_id="L-1")
+    session_event = InventoryEvent(
+        master_sku_id=gift.id,
+        event_type=InventoryEventTypeEnum.ORDER_CONSUMED,
+        quantity_delta=-1,
+        source_channel="rakuten",
+        source_order_id="O-B",
+        source_line_id="L-1",
+        occurred_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+    db_session.add(session_event)
+    await db_session.flush()
+
+    found = await find_unmanaged_events(db_session)
+
+    assert found[0].period == "2026-06-01 〜 2026-08-20"

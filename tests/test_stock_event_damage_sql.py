@@ -9,10 +9,14 @@ here, without a database, so a malformed statement cannot reach a review as
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.cli.inspect_stock_event_damage import (
+    DamagedSku,
+    _print_section,
     unfanned_parent_events_stmt,
     unmanaged_events_stmt,
 )
@@ -75,3 +79,71 @@ def test_both_queries_aggregate_per_master() -> None:
         assert "GROUP BY" in sql
         assert "count(" in sql
         assert "sum(" in sql
+
+
+# --- 要対応か、決着済みか --------------------------------------------------
+
+
+def _damaged(**kw: object) -> DamagedSku:
+    base: dict[str, object] = {
+        "master_sku_id": 1,
+        "sku_code": "H1",
+        "name": "ギフトラッピング",
+        "note": "packaging",
+        "events": 1965,
+        "net_delta": -2043,
+        "on_hand_qty": 0,
+    }
+    base.update(kw)
+    return DamagedSku(**base)  # type: ignore[arg-type]
+
+
+def test_a_sku_back_at_zero_is_settled() -> None:
+    """The real H1. 1965 events, all pre-flag history, zeroed by a stocktake on
+    2026-08-20. Nothing is outstanding."""
+    assert _damaged().settled is True
+
+
+def test_a_sku_still_holding_a_figure_is_not_settled() -> None:
+    """An unmanaged SKU has no stock to hold. A non-zero figure is the thing
+    somebody has to correct."""
+    assert _damaged(on_hand_qty=-12).settled is False
+
+
+def test_the_period_is_printed_so_pre_flag_history_is_recognisable() -> None:
+    row = _damaged(
+        first_at=datetime(2026, 1, 1, tzinfo=UTC),
+        last_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+    assert row.period == "2026-01-01 〜 2026-08-20"
+
+
+def test_a_row_with_no_period_prints_nothing_rather_than_none() -> None:
+    assert _damaged().period == ""
+
+
+def test_the_settled_rows_are_reported_apart_from_the_outstanding_ones(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The lesson from the first production run: 2027 settled events printed as
+    one list read as a serious finding."""
+    _print_section(
+        "在庫管理対象外のマスタに書かれた受注イベント",
+        "explanation",
+        [_damaged(), _damaged(sku_code="BROKEN", on_hand_qty=-12)],
+    )
+    out = capsys.readouterr().out
+
+    assert "要対応 1SKU" in out
+    assert "決着済みのSKUが 1件" in out
+    assert "対応不要" in out
+
+
+def test_all_settled_reports_no_action_needed(capsys: pytest.CaptureFixture[str]) -> None:
+    _print_section("t", "explanation", [_damaged()])
+    out = capsys.readouterr().out
+
+    assert "要対応なし" in out
+    # The explanation belongs to a finding. Printing it over settled history is
+    # what made the first run read as an alarm.
+    assert "explanation" not in out
