@@ -20,13 +20,6 @@
   </div>
 </div>
 
-{% if flash %}
-  <div class="mb-4 rounded-lg border px-4 py-3 text-sm
-              {% if flash.level == 'error' %}border-red-300 bg-red-50 text-red-800{% else %}border-emerald-300 bg-emerald-50 text-emerald-800{% endif %}">
-    {{ flash.message }}
-  </div>
-{% endif %}
-
 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
   <div class="rounded-xl bg-white border border-ink-200 p-4">
     <div class="text-xs text-ink-500 mb-1">状態</div>

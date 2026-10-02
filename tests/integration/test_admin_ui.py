@@ -141,8 +141,11 @@ async def test_grouped_nav_renders_on_desktop_and_mobile(admin_client, _test_eng
     # Desktop dropdowns are CSS-only; no new JS may be required to open them.
     assert "group-hover:block" in r.text
     assert "group-focus-within:block" in r.text  # keyboard users get the same menu
-    # 分析 has no screens until W4 — an empty group must not render a dead button.
-    assert "分析メニュー" not in r.text
+    # 分析 gained its screens in W4; the group now renders with its links. (Until
+    # then an empty group was asserted absent, so it would not be a dead button.)
+    assert "分析メニュー" in r.text
+    for href in ("/admin/analytics/sales", "/admin/analytics/stockout-risk"):
+        assert f'href="{href}"' in r.text
 
 
 async def test_inventory_list_filters_and_paginates(admin_client, _test_engine) -> None:
@@ -383,8 +386,11 @@ async def test_inventory_export_reports_lifecycle_state(admin_client, _test_engi
     # Excel picks UTF-8 rather than the system codepage.
     text = r.content.decode("utf-8-sig")
     header = text.splitlines()[0]
-    assert header.startswith("sku_code,name,jan_code,on_hand_qty,status,best_seller,updated_at")
-    assert header.endswith("stock_managed,archived")
+    # The lifecycle columns follow the Phase 1-B ones directly; anything added
+    # since (the W5 threshold and velocity) comes after them, never between.
+    assert header.startswith(
+        "sku_code,name,jan_code,on_hand_qty,status,best_seller,updated_at,stock_managed,archived"
+    )
     assert "LC-BOX" in text and "対象外" in text
 
 
@@ -1347,16 +1353,21 @@ async def _make_run(engine, run_type: str, status: str = "pending_approval") -> 
         return int(run.id)
 
 
-async def test_a_shopify_audit_run_is_absent_from_the_reconcile_list(
+async def test_the_reconcile_list_shows_external_checks_but_not_stocktakes(
     admin_client, _test_engine
 ) -> None:
+    """Since W6 (P2-036) this screen hosts the daily Shopify audit, which
+    replaced the CROSS MALL reconciliation — so an audit run belongs here. A
+    stocktake has its own screen and must not appear."""
     audit_id = await _make_run(_test_engine, "shopify_audit")
     reconcile_id = await _make_run(_test_engine, "reconcile")
+    stocktake_id = await _make_run(_test_engine, "stocktake")
 
     r = await admin_client.get("/admin/reconcile", headers=_auth_header())
     assert r.status_code == 200
     assert f"/admin/reconcile/{reconcile_id}" in r.text
-    assert f"/admin/reconcile/{audit_id}" not in r.text
+    assert f"/admin/reconcile/{audit_id}" in r.text
+    assert f"/admin/reconcile/{stocktake_id}" not in r.text
 
 
 async def test_the_dashboard_badge_does_not_count_other_run_types(
@@ -1396,9 +1407,9 @@ async def test_the_dashboard_badge_does_not_count_other_run_types(
 async def test_the_detail_screen_refuses_a_run_of_another_type(admin_client, _test_engine) -> None:
     """Rendering a stocktake here would offer CROSS MALL wording and actions
     over a different kind of count."""
-    audit_id = await _make_run(_test_engine, "shopify_audit")
+    stocktake_id = await _make_run(_test_engine, "stocktake")
     r = await admin_client.get(
-        f"/admin/reconcile/{audit_id}", headers=_auth_header(), follow_redirects=False
+        f"/admin/reconcile/{stocktake_id}", headers=_auth_header(), follow_redirects=False
     )
     assert r.status_code == 303
     assert "flash=notfound" in r.headers["location"]

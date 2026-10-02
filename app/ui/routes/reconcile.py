@@ -355,15 +355,22 @@ async def _diff_action(
     run = await session.get(ReconcileRun, run_id)
     if run is None or run.run_type not in _SHOWN_HERE:
         return RedirectResponse(url="/admin/reconcile?flash=notfound", status_code=303)
+    # Explicit commit, NOT `async with session.begin()`: the `get` above has
+    # already begun a transaction, and a second `begin()` raises
+    # InvalidRequestError. It did, on every approve and skip, from the day this
+    # guard was added (W6) until 2026-10-02 — the daily Shopify audit's
+    # differences could not be approved. The stocktake screen had the same
+    # defect; the AST guard missed this one because `begin()` sat inside `try:`.
+    svc = ReconcileService(session)
     try:
-        async with session.begin():
-            svc = ReconcileService(session)
-            if approve:
-                await svc.approve_diff(run_id=run_id, diff_id=diff_id, approved_by=operator)
-            else:
-                await svc.skip_diff(diff_id=diff_id, approved_by=operator)
+        if approve:
+            await svc.approve_diff(run_id=run_id, diff_id=diff_id, approved_by=operator)
+        else:
+            await svc.skip_diff(diff_id=diff_id, approved_by=operator)
     except (RuntimeError, ValueError):
+        await session.rollback()
         return RedirectResponse(url=f"/admin/reconcile/{run_id}?flash=difffailed", status_code=303)
+    await session.commit()
     flash = "approved" if approve else "skipped"
     return RedirectResponse(url=f"/admin/reconcile/{run_id}?flash={flash}", status_code=303)
 

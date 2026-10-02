@@ -32,7 +32,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -41,11 +41,14 @@ from app.models import (
     DailyKpiSnapshot,
     DailyUnmappedSales,
     MasterSku,
+    Order,
+    OrderItem,
     ProductCategory,
     SkuDailySales,
     SkuDailyStock,
 )
-from app.services.timeframe import Period, bucket, pct_change
+from app.services.analytics_rollup import CANCELLED_STATUSES
+from app.services.timeframe import Period, bucket, jst_date_expr, pct_change
 
 #: A rollup older than this is called out on the screen. The hourly job leaves
 #: at most an hour of lag in normal operation, so three hours means two
@@ -306,12 +309,14 @@ class SalesFilter:
     unclassified_only: bool = False
 
     def conditions(self) -> list[ColumnElement[bool]]:
-        out = self.conditions_except_category()
+        return self.conditions_except_category() + self.category_conditions()
+
+    def category_conditions(self) -> list[ColumnElement[bool]]:
         if self.unclassified_only:
-            out.append(SkuDailySales.category_id.is_(None))
-        elif self.category_id is not None:
-            out.append(SkuDailySales.category_id == self.category_id)
-        return out
+            return [SkuDailySales.category_id.is_(None)]
+        if self.category_id is not None:
+            return [SkuDailySales.category_id == self.category_id]
+        return []
 
     def conditions_except_category(self) -> list[ColumnElement[bool]]:
         """Everything but the category narrowing.
@@ -329,6 +334,48 @@ class SalesFilter:
     @property
     def is_narrowed(self) -> bool:
         return bool(self.channel) or self.unclassified_only or self.category_id is not None
+
+
+def daily_order_count_stmt(period: Period, where: SalesFilter) -> Select[Any]:
+    """Distinct live orders per JST day, within the slice on screen.
+
+    NOT `SUM(sku_daily_sales.order_count)`. That column counts orders per SKU,
+    so an order for three different products was counted three times, and it
+    reached the 受注件数 column of the trend CSV that way — found 2026-10-02
+    while preparing the 検収, where the channel-filtered CSV is the obvious
+    thing to hold against the 受注一覧 in RMS.
+
+    Unfiltered or by channel, this counts every live order: the same number as
+    the KPI tile and the channel's own order list, including orders whose lines
+    are all unmapped. Narrowed by category, an order counts when one of its
+    lines is attributed to that category by the same rollup row its sales came
+    from, so the count describes the orders behind the sales beside it.
+    """
+    start, end = period.utc_bounds()
+    day = jst_date_expr(Order.ordered_at)
+    stmt = select(day, func.count(func.distinct(Order.id))).where(
+        Order.ordered_at >= start,
+        Order.ordered_at < end,
+        Order.status.not_in(CANCELLED_STATUSES),
+    )
+    if where.channel:
+        stmt = stmt.where(Order.channel == where.channel)
+    category = where.category_conditions()
+    if category:
+        stmt = stmt.where(
+            select(OrderItem.id)
+            .join(
+                SkuDailySales,
+                and_(
+                    SkuDailySales.master_sku_id == OrderItem.master_sku_id,
+                    SkuDailySales.channel == Order.channel,
+                    SkuDailySales.stat_date == day,
+                ),
+            )
+            .where(OrderItem.order_id == Order.id, *category)
+            .exists()
+        )
+    return stmt.group_by(day)
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,25 +405,31 @@ async def bucketed_sales(
     Day counts here are small — a 365-day window is 365 rows before grouping.
     """
     where = where or SalesFilter()
-    rows = await session.execute(
+    sales = await session.execute(
         select(
             SkuDailySales.stat_date,
             func.coalesce(func.sum(SkuDailySales.quantity), 0),
             func.coalesce(func.sum(SkuDailySales.gross_sales_jpy), 0),
-            func.coalesce(func.sum(SkuDailySales.order_count), 0),
         )
         .where(*_within(SkuDailySales.stat_date, period), *where.conditions())
         .group_by(SkuDailySales.stat_date)
         .order_by(SkuDailySales.stat_date)
     )
+    orders = await session.execute(daily_order_count_stmt(period, where))
 
     totals: dict[date, list[Any]] = {}
-    for stat_date, quantity, sales, orders in rows.all():
-        key = bucket(stat_date, granularity)
-        acc = totals.setdefault(key, [0, Decimal(0), 0])
+
+    def acc_for(day: date) -> list[Any]:
+        return totals.setdefault(bucket(day, granularity), [0, Decimal(0), 0])
+
+    for stat_date, quantity, amount in sales.all():
+        acc = acc_for(stat_date)
         acc[0] += int(quantity)
-        acc[1] += Decimal(sales)
-        acc[2] += int(orders)
+        acc[1] += Decimal(amount)
+    # An order belongs to exactly one JST day, so summing daily distinct counts
+    # into a week or month counts each order once.
+    for day, count in orders.all():
+        acc_for(day)[2] += int(count)
 
     return [
         BucketRow(bucket=key, quantity=v[0], gross_sales_jpy=v[1], order_count=v[2])

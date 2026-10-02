@@ -136,6 +136,31 @@ async def velocity_freshness(session: AsyncSession) -> tuple[datetime | None, in
     return row[0], int(row[1] or 0)
 
 
+def _velocity_age_hours(latest_velocity: datetime, now: datetime) -> float:
+    return (now - latest_velocity).total_seconds() / 3600
+
+
+def _two_days_running(days: list[DayHealth]) -> bool:
+    recent = days[:2]
+    return len(recent) == 2 and all(d.healthy for d in recent)
+
+
+def findings(
+    days: list[DayHealth], *, latest_velocity: datetime | None, now: datetime
+) -> list[str]:
+    """Every problem, one line each. `report` prints the detail and returns
+    the count of THIS list, so the table and `verify_production_health` can
+    never disagree about whether the jobs are healthy."""
+    found = [f"{d.day}: {d.verdict}" for d in days if not d.healthy]
+    if latest_velocity is None:
+        found.append("販売速度が一度も計算されていません")
+    elif (age := _velocity_age_hours(latest_velocity, now)) > VELOCITY_STALE_HOURS:
+        found.append(f"販売速度の最終計算が {age:.1f}時間前です")
+    if not _two_days_running(days):
+        found.append("2日連続の稼働が未充足です")
+    return found
+
+
 def report(
     days: list[DayHealth],
     *,
@@ -147,10 +172,7 @@ def report(
     print("  Cloud Scheduler の成功表示ではなく、実際に残った記録で判定しています。\n")
 
     print(f"    {'日付(JST)':<14}{'実行':>6}{'成功':>6}{'失敗':>6}  判定")
-    problems = 0
     for d in days:
-        if not d.healthy:
-            problems += 1
         print(f"    {d.day.isoformat():<14}{d.runs:>6}{d.successes:>6}{d.failures:>6}  {d.verdict}")
 
     jobs: dict[str, int] = defaultdict(int)
@@ -165,28 +187,24 @@ def report(
     print("\n  --- 販売速度テーブルの鮮度 ---")
     if latest_velocity is None:
         print("    ★ 一度も計算されていません")
-        problems += 1
     else:
-        age = (now - latest_velocity).total_seconds() / 3600
+        age = _velocity_age_hours(latest_velocity, now)
         stale = age > VELOCITY_STALE_HOURS
         mark = "★ " if stale else ""
         when = f"{latest_velocity:%Y-%m-%d %H:%M} UTC"
         print(f"    {mark}最終計算 {when} / {age:.1f}時間前 / {velocity_rows}行")
         if stale:
             print("    ロールアップが実質的な処理をしていません。")
-            problems += 1
 
     # Two consecutive days is the P2-045 requirement; state the verdict rather
     # than leaving it to be counted off the table.
-    recent = days[:2]
-    consecutive = len(recent) == 2 and all(d.healthy for d in recent)
     print("\n  --- 2日連続の稼働  P2-045 ---")
-    if consecutive:
-        print(f"    充足: {recent[1].day} と {recent[0].day} の両方で成功しています")
+    if _two_days_running(days):
+        print(f"    充足: {days[1].day} と {days[0].day} の両方で成功しています")
     else:
         print("    ★ 未充足。上の表で失敗または未実行の日を確認してください")
-        problems += 1
 
+    problems = len(findings(days, latest_velocity=latest_velocity, now=now))
     if problems:
         print(f"\n  ★ 確認が必要な項目 {problems}件")
         print("    Cloud Logging と突き合わせてください — docs/32 §4")

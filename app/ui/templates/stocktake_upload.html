@@ -7,13 +7,6 @@
   <a href="/admin/stocktake" class="text-sm text-brand-600 hover:text-brand-700 font-medium">← 棚卸履歴へ</a>
 </div>
 
-{% if flash %}
-  <div class="mb-4 rounded-lg border px-4 py-3 text-sm
-              {% if flash.level == 'error' %}border-red-300 bg-red-50 text-red-800{% else %}border-emerald-300 bg-emerald-50 text-emerald-800{% endif %}">
-    {{ flash.message }}
-  </div>
-{% endif %}
-
 {#
   数えなかったSKUには一切触れない。分割実施では毎回400件以上がシートに載らないため、
   ここを取り違えると初回で全カテゴリの在庫をゼロにする提案が並ぶ。

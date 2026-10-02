@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from app.cli.inspect_scheduler_health import DayHealth, report
+from app.cli.inspect_scheduler_health import DayHealth, findings, report
 
 pytestmark = pytest.mark.unit
 
@@ -137,3 +137,42 @@ def test_a_fresh_velocity_table_passes() -> None:
     problems, out = _report([_day(day=TODAY, hours_elapsed=12), _day()])
     assert problems == 0
     assert "問題は見つかりませんでした" in out
+
+
+# --- 判定の共有 ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("days", "velocity"),
+    [
+        ([_day(day=TODAY, hours_elapsed=12), _day()], datetime(2026, 9, 23, 2, 20, tzinfo=UTC)),
+        ([_day(day=TODAY, hours_elapsed=12), _day(failures=2)], None),
+        ([_day(day=TODAY, hours_elapsed=12)], datetime(2026, 9, 22, 2, 20, tzinfo=UTC)),
+        ([_day(day=TODAY, runs=0, successes=0, hours_elapsed=12), _day()], None),
+    ],
+)
+def test_the_report_counts_exactly_what_findings_returns(
+    days: list[DayHealth], velocity: datetime | None
+) -> None:
+    """`verify_production_health` reads `findings`; this CLI prints `report`.
+    If the two counted differently, the one-line verdict on the review morning
+    could pass what the detailed report fails."""
+    problems, _ = _report(days, latest_velocity=velocity)
+    assert problems == len(findings(days, latest_velocity=velocity, now=NOW))
+
+
+def test_findings_name_what_is_wrong() -> None:
+    found = findings(
+        [_day(day=TODAY, hours_elapsed=12), _day(failures=2)],
+        latest_velocity=datetime(2026, 9, 22, 2, 20, tzinfo=UTC),
+        now=NOW,
+    )
+    assert any("失敗 2件" in f for f in found)
+    assert any("販売速度" in f for f in found)
+    assert any("2日連続" in f for f in found)
+
+
+def test_healthy_jobs_have_no_findings() -> None:
+    days = [_day(day=TODAY, hours_elapsed=12), _day()]
+    velocity = datetime(2026, 9, 23, 2, 20, tzinfo=UTC)
+    assert findings(days, latest_velocity=velocity, now=NOW) == []

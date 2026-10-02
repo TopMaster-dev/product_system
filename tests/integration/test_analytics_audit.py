@@ -192,6 +192,9 @@ async def test_a_freshly_rebuilt_day_reconciles(db_session) -> None:
     sku = await _sku(db_session, "C1")
     await _order(db_session, "O-C1", lines=[(sku.id, 2, "1500"), (None, 1, "400")])
     await AnalyticsRollupService(db_session).rebuild_day(DAY)
+    # Production commits each rebuilt day in its own transaction; the fixture's
+    # session does not autoflush, so the KPI row must be flushed to be read.
+    await db_session.flush()
 
     result = await reconcile_period(db_session, ONE_DAY)
 
@@ -265,5 +268,6 @@ async def test_a_fully_covered_window_reports_no_gap(db_session) -> None:
         await AnalyticsRollupService(db_session).rebuild_day(
             date(2026, 9, 15 + offset),
         )
+    await db_session.flush()  # see test_a_freshly_rebuilt_day_reconciles
 
     assert await missing_rollup_days(db_session, WEEK) == []

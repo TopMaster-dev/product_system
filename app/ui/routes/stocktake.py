@@ -68,10 +68,17 @@ _FLASH = {
 
 
 def _flash(key: str | None) -> dict[str, str] | None:
+    """The banner, in the shape `base.html` renders for every screen.
+
+    `kind`, not `level`. This screen used to return `level` and draw its own
+    banner too, so every message appeared twice — and the shared one, finding no
+    `kind`, coloured errors green. Found while preparing the 2026-10-07 検収,
+    where the stocktake screen is one the client operates by hand.
+    """
     if not key or key not in _FLASH:
         return None
-    level, message = _FLASH[key]
-    return {"level": level, "message": message}
+    kind, message = _FLASH[key]
+    return {"kind": kind, "message": message}
 
 
 # ---------------------------------------------------------------------------

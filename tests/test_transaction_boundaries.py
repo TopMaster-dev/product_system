@@ -66,6 +66,31 @@ def _opens_transaction(node: ast.AsyncWith) -> bool:
     )
 
 
+def _is_session_touch(call: ast.Call) -> bool:
+    func = call.func
+    if (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "session"
+        and func.attr not in _SAFE_SESSION_METHODS
+    ):
+        return True
+    return any(
+        isinstance(arg, ast.Name) and arg.id == "session"
+        for arg in [*call.args, *(k.value for k in call.keywords)]
+    )
+
+
+def _ends_transaction(call: ast.Call) -> bool:
+    func = call.func
+    return (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "session"
+        and func.attr in {"commit", "rollback"}
+    )
+
+
 def _touches_session(node: ast.AST) -> bool:
     """Does this statement hand `session` to anything, or call a method on it?
 
@@ -73,35 +98,65 @@ def _touches_session(node: ast.AST) -> bool:
     `await build_plan(session, data)` is the one that actually shipped, and a
     check looking only for `session.` would have missed it.
     """
-    for n in ast.walk(node):
-        if not isinstance(n, ast.Call):
+    return any(isinstance(n, ast.Call) and _is_session_touch(n) for n in ast.walk(node))
+
+
+def _own_nodes(fn: ast.AST) -> list[ast.AST]:
+    """Every node of `fn`, at any depth, without descending into nested defs —
+    those have their own session and are scanned on their own."""
+    found: list[ast.AST] = []
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef | ast.Lambda):
             continue
-        func = n.func
-        if (
-            isinstance(func, ast.Attribute)
-            and isinstance(func.value, ast.Name)
-            and func.value.id == "session"
-            and func.attr not in _SAFE_SESSION_METHODS
-        ):
-            return True
-        for arg in [*n.args, *(k.value for k in n.keywords)]:
-            if isinstance(arg, ast.Name) and arg.id == "session":
-                return True
-    return False
+        found.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _offenders_in(fn: ast.AsyncFunctionDef | ast.FunctionDef, path: str) -> list[str]:
+    """Walk the function in source order, at ANY nesting depth.
+
+    The first version only looked at top-level statements, so it never saw
+    `try: async with session.begin():` — and `_diff_action` in the reconcile
+    screen read the run with `session.get()` and then did exactly that. Every
+    approve and skip on that screen raised, and the guard was green.
+
+    Source order stands in for execution order: a touch, then a `begin()` with
+    no commit or rollback in between, is the shape that raises. Leaving a
+    `begin()` block also ends its transaction.
+    """
+    events: list[tuple[int, int, ast.AST]] = []  # (line, order, node)
+    for node in _own_nodes(fn):
+        if isinstance(node, ast.AsyncWith) and _opens_transaction(node):
+            events.append((node.lineno, 1, node))
+            events.append((node.end_lineno or node.lineno, 2, node))
+        elif isinstance(node, ast.Call) and (_is_session_touch(node) or _ends_transaction(node)):
+            events.append((node.lineno, 0, node))
+
+    found: list[str] = []
+    touched = False
+    for line, order, node in sorted(events, key=lambda e: (e[0], e[1])):
+        if order == 1:
+            if touched:
+                found.append(f"{path}:{line} {fn.name}()")
+            touched = False
+        elif order == 2:
+            touched = False
+        elif isinstance(node, ast.Call):
+            touched = not _ends_transaction(node)
+    return found
 
 
 def _offenders(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    found: list[str] = []
-    for fn in ast.walk(tree):
-        if not isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef):
-            continue
-        for index, stmt in enumerate(fn.body):
-            if isinstance(stmt, ast.AsyncWith) and _opens_transaction(stmt):
-                if any(_touches_session(earlier) for earlier in fn.body[:index]):
-                    found.append(f"{path.as_posix()}:{stmt.lineno} {fn.name}()")
-                break
-    return found
+    return [
+        offender
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.AsyncFunctionDef | ast.FunctionDef)
+        for offender in _offenders_in(fn, path.as_posix())
+    ]
 
 
 def _sources() -> list[Path]:
@@ -176,3 +231,37 @@ def test_a_session_created_in_the_same_with_is_not_flagged() -> None:
     inner = fn.body[-1]
     assert isinstance(inner, ast.AsyncWith)
     assert not _opens_transaction(inner)
+
+
+def test_a_transaction_opened_inside_a_try_is_still_seen() -> None:
+    """The shape the first version missed: `_diff_action` in the reconcile
+    screen, where every approve and skip raised in production."""
+    source = (
+        "async def handler(session):\n"
+        "    run = await session.get(Run, 1)\n"
+        "    if run is None:\n"
+        "        return None\n"
+        "    try:\n"
+        "        async with session.begin():\n"
+        "            await svc.approve(session)\n"
+        "    except ValueError:\n"
+        "        return None\n"
+    )
+    fn = ast.parse(source).body[0]
+    assert isinstance(fn, ast.AsyncFunctionDef)
+    assert _offenders_in(fn, "x.py") == ["x.py:6 handler()"]
+
+
+def test_a_commit_between_the_read_and_the_transaction_clears_it() -> None:
+    source = (
+        "async def handler(session):\n"
+        "    await session.execute(stmt)\n"
+        "    await session.commit()\n"
+        "    async with session.begin():\n"
+        "        await svc.write(session)\n"
+        "    async with session.begin():\n"
+        "        await svc.write(session)\n"
+    )
+    fn = ast.parse(source).body[0]
+    assert isinstance(fn, ast.AsyncFunctionDef)
+    assert _offenders_in(fn, "x.py") == []

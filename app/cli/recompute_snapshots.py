@@ -28,8 +28,9 @@ import argparse
 import asyncio
 import json
 import sys
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db import async_session_factory
@@ -53,6 +54,54 @@ async def _target_sku_ids(session: AsyncSession, explicit: list[int] | None) -> 
     event_rows = await session.execute(select(InventoryEvent.master_sku_id).distinct())
     ids = {r[0] for r in snap_rows.all()} | {r[0] for r in event_rows.all()}
     return sorted(ids)
+
+
+def drift_stmt() -> Select[Any]:
+    """Every SKU whose snapshot disagrees with its event log — the comparison
+    `recompute(dry_run=True)` makes, as ONE query and without row locks.
+
+    `recompute` takes `FOR UPDATE` on each snapshot and holds every lock until
+    its transaction ends, which is right for a repair and wrong for a health
+    check run while orders are arriving: ingestion would queue behind it. The
+    integration test seeds each drift shape and asserts both paths name the
+    same SKUs.
+
+    Rows: (master_sku_id, snapshot qty, computed qty, snapshot last id,
+    computed last id). A missing snapshot reads as NULL, which IS DISTINCT
+    FROM any computed value — `recompute` likewise counts it as drift.
+    """
+    events = (
+        select(
+            InventoryEvent.master_sku_id.label("master_sku_id"),
+            func.sum(InventoryEvent.quantity_delta).label("qty"),
+            func.max(InventoryEvent.id).label("last_id"),
+        )
+        .group_by(InventoryEvent.master_sku_id)
+        .subquery()
+    )
+    computed_qty = func.coalesce(events.c.qty, 0)
+    return (
+        select(
+            func.coalesce(events.c.master_sku_id, InventorySnapshot.master_sku_id),
+            InventorySnapshot.on_hand_qty,
+            computed_qty,
+            InventorySnapshot.last_event_id,
+            events.c.last_id,
+        )
+        .select_from(
+            events.join(
+                InventorySnapshot,
+                InventorySnapshot.master_sku_id == events.c.master_sku_id,
+                full=True,
+            )
+        )
+        .where(
+            or_(
+                InventorySnapshot.on_hand_qty.is_distinct_from(computed_qty),
+                InventorySnapshot.last_event_id.is_distinct_from(events.c.last_id),
+            )
+        )
+    )
 
 
 async def recompute(

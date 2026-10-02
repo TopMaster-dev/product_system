@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -73,6 +74,37 @@ def _first_line(plan: str) -> str:
     return plan.splitlines()[0].strip() if plan else ""
 
 
+@dataclass(frozen=True, slots=True)
+class PlanCheck:
+    label: str
+    table: str
+    current: str
+    forced: str
+
+    @property
+    def seq_now(self) -> bool:
+        return f"Seq Scan on {self.table}" in self.current
+
+    @property
+    def missing_index(self) -> bool:
+        """Sequential even with seqscan penalised: no index can serve it."""
+        return f"Seq Scan on {self.table}" in self.forced
+
+
+async def plan_statements(session: AsyncSession) -> list[PlanCheck]:
+    """Both plans for every rollup statement. Shared with
+    `verify_production_health`, so the two can never judge differently."""
+    return [
+        PlanCheck(
+            label=label,
+            table=table,
+            current=await _explain(session, stmt, no_seqscan=False),
+            forced=await _explain(session, stmt, no_seqscan=True),
+        )
+        for label, table, stmt in _statements()
+    ]
+
+
 async def run() -> int:
     async with async_session_factory() as session:
         events = await session.scalar(select(func.count()).select_from(InventoryEvent)) or 0
@@ -81,27 +113,23 @@ async def run() -> int:
         print("\n  === ロールアップの実行計画 — EXPLAIN のみ、クエリは実行しません ===")
         print(f"  inventory_events {events:,}行 / orders {orders:,}行")
 
-        findings: list[str] = []
-        for label, table, stmt in _statements():
-            current = await _explain(session, stmt, no_seqscan=False)
-            forced = await _explain(session, stmt, no_seqscan=True)
+        checks = await plan_statements(session)
 
-            seq_now = f"Seq Scan on {table}" in current
-            seq_forced = f"Seq Scan on {table}" in forced
+    findings: list[str] = []
+    for check in checks:
+        if check.missing_index:
+            verdict = "★ 索引なし — この述語を処理できる索引が存在しません"
+            findings.append(f"{check.label} ({check.table})")
+        elif check.seq_now:
+            verdict = "現在は全走査 — 索引はあるが、今の行数では全走査の方が安いと判断"
+        else:
+            verdict = "索引を使用"
 
-            if seq_forced:
-                verdict = "★ 索引なし — この述語を処理できる索引が存在しません"
-                findings.append(f"{label} ({table})")
-            elif seq_now:
-                verdict = "現在は全走査 — 索引はあるが、今の行数では全走査の方が安いと判断"
-            else:
-                verdict = "索引を使用"
-
-            print(f"\n  --- {label} ---")
-            print(f"  {verdict}")
-            print(f"    現在の計画 : {_first_line(current)}")
-            if seq_now != seq_forced:
-                print(f"    索引使用時 : {_first_line(forced)}")
+        print(f"\n  --- {check.label} ---")
+        print(f"  {verdict}")
+        print(f"    現在の計画 : {_first_line(check.current)}")
+        if check.seq_now != check.missing_index:
+            print(f"    索引使用時 : {_first_line(check.forced)}")
 
     if findings:
         print(f"\n  ★ 索引が無いクエリ {len(findings)}件: {', '.join(findings)}")

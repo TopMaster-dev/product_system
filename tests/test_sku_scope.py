@@ -45,6 +45,9 @@ DIRECT_USE_ALLOWED = {
     # events", and the whole job of that CLI is to find the ones that do.
     # Narrowing to the analysable population would hide every finding.
     "app/cli/inspect_stock_event_damage.py",
+    # Selects bundle parents themselves, like bundle_push: it picks a parent
+    # with recent sales for the 検収 walkthrough of 売上は親・在庫は構成品.
+    "app/cli/inspect_review_materials.py",
 }
 
 # `MasterSku.is_bundle.is_(...)` style predicate use in a query.

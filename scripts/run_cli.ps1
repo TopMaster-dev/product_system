@@ -119,8 +119,16 @@ try {
     # 取ってローカルにCSVを書くだけで、DBもチャネルも変更しない。
     # $APPLY_OPT_IN のCLIは -Apply が無ければ何も書かないので、警告を出すと
     # 「確認したのに何も起きなかった」という読み方を招く。
-    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^inspect_') -or ($Cli -match '^export_.*worksheets?$') -or ($optIn -and -not $Apply)
-    if (-not $DryRun -and -not $readOnly) {
+    # verify_* / validate_* は読み取り専用（突合・検証のみ）。export_stocktake_sheet は
+    # ローカルにCSVを書くだけ。export_to_bq は BigQuery に書くので含めない。
+    $readOnly = ($Args -match '(^|\s)--(status|list|report)(\s|$)') -or ($Cli -match '^(inspect|verify|validate)_') -or ($Cli -match '^export_.*worksheets?$') -or ($Cli -eq 'export_stocktake_sheet') -or ($optIn -and -not $Apply)
+    # -Args で --dry-run を渡した場合も dry-run として扱う。以前は -DryRun スイッチしか
+    # 見ておらず、dry-run の実行に「本実行です」と表示していた（2026-09-23 判明）。
+    $argsDryRun = $Args -match '(^|\s)--dry-run(\s|$)'
+    if ($DryRun -or $argsDryRun) {
+        Write-Host "  [dry-run] 保存しません。出力を確認してから本実行してください。" -ForegroundColor Cyan
+    }
+    elseif (-not $readOnly) {
         Write-Host "  [注意] 本実行です。--dry-run の出力を確認済みであることを前提とします。" -ForegroundColor Yellow
     }
     Invoke-Expression $cmd

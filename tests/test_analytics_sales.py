@@ -71,11 +71,19 @@ class _Result:
 
 
 class _FakeSession:
+    """Answers the sales query, then the order-count query, in that order.
+
+    Rows are (day, quantity, sales, orders) for readability and split here.
+    """
+
     def __init__(self, rows: list[Any]) -> None:
-        self._rows = rows
+        self._answers = [
+            [(d, q, s) for d, q, s, _ in rows],
+            [(d, o) for d, _, _, o in rows],
+        ]
 
     async def execute(self, _stmt: Any) -> _Result:
-        return _Result(self._rows)
+        return _Result(self._answers.pop(0))
 
 
 DAYS = [
