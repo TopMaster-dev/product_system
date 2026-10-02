@@ -47,7 +47,7 @@ from app.models import (
     SkuDailySales,
     SkuDailyStock,
 )
-from app.services.analytics_rollup import CANCELLED_STATUSES
+from app.services.analytics_rollup import CANCELLED_STATUSES, RUN_SUCCEEDED
 from app.services.timeframe import Period, bucket, jst_date_expr, pct_change
 
 #: A rollup older than this is called out on the screen. The hourly job leaves
@@ -260,7 +260,7 @@ async def provenance(session: AsyncSession, *, now: datetime) -> Provenance:
     the snapshot invariant currently holds."""
     last_run = await session.scalar(
         select(func.max(AnalyticsRollupRun.completed_at)).where(
-            AnalyticsRollupRun.status == "succeeded"
+            AnalyticsRollupRun.status == RUN_SUCCEEDED
         )
     )
     data_start = await session.scalar(select(func.min(DailyKpiSnapshot.stat_date)))

@@ -78,6 +78,12 @@ from app.services.timeframe import jst_date_expr, jst_day_bounds, to_jst_date
 #: Order statuses that mean the sale did not stick.
 CANCELLED_STATUSES = ("cancelled", "returned")
 
+#: What `analytics_rollup_runs.status` holds for a run that completed. One
+#: constant because the dashboard's freshness check spelled it "succeeded" while
+#: the writer wrote "success": it never found a run, so 「最終集計」 never showed
+#: and the stale-data warning could never fire. Found 2026-10-02.
+RUN_SUCCEEDED = "success"
+
 
 @dataclass(slots=True)
 class DayResult:
@@ -479,7 +485,7 @@ class AnalyticsRollupService:
         from app.models import AnalyticsRollupRun
 
         stmt = select(func.max(AnalyticsRollupRun.completed_at)).where(
-            AnalyticsRollupRun.status == "success"
+            AnalyticsRollupRun.status == RUN_SUCCEEDED
         )
         if job_name:
             stmt = stmt.where(AnalyticsRollupRun.job_name == job_name)

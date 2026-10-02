@@ -55,7 +55,7 @@ from app.models import (
     SkuDailySales,
     SkuDailyStock,
 )
-from app.services.analytics_rollup import AnalyticsRollupService, is_today
+from app.services.analytics_rollup import RUN_SUCCEEDED, AnalyticsRollupService, is_today
 from app.services.timeframe import Period, to_jst_date
 from app.services.velocity import DEFAULT_WINDOW_DAYS, refresh_velocities
 
@@ -107,7 +107,7 @@ class RebuildOutcome:
             return "failed"
         if self.skipped_locked:
             return "skipped"
-        return "success"
+        return RUN_SUCCEEDED
 
 
 async def _record_run(

@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import AnalyticsRollupRun, SkuVelocity
+from app.services.analytics_rollup import RUN_SUCCEEDED
 from app.services.timeframe import to_jst_date
 
 log = get_logger(__name__)
@@ -118,7 +119,7 @@ async def rollup_days(session: AsyncSession, *, days: int, now: datetime) -> lis
             continue
         health.runs += 1
         health.jobs[job_name] += 1
-        if status == "success":
+        if status == RUN_SUCCEEDED:
             health.successes += 1
         else:
             health.failures += 1
