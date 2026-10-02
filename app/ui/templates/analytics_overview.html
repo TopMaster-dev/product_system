@@ -60,7 +60,7 @@
 {% endif %}
 
 {# KPI。売上・数量・受注は期間の合計、在庫と欠品は期間末の残高。 #}
-<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
   {{ kpi_tile('売上高', '¥{:,}'.format(kpis.total_with_unmapped_jpy|int), deltas.sales.change,
               hint='未マッピング分を含む') }}
   {{ kpi_tile('販売数量', '{:,}'.format(kpis.sold_quantity), deltas.quantity.change) }}
@@ -69,6 +69,12 @@
               hint='期間末時点の残高') }}
   {{ kpi_tile('欠品SKU数', '{:,}'.format(kpis.out_of_stock_sku_count), none,
               hint='期間末 / 全{:,}件'.format(kpis.sku_count), good_when_up=False) }}
+  {# P2-012. Computed since W5 but never shown; the period is stated beside it
+     because the figure is NOT annualised and a 7-day and a 90-day value cannot
+     be compared as they stand. No stock means no answer, so a dash. #}
+  {{ kpi_tile('在庫回転率',
+              '%.2f'|format(kpis.turnover) if kpis.turnover is not none else '—',
+              none, hint='この{}日間の回転（年換算なし）'.format(period.days)) }}
 </div>
 
 <div class="grid lg:grid-cols-3 gap-4">
@@ -105,7 +111,7 @@
 {# 蓄積開始日を明示する。開始前を含む期間は「売れていない」ではなく「データが無い」。 #}
 <p class="text-xs text-ink-400 mt-4">
   {% if source.data_start %}集計開始日: {{ source.data_start.strftime('%Y-%m-%d') }}　{% endif %}
-  {% if source.last_rollup_at %}最終集計: {{ source.last_rollup_at.strftime('%Y-%m-%d %H:%M') }} UTC　{% endif %}
+  {% if source.last_rollup_at %}最終集計: {{ (source.last_rollup_at|jst).strftime('%Y-%m-%d %H:%M') }}　{% endif %}
   対象日数: {{ kpis.days_with_data }} / {{ period.days }}日
   {%- if kpis.days_with_data < period.days %}
     <span class="text-amber-600">（期間の一部は集計開始前のため数値がありません）</span>

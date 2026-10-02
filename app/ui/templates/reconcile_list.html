@@ -60,7 +60,7 @@
       <tbody class="divide-y divide-ink-100">
         {% for run in runs %}
           <tr class="hover:bg-ink-50/60 transition">
-            <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ (run.started_at|jst).strftime('%Y-%m-%d %H:%M') }}</td>
             <td class="px-4 py-3">{{ run_kind(run.run_type) }}</td>
             <td class="px-4 py-3">{{ run_badge(run.status) }}</td>
             <td class="px-4 py-3 text-xs text-ink-600 font-mono">{{ run.csv_filename or '自動取得' }}</td>
@@ -94,7 +94,7 @@
   {% for run in runs %}
     <a href="/admin/reconcile/{{ run.id }}" class="block bg-white rounded-xl border border-ink-200 p-4">
       <div class="flex items-center justify-between gap-3 mb-2">
-        <div class="text-xs text-ink-500 font-mono">{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div class="text-xs text-ink-500 font-mono">{{ (run.started_at|jst).strftime('%Y-%m-%d %H:%M') }}</div>
         <div class="flex items-center gap-1.5">{{ run_kind(run.run_type) }}{{ run_badge(run.status) }}</div>
       </div>
       <div class="text-xs text-ink-600 font-mono mb-2 break-all">{{ run.csv_filename or '自動取得' }}</div>

@@ -34,6 +34,7 @@ from app.csv_export import csv_body, csv_response
 from app.db import get_session
 from app.services.analytics_query import (
     Delta,
+    Kpis,
     SalesFilter,
     bucketed_sales,
     category_sales,
@@ -121,13 +122,24 @@ async def analytics_overview(
             "source": source,
             "trend": trend,
             "shares": charts.share_bars([(label, float(v)) for label, v in shares]),
-            "deltas": {
-                "sales": Delta.of(kpis.gross_sales_jpy, prior.gross_sales_jpy),
-                "quantity": Delta.of(kpis.sold_quantity, prior.sold_quantity),
-                "orders": Delta.of(kpis.order_count, prior.order_count),
-            },
+            "deltas": overview_deltas(kpis, prior),
         },
     )
+
+
+def overview_deltas(kpis: Kpis, prior: Kpis) -> dict[str, Delta]:
+    """Each change is computed on the number its tile shows.
+
+    The 売上高 tile shows sales INCLUDING unmapped lines, but its change was
+    computed on mapped sales only, so the percentage under it described a
+    different figure — and one that moves whenever a mapping is resolved,
+    although no sale changed. Found 2026-10-02 preparing the 検収.
+    """
+    return {
+        "sales": Delta.of(kpis.total_with_unmapped_jpy, prior.total_with_unmapped_jpy),
+        "quantity": Delta.of(kpis.sold_quantity, prior.sold_quantity),
+        "orders": Delta.of(kpis.order_count, prior.order_count),
+    }
 
 
 #: Bucket sizes the detail screen offers. A month bucket over a 7-day window is

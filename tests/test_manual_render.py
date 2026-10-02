@@ -98,7 +98,19 @@ def test_the_low_stock_threshold_is_explained_as_per_sku(html: str) -> None:
 
 def test_insufficient_data_is_explained_rather_than_left_blank(html: str) -> None:
     assert "予測不可" in html
-    assert "データ不足" in html
+
+
+def test_the_manual_names_the_labels_the_screen_shows(html: str) -> None:
+    """The manual explained a 「データ不足」 badge that the screen never shows —
+    it says データ少 / 判定不可. Found 2026-10-02 while writing the client's
+    test guide; a reader checking the screen against the manual would have
+    reported a defect. Read from the labels the screen renders, so renaming one
+    fails here."""
+    from app.services.velocity import CONFIDENCE_LABELS
+
+    for label in CONFIDENCE_LABELS.values():
+        assert label in html, f"the screen shows {label!r}; the manual does not explain it"
+    assert "データ不足" not in html
 
 
 def test_unmapped_revenue_is_explained(html: str) -> None:
@@ -136,3 +148,14 @@ def test_the_operations_that_change_past_numbers_are_listed(html: str) -> None:
 def test_the_blank_sku_alert_is_called_out(html: str) -> None:
     """Resolving it would attribute several products to one master."""
     assert "商品コードが空欄のアラートは解決できません" in html
+
+
+def test_a_category_change_is_described_as_the_nightly_repair_applies_it(html: str) -> None:
+    """Sales rows keep the category they were made under; only the nightly
+    repair's window is rebuilt with a new one. The manual said a change applied
+    to every past period, which the category screen would contradict for any
+    date older than the window."""
+    from app.cli.rebuild_daily_metrics import DEFAULT_REPAIR_DAYS
+
+    assert f"直近{DEFAULT_REPAIR_DAYS}日分" in html
+    assert "過去の集計にもさかのぼって反映" not in html

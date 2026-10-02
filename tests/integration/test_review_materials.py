@@ -96,6 +96,9 @@ async def test_the_channels_add_up_to_the_reconciliation(db_session) -> None:
     assert (rakuten.orders, rakuten.cancelled_orders) == (2, 1)
     assert rakuten.sales == Decimal("3300")
     assert rakuten.unmapped == Decimal("500")
+    # The totals are what the client holds against RMS, which knows no mapping.
+    assert (rakuten.unmapped_quantity, rakuten.total_quantity) == (1, 4)
+    assert rakuten.total_sales == Decimal("3800")
 
 
 async def test_the_walkthrough_counts_every_parent_sharing_a_component(db_session) -> None:

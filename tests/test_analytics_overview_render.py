@@ -169,3 +169,35 @@ def test_stock_tiles_state_they_are_closing_balances() -> None:
     """The one number on this page a reader could mistake for a period total."""
     html = _render()
     assert "期間末時点の残高" in html
+
+
+# --- 在庫回転率 (P2-012) ----------------------------------------------------
+
+
+def test_turnover_is_shown_with_its_period() -> None:
+    """Computed since W5 and never rendered until 2026-10-02, while the scope
+    sheet listed it as shown. 412 sold over an average 5,000 held is 0.08."""
+    html = _render()
+    assert "在庫回転率" in html
+    assert "0.08" in html
+    assert "この28日間の回転" in html
+    assert "年換算なし" in html
+
+
+def test_turnover_without_stock_is_a_dash_not_infinity() -> None:
+    html = _render(kpis=_kpis(average_on_hand_qty=0.0))
+    tile = html.split("在庫回転率", 1)[1][:400]
+    assert "—" in tile
+    assert "inf" not in tile.lower()
+
+
+def test_the_sales_change_is_computed_on_the_figure_the_tile_shows() -> None:
+    """The tile shows sales including unmapped lines. Resolving a mapping moves
+    money from unmapped to mapped without any sale changing; the change under
+    the tile must not move when that happens."""
+    from app.ui.routes.analytics import overview_deltas
+
+    before = _kpis(gross_sales_jpy=Decimal(900), unmapped_sales_jpy=Decimal(100))
+    after_resolving = _kpis(gross_sales_jpy=Decimal(1000), unmapped_sales_jpy=Decimal(0))
+
+    assert overview_deltas(after_resolving, before)["sales"].change == 0.0

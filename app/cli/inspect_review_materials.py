@@ -66,12 +66,20 @@ BUNDLE_DAYS = 14
 #: Payloads are large; this is plenty to establish a shop-wide setting.
 PAYLOAD_LIMIT = 3000
 
+#: The client compares each row with their own order list, which knows nothing
+#: of mapping. So the totals they can match come right after the order count,
+#: and the mapped / unmapped split follows as the explanation. Without the
+#: unmapped units, a Rakuten day (most of whose lines are still unmapped) had
+#: no item count that could ever agree with RMS.
 CSV_HEADER = [
     "日付",
     "チャネル",
     "受注件数",
-    "販売点数",
-    "売上金額",
+    "点数合計",
+    "売上合計(税込)",
+    "販売点数(商品特定済)",
+    "売上金額(商品特定済)",
+    "未マッピング点数",
     "未マッピング売上",
     "キャンセル・返品件数",
 ]
@@ -87,16 +95,28 @@ class ChannelDay:
     orders: int = 0
     quantity: int = 0
     sales: Decimal = Decimal(0)
+    unmapped_quantity: int = 0
     unmapped: Decimal = Decimal(0)
     cancelled_orders: int = 0
+
+    @property
+    def total_quantity(self) -> int:
+        return self.quantity + self.unmapped_quantity
+
+    @property
+    def total_sales(self) -> Decimal:
+        return self.sales + self.unmapped
 
     def as_csv(self) -> list[object]:
         return [
             self.day.isoformat(),
             self.channel,
             self.orders,
+            self.total_quantity,
+            self.total_sales,
             self.quantity,
             self.sales,
+            self.unmapped_quantity,
             self.unmapped,
             self.cancelled_orders,
         ]
@@ -140,6 +160,7 @@ async def channel_days(session: AsyncSession, period: Period) -> list[ChannelDay
             Order.channel,
             func.coalesce(func.sum(OrderItem.quantity).filter(live, mapped), 0),
             func.coalesce(func.sum(amount).filter(live, mapped), 0),
+            func.coalesce(func.sum(OrderItem.quantity).filter(live, ~mapped), 0),
             func.coalesce(func.sum(amount).filter(live, ~mapped), 0),
         )
         .select_from(OrderItem)
@@ -147,9 +168,10 @@ async def channel_days(session: AsyncSession, period: Period) -> list[ChannelDay
         .where(*in_period)
         .group_by(line_day, Order.channel)
     )
-    for day, channel, qty, sales, unmapped in lines.all():
+    for day, channel, qty, sales, unmapped_qty, unmapped in lines.all():
         r = row(day, channel)
-        r.quantity, r.sales, r.unmapped = int(qty), Decimal(sales), Decimal(unmapped)
+        r.quantity, r.sales = int(qty), Decimal(sales)
+        r.unmapped_quantity, r.unmapped = int(unmapped_qty), Decimal(unmapped)
 
     return [rows[k] for k in sorted(rows)]
 
@@ -158,20 +180,22 @@ def print_channel_days(period: Period, days: list[ChannelDay]) -> None:
     print(f"\n  === 1. 日別・チャネル別の受注集計  {period.first_day} 〜 {period.last_day} ===")
     print("  各チャネルの受注一覧と、この表の同じ日・同じチャネルの行を比べてください。\n")
     print(
-        f"    {'日付':<12}{'チャネル':<10}{'受注件数':>8}{'販売点数':>8}"
-        f"{'売上金額':>12}{'未マッピング':>12}{'キャンセル':>10}"
+        f"    {'日付':<12}{'チャネル':<10}{'受注件数':>8}{'点数合計':>8}{'売上合計':>12}"
+        f"{'うち未特定点数':>10}{'うち未特定売上':>12}{'キャンセル':>8}"
     )
     for d in days:
         print(
-            f"    {d.day.isoformat():<12}{d.channel:<10}{d.orders:>8}{d.quantity:>8}"
-            f"{d.sales:>12,.0f}{d.unmapped:>12,.0f}{d.cancelled_orders:>10}"
+            f"    {d.day.isoformat():<12}{d.channel:<10}{d.orders:>8}{d.total_quantity:>8}"
+            f"{d.total_sales:>12,.0f}{d.unmapped_quantity:>10}{d.unmapped:>12,.0f}"
+            f"{d.cancelled_orders:>8}"
         )
     print(
         "\n  受注一覧と差が出たときの確認順:"
         "\n    - 受注日の区切りは日本時間 0:00 です"
         "\n    - キャンセル・返品の注文は売上・件数に含みません (右端の件数)"
-        "\n    - 売上金額は「単価 x 数量」の合計です。送料・クーポン値引・ポイント利用は含みません"
-        "\n    - 商品を特定できていない明細は売上金額に含めず「未マッピング」に計上しています"
+        "\n    - 売上は「税込単価 x 数量」の合計です。送料・クーポン値引・ポイント利用は含みません"
+        "\n      (楽天は RMS の「商品合計金額」と同じ基準です)"
+        "\n    - 点数合計・売上合計は、商品を特定できていない明細を含みます"
     )
 
 

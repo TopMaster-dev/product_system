@@ -34,7 +34,7 @@
         {% for run in runs %}
           <tr class="hover:bg-ink-50/60 transition">
             <td class="px-4 py-3 text-xs font-mono text-ink-700 whitespace-nowrap">
-              {{ run.counted_on or run.started_at.strftime('%Y-%m-%d') }}
+              {{ run.counted_on or (run.started_at|jst).strftime('%Y-%m-%d') }}
             </td>
             {# 差分ゼロのカテゴリは行を残さないので、ここが唯一の実施記録になる。 #}
             <td class="px-4 py-3 text-ink-700">{{ run.scope_note or '—' }}</td>

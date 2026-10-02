@@ -52,7 +52,7 @@ from app.services.stock_status import (
     status_rank,
 )
 from app.ui.auth import OperatorDep
-from app.ui.deps import templates
+from app.ui.deps import jst, templates
 
 router = APIRouter()
 log = get_logger(__name__)
@@ -358,7 +358,7 @@ async def inventory_export(
                 r["on_hand_qty"],
                 STATUS_LABELS[classify(r["on_hand_qty"], r["low_stock_threshold"])],
                 "はい" if r["id"] in best_sellers else "",
-                r["updated_at"].strftime("%Y-%m-%d %H:%M:%S") if r["updated_at"] else "",
+                jst(r["updated_at"]).strftime("%Y-%m-%d %H:%M:%S") if r["updated_at"] else "",
                 "対象" if r["is_stock_managed"] else "対象外",
                 "はい" if r["archived_at"] else "",
                 r["low_stock_threshold"],

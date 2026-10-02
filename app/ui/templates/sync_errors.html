@@ -93,7 +93,7 @@
       <tbody class="divide-y divide-ink-100">
         {% for row in rows %}
           <tr class="hover:bg-ink-50/60 transition align-top">
-            <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ row.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+            <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ (row.started_at|jst).strftime('%Y-%m-%d %H:%M:%S') }}</td>
             <td class="px-4 py-3 font-mono text-xs font-medium text-ink-800">
               {{ row.sku_code or '—' }}
               {% if row.payload and row.payload.channel_sku %}<div class="text-ink-400">{{ row.payload.channel_sku }}</div>{% endif %}
@@ -139,7 +139,7 @@ response: {{ row.response_payload | tojson(indent=2) }}{% endif %}</pre>
     <div class="bg-white rounded-xl border border-ink-200 p-4
                 {% if row.status == 'failed' %}border-l-4 border-l-red-400{% else %}border-l-4 border-l-emerald-400{% endif %}">
       <div class="flex items-start justify-between gap-3 mb-2">
-        <div class="text-xs text-ink-500 font-mono">{{ row.started_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div class="text-xs text-ink-500 font-mono">{{ (row.started_at|jst).strftime('%Y-%m-%d %H:%M') }}</div>
         {{ status_badge(row.status) }}
       </div>
       <div class="flex items-center gap-2 flex-wrap mb-1.5">

@@ -97,7 +97,7 @@
             {% endif %}
           </div>
           <div class="text-ink-600">{{ e.reason or '—' }}</div>
-          <div class="text-ink-400 font-mono">{{ e.occurred_at.strftime('%m-%d %H:%M') }} · {{ e.operator }}</div>
+          <div class="text-ink-400 font-mono">{{ (e.occurred_at|jst).strftime('%m-%d %H:%M') }} · {{ e.operator }}</div>
         </li>
       {% else %}
         <li class="px-4 py-8 text-center text-xs text-ink-400">まだ手動調整はありません</li>

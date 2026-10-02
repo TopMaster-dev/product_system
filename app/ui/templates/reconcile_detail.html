@@ -23,7 +23,7 @@
     </h1>
     <p class="text-sm text-ink-500 mt-1">
       <span class="font-mono">{{ run.csv_filename or '—' }}</span> ·
-      {{ run.started_at.strftime('%Y-%m-%d %H:%M') }} · 実行者 <span class="font-mono">{{ run.triggered_by }}</span>
+      {{ (run.started_at|jst).strftime('%Y-%m-%d %H:%M') }} · 実行者 <span class="font-mono">{{ run.triggered_by }}</span>
     </p>
   </div>
   <a href="/admin/reconcile/{{ run.id }}/export.csv"

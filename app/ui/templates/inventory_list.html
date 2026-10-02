@@ -246,7 +246,7 @@
             </td>
             <td class="px-4 py-3">{{ status_pill(row.on_hand_qty, row.low_stock_threshold) }}</td>
             <td class="px-4 py-3 text-xs text-ink-500 font-mono whitespace-nowrap">
-              {% if row.updated_at %}{{ row.updated_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
+              {% if row.updated_at %}{{ (row.updated_at|jst).strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
             </td>
             <td class="px-4 py-3 text-right whitespace-nowrap">
               <a class="text-brand-600 hover:text-brand-700 text-xs font-medium" href="/admin/events?master_sku_id={{ row.id }}">履歴 →</a>
