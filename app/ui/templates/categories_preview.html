@@ -55,7 +55,7 @@
           <thead class="text-amber-700"><tr><th class="text-left py-1 pr-4">行</th><th class="text-left py-1">理由</th></tr></thead>
           <tbody class="text-amber-900">
             {% for issue in inspection.row_issues %}
-              <tr><td class="py-0.5 pr-4 font-mono">{{ issue.line }}</td><td class="py-0.5">{{ issue.reason }}</td></tr>
+              <tr><td class="py-0.5 pr-4 font-mono">{{ issue.line }}</td><td class="py-0.5 wrap">{{ issue.reason }}</td></tr>
             {% endfor %}
           </tbody>
         </table>

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}マッピングアラート · Product System{% endblock %}
 {% block content %}
+{% import "_detail.html" as ui %}
 
 <div class="mb-5">
   <h1 class="text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">マッピングアラート</h1>
@@ -107,8 +108,9 @@
   </form>
 {% endmacro %}
 
-<!-- Desktop / tablet table -->
-<div class="hidden md:block bg-white rounded-xl border border-ink-200 overflow-hidden">
+<!-- Table from 1024px, cards below (2026-10-03 responsive review: at 768px the
+     action column was cut off and titles wrapped to thirteen lines). -->
+<div class="hidden lg:block bg-white rounded-xl border border-ink-200 overflow-hidden">
   <div class="scroll-area overflow-x-auto">
     <table class="data-table w-full text-sm" style="min-width: 760px;">
       <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
@@ -123,15 +125,12 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for a in alerts %}
-          <tr class="hover:bg-ink-50/60 transition align-top">
+          <tr {{ ui.row_attrs('alert-' ~ a.id) }} class="hover:bg-ink-50/60 transition align-top">
             <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ (a.first_seen_at|jst).strftime('%Y-%m-%d %H:%M') }}</td>
             <td class="px-4 py-3">{{ channel_badge(a.channel) }}</td>
             <td class="px-4 py-3">
-              {% if a.product_name %}<div class="text-ink-800 font-medium text-[13px] leading-snug max-w-xs">{{ a.product_name }}</div>{% else %}<div class="text-ink-400 text-xs italic">（商品名なし）</div>{% endif %}
-              <div class="text-[11px] text-ink-500 mt-0.5">
-                <span class="font-mono">SKU: {{ a.channel_sku }}</span>
-                {% if a.channel_product_id and a.channel_product_id != a.channel_sku %}<span class="text-ink-300"> · </span><span class="font-mono">商品管理番号: {{ a.channel_product_id }}</span>{% endif %}
-              </div>
+              {% if a.product_name %}<div class="text-ink-800 font-medium text-[13px]">{{ ui.clip(a.product_name, 'max-w-[14rem] xl:max-w-[20rem]') }}</div>{% else %}<div class="text-ink-400 text-xs italic">（商品名なし）</div>{% endif %}
+              <div class="text-[11px] text-ink-500 mt-0.5 font-mono">{{ ui.clip('SKU: ' ~ a.channel_sku, 'max-w-[14rem] xl:max-w-[20rem]') }}</div>
             </td>
             <td class="px-4 py-3 text-right tabular-nums font-medium text-ink-800">{{ a.occurrence_count }}</td>
             <td class="px-4 py-3">
@@ -163,10 +162,10 @@
   </div>
 </div>
 
-<!-- Mobile cards -->
-<div class="md:hidden space-y-2">
+<!-- Cards below 1024px -->
+<div class="lg:hidden space-y-2">
   {% for a in alerts %}
-    <div class="bg-white rounded-xl border border-ink-200 p-4
+    <div {{ ui.row_attrs('alert-' ~ a.id) }} class="bg-white rounded-xl border border-ink-200 p-4
                 {% if a.status == 'open' %}border-l-4 border-l-red-500{% elif a.status == 'in_progress' %}border-l-4 border-l-amber-500{% endif %}">
       <div class="flex items-start justify-between gap-3 mb-2">
         <div class="min-w-0">
@@ -178,7 +177,7 @@
           <div class="text-xs text-ink-500 font-mono">{{ a.occurrence_count }} 回</div>
         </div>
       </div>
-      {% if a.product_name %}<div class="text-sm font-medium text-ink-800 mb-1 leading-snug">{{ a.product_name }}</div>{% endif %}
+      {% if a.product_name %}<div class="text-sm font-medium text-ink-800 mb-1 leading-snug line-clamp-2">{{ a.product_name }}</div>{% endif %}
       <div class="text-[11px] text-ink-500 mb-2 break-all">
         <span class="font-mono">SKU: {{ a.channel_sku }}</span>
         {% if a.channel_product_id and a.channel_product_id != a.channel_sku %}<span class="text-ink-300"> · </span><span class="font-mono">商品管理番号: {{ a.channel_product_id }}</span>{% endif %}
@@ -218,6 +217,20 @@
 
 {# ONE list for the whole page, referenced by every row's input. Rendering it
    per row is what took this screen down on 2026-08-25. #}
+{# One detail panel per alert, shared by the table and the cards. #}
+{% for a in alerts %}
+  {% call ui.panel('alert-' ~ a.id, a.channel_sku) %}
+    {{ ui.field('商品名', a.product_name or '（商品名なし）') }}
+    {{ ui.field('チャネル', a.channel) }}
+    {{ ui.field('チャネルのSKU', a.channel_sku, mono=True) }}
+    {% if a.channel_product_id and a.channel_product_id != a.channel_sku %}{{ ui.field('商品管理番号', a.channel_product_id, mono=True) }}{% endif %}
+    {{ ui.field('初回検知', (a.first_seen_at|jst).strftime('%Y-%m-%d %H:%M')) }}
+    {{ ui.field('発生回数', a.occurrence_count ~ ' 回') }}
+    {{ ui.field('状態', '未対応' if a.status == 'open' else ('対応中' if a.status == 'in_progress' else '解決済')) }}
+    {% if a.assignee %}{{ ui.field('担当', a.assignee) }}{% endif %}
+  {% endcall %}
+{% endfor %}
+
 <datalist id="skuOptions">
   {% for s in master_skus %}<option value="{{ s.sku_code }}">{{ s.name }}</option>{% endfor %}
 </datalist>

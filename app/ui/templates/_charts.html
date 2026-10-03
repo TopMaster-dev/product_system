@@ -51,7 +51,10 @@
       {% endfor %}
 
       {% for x, label in model.x_labels %}
-        <text x="{{ '%.1f'|format(x) }}" y="{{ model.height - 6 }}" text-anchor="middle"
+        {# Centred on the last point, a label hangs half outside the frame —
+           「10/02」 showed as 「10/」. Anchor it to its right edge there. #}
+        <text x="{{ '%.1f'|format(x) }}" y="{{ model.height - 6 }}"
+              text-anchor="{{ 'end' if x > model.width - 24 else 'middle' }}"
               font-size="10" fill="#94A3B8">{{ label }}</text>
       {% endfor %}
     </svg>
@@ -96,7 +99,10 @@
       {% endfor %}
 
       {% for x, label in model.x_labels %}
-        <text x="{{ '%.1f'|format(x) }}" y="{{ model.height - 6 }}" text-anchor="middle"
+        {# Centred on the last point, a label hangs half outside the frame —
+           「10/02」 showed as 「10/」. Anchor it to its right edge there. #}
+        <text x="{{ '%.1f'|format(x) }}" y="{{ model.height - 6 }}"
+              text-anchor="{{ 'end' if x > model.width - 24 else 'middle' }}"
               font-size="10" fill="#94A3B8">{{ label }}</text>
       {% endfor %}
     </svg>
@@ -138,10 +144,16 @@
   percentage. It renders as "—", never as 0% or +100%: inventing a figure the
   client would act on is worse than admitting there is none.
 #}
-{% macro kpi_tile(label, value, delta=None, hint=None, href=None, good_when_up=True) %}
+{#
+  `span` widens a tile in its grid. The yen total is the one value long enough
+  to overflow a sixth of the page: 「¥21,068,690」 needs ~145px at text-2xl and a
+  1024px six-column row gave it 118 (2026-10-03 responsive review). Values never
+  wrap; the grid gives them the room instead.
+#}
+{% macro kpi_tile(label, value, delta=None, hint=None, href=None, good_when_up=True, span='') %}
   {% set body %}
     <div class="text-xs text-ink-500 mb-1">{{ label }}</div>
-    <div class="text-2xl font-semibold tabular-nums text-ink-900">{{ value }}</div>
+    <div class="text-xl md:text-2xl font-semibold tabular-nums text-ink-900 whitespace-nowrap">{{ value }}</div>
     <div class="mt-1 text-xs flex items-center gap-1.5">
       {% if delta is none %}
         <span class="text-ink-400">前期間比 —</span>
@@ -159,10 +171,10 @@
 
   {% if href %}
     <a href="{{ href }}"
-       class="block rounded-xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-card-hover transition p-4">
+       class="block min-w-0 {{ span }} rounded-xl bg-white border border-ink-200 hover:border-brand-300 hover:shadow-card-hover transition p-4">
       {{ body }}
     </a>
   {% else %}
-    <div class="rounded-xl bg-white border border-ink-200 p-4">{{ body }}</div>
+    <div class="min-w-0 {{ span }} rounded-xl bg-white border border-ink-200 p-4">{{ body }}</div>
   {% endif %}
 {% endmacro %}

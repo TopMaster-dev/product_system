@@ -53,6 +53,7 @@ from app.services.timeframe import PRESET_DAYS, Period, resolve_period, to_jst_d
 from app.services.velocity import (
     CONFIDENCE_LABELS,
     DEFAULT_COVER_DAYS,
+    StockoutRisk,
     stockout_risks,
 )
 from app.ui import charts
@@ -423,6 +424,15 @@ async def analytics_categories(
     )
 
 
+def risk_counts(risks: list[StockoutRisk]) -> dict[str, int]:
+    """The three counters above the risk table, over EVERY at-risk SKU."""
+    return {
+        "out_of_stock": sum(1 for r in risks if r.on_hand_qty <= 0),
+        "below_threshold": sum(1 for r in risks if r.is_below_threshold),
+        "unforecastable": sum(1 for r in risks if r.days_remaining is None),
+    }
+
+
 #: How many rows the risk screen shows. Triage, not an inventory listing — a
 #: page of 600 rows sorted by urgency is read as far as the first screenful
 #: either way, and the CSV carries the rest.
@@ -448,9 +458,14 @@ async def analytics_stockout_risk(
     current = resolve_period(period, now=now)
     cover_days = max(1, min(90, cover))
 
-    risks = await stockout_risks(
-        session, current, today=to_jst_date(now), cover_days=cover_days, limit=RISK_LIMIT
+    # The whole list, then the page. The counters were computed from the 100
+    # rows shown, so with 100+ SKUs out of stock all three read exactly 100
+    # (2026-10-03 responsive review). The full list is built anyway before
+    # any slicing; counting it costs nothing extra.
+    every_risk = await stockout_risks(
+        session, current, today=to_jst_date(now), cover_days=cover_days
     )
+    risks = every_risk[:RISK_LIMIT]
     source = await load_provenance(session, now=now)
 
     return templates.TemplateResponse(
@@ -466,9 +481,7 @@ async def analytics_stockout_risk(
             "source": source,
             "labels": CONFIDENCE_LABELS,
             "limit": RISK_LIMIT,
-            "out_of_stock": sum(1 for r in risks if r.on_hand_qty <= 0),
-            "below_threshold": sum(1 for r in risks if r.is_below_threshold),
-            "unforecastable": sum(1 for r in risks if r.days_remaining is None),
+            **risk_counts(every_risk),
         },
     )
 

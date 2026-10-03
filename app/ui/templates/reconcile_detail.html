@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}照合 #{{ run.id }} · Product System{% endblock %}
 {% block content %}
+{% import "_detail.html" as ui %}
 
 {% set is_open = run.status == 'pending_approval' %}
 
@@ -65,8 +66,20 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for d in diffs %}
-          <tr class="hover:bg-ink-50/60 transition">
-            <td class="px-4 py-3 font-mono text-xs font-medium text-ink-800">{{ d.sku_code }}<span class="text-ink-400 font-sans">{% if d.name %} · {{ d.name }}{% endif %}</span></td>
+          <tr {{ ui.row_attrs('rcd-' ~ d.id) }} class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-3 font-mono text-xs font-medium text-ink-800">
+              <div class="flex items-center gap-1">
+                <span>{{ d.sku_code }}</span>
+                {% if d.name %}<span class="text-ink-300">·</span><span class="text-ink-400 font-sans">{{ ui.clip(d.name, 'max-w-[10rem] lg:max-w-[20rem]') }}</span>{% endif %}
+              </div>
+              {% call ui.panel('rcd-' ~ d.id, d.sku_code) %}
+                {{ ui.field('商品名', d.name) }}
+                {{ ui.field('システムの在庫数', d.current_qty) }}
+                {{ ui.field('照合先の在庫数', d.target_qty) }}
+                {{ ui.field('差分', '%+d' % d.delta) }}
+                {% if d.applied_delta is not none and d.applied_delta != d.delta %}{{ ui.field('実際に適用した数量', '%+d' % d.applied_delta) }}{% endif %}
+              {% endcall %}
+            </td>
             <td class="px-4 py-3 text-right tabular-nums text-ink-600">{{ d.current_qty }}</td>
             <td class="px-4 py-3 text-right tabular-nums font-medium text-ink-900">{{ d.target_qty }}</td>
             <td class="px-4 py-3 text-right">

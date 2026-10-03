@@ -38,10 +38,10 @@
   </div>
 </div>
 
-<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-  <div class="rounded-xl bg-white border border-ink-200 p-4">
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+  <div class="col-span-2 lg:col-span-1 min-w-0 rounded-xl bg-white border border-ink-200 p-4">
     <div class="text-xs text-ink-500 mb-1">期間売上高</div>
-    <div class="text-2xl font-semibold tabular-nums text-ink-900">¥{{ '{:,}'.format(period_sales|int) }}</div>
+    <div class="text-xl md:text-2xl font-semibold tabular-nums text-ink-900 whitespace-nowrap">¥{{ '{:,}'.format(period_sales|int) }}</div>
   </div>
   <div class="rounded-xl bg-white border border-ink-200 p-4">
     <div class="text-xs text-ink-500 mb-1">期間販売数量</div>

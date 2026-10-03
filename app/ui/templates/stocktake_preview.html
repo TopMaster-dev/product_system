@@ -2,6 +2,7 @@
 {% block title %}棚卸の確認{% endblock %}
 
 {% block content %}
+{% import "_detail.html" as ui %}
 <div class="flex items-center justify-between gap-3 mb-4">
   <div>
     <h1 class="text-xl font-semibold text-ink-900">棚卸の確認</h1>
@@ -98,9 +99,16 @@
         </thead>
         <tbody class="divide-y divide-ink-100">
           {% for row in rows %}
-            <tr class="hover:bg-ink-50/60 transition">
+            <tr {{ ui.row_attrs('stp-' ~ loop.index) }} class="hover:bg-ink-50/60 transition">
               <td class="px-4 py-2.5 font-mono text-xs text-ink-700 whitespace-nowrap">{{ row.sku_code }}</td>
-              <td class="px-4 py-2.5 text-ink-800">{{ row.name }}</td>
+              <td class="px-4 py-2.5 text-ink-800">{{ ui.clip(row.name, 'max-w-[12rem] lg:max-w-[22rem]') }}
+                {% call ui.panel('stp-' ~ loop.index, row.sku_code) %}
+                  {{ ui.field('商品名', row.name) }}
+                  {{ ui.field('システムの在庫数', row.current_qty) }}
+                  {{ ui.field('数えた数', row.target_qty) }}
+                  {{ ui.field('差分', ('+' if row.delta > 0 else '') ~ row.delta) }}
+                {% endcall %}
+              </td>
               <td class="px-4 py-2.5 text-right tabular-nums text-ink-600">{{ row.current_qty }}</td>
               <td class="px-4 py-2.5 text-right tabular-nums font-medium text-ink-900">{{ row.target_qty }}</td>
               <td class="px-4 py-2.5 text-right tabular-nums font-semibold

@@ -1,0 +1,56 @@
+{#
+  Row detail panel (2026-10-03, chosen by the client over hover tooltips).
+
+  Long text — product titles from the channels run to 100+ characters — is
+  never printed in full inside a table. The cell shows one line, cut with an
+  ellipsis by `clip()`, and the whole row opens a panel with every field in full.
+
+  Usage, per row:
+
+      {% import "_detail.html" as ui %}
+      <tr {{ ui.row_attrs('inv-' ~ row.id) }} class="...">
+        <td>{{ ui.clip(row.name) }}
+          {% call ui.panel('inv-' ~ row.id, row.sku_code) %}
+            {{ ui.field('商品名', row.name) }}
+            {{ ui.links([('/admin/events?master_sku_id=' ~ row.id, '在庫の履歴')]) }}
+          {% endcall %}
+        </td>
+        ...
+
+  The panel's content is server-rendered into a <template>, so opening it costs
+  no request, and the script in base.html only clones what is already there.
+  Links, buttons and form fields inside a row keep their own behaviour; the
+  script ignores clicks that land on them.
+#}
+
+{% macro row_attrs(id) -%}
+  data-detail="{{ id }}" tabindex="0" aria-haspopup="dialog"
+{%- endmacro %}
+
+{# One line, cut with an ellipsis. `width` caps the column so a long title can
+   no longer squeeze its neighbours into one character per line. #}
+{% macro clip(text, width='max-w-[16rem]') -%}
+  <span class="block truncate {{ width }}">{{ text if text else '—' }}</span>
+{%- endmacro %}
+
+{% macro panel(id, title) -%}
+  <template id="{{ id }}" data-title="{{ title }}"><div class="divide-y divide-ink-100">{{ caller() }}</div></template>
+{%- endmacro %}
+
+{% macro field(label, value, mono=False) -%}
+  <dl class="py-2.5">
+    <dt class="text-xs font-medium text-ink-500">{{ label }}</dt>
+    <dd class="mt-0.5 text-sm text-ink-900 whitespace-pre-line break-words{% if mono %} font-mono{% endif %}">{{ value if value is not none and value != '' else '—' }}</dd>
+  </dl>
+{%- endmacro %}
+
+{% macro links(items) -%}
+  {% if items %}
+    <div class="pt-3 flex flex-wrap gap-2">
+      {% for href, label in items %}
+        <a href="{{ href }}"
+           class="inline-flex items-center gap-1 rounded-md border border-ink-300 bg-white hover:bg-ink-50 text-ink-700 text-xs font-medium px-3 py-1.5 transition">{{ label }} →</a>
+      {% endfor %}
+    </div>
+  {% endif %}
+{%- endmacro %}

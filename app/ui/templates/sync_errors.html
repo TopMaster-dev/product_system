@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}同期エラー · Product System{% endblock %}
 {% block content %}
+{% import "_detail.html" as ui %}
 
 <div class="mb-5 flex items-start justify-between gap-4 flex-wrap">
   <div>
@@ -92,7 +93,7 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for row in rows %}
-          <tr class="hover:bg-ink-50/60 transition align-top">
+          <tr {{ ui.row_attrs('sync-' ~ row.id) }} class="hover:bg-ink-50/60 transition align-top">
             <td class="px-4 py-3 text-xs font-mono text-ink-600 whitespace-nowrap">{{ (row.started_at|jst).strftime('%Y-%m-%d %H:%M:%S') }}</td>
             <td class="px-4 py-3 font-mono text-xs font-medium text-ink-800">
               {{ row.sku_code or '—' }}
@@ -100,18 +101,11 @@
             </td>
             <td class="px-4 py-3 text-xs text-ink-700">{{ row.channel or '—' }}</td>
             <td class="px-4 py-3">{{ status_badge(row.status) }}</td>
-            <td class="px-4 py-3 text-xs text-ink-700 max-w-md">
+            <td class="px-4 py-3 text-xs text-ink-700">
               {% if row.status == 'failed' %}
-                <div class="text-ink-800 font-medium">{{ row.guidance }}</div>
-                {% if row.error_code %}<div class="text-ink-400 mt-0.5">{{ row.error_code }}{% if row.error_message %}: {{ row.error_message }}{% endif %}</div>{% endif %}
+                <div class="text-ink-800 font-medium">{{ ui.clip(row.guidance, 'max-w-[16rem] xl:max-w-[24rem]') }}</div>
+                {% if row.error_code %}<div class="text-ink-400 mt-0.5">{{ ui.clip(row.error_code ~ (': ' ~ row.error_message if row.error_message else ''), 'max-w-[16rem] xl:max-w-[24rem]') }}</div>{% endif %}
                 {% if row.parent_attempt_id %}<div class="text-ink-400 mt-0.5">再実行元: #{{ row.parent_attempt_id }}</div>{% endif %}
-                {% if row.payload or row.response_payload %}
-                  <details class="mt-1.5">
-                    <summary class="cursor-pointer text-brand-600 hover:text-brand-700 select-none">詳細データ</summary>
-                    <pre class="mt-1.5 p-2 bg-ink-900 text-ink-100 rounded text-[11px] leading-relaxed overflow-x-auto scroll-area">payload: {{ row.payload | tojson(indent=2) }}{% if row.response_payload %}
-response: {{ row.response_payload | tojson(indent=2) }}{% endif %}</pre>
-                  </details>
-                {% endif %}
               {% else %}
                 <span class="text-ink-400">正常</span>
               {% endif %}
@@ -136,7 +130,7 @@ response: {{ row.response_payload | tojson(indent=2) }}{% endif %}</pre>
 <!-- Mobile cards -->
 <div class="md:hidden space-y-2">
   {% for row in rows %}
-    <div class="bg-white rounded-xl border border-ink-200 p-4
+    <div {{ ui.row_attrs('sync-' ~ row.id) }} class="bg-white rounded-xl border border-ink-200 p-4
                 {% if row.status == 'failed' %}border-l-4 border-l-red-400{% else %}border-l-4 border-l-emerald-400{% endif %}">
       <div class="flex items-start justify-between gap-3 mb-2">
         <div class="text-xs text-ink-500 font-mono">{{ (row.started_at|jst).strftime('%Y-%m-%d %H:%M') }}</div>
@@ -147,8 +141,8 @@ response: {{ row.response_payload | tojson(indent=2) }}{% endif %}</pre>
         <span class="text-xs text-ink-500">{{ row.channel or '—' }}</span>
       </div>
       {% if row.status == 'failed' %}
-        <div class="text-xs text-ink-800 mb-2">{{ row.guidance }}</div>
-        {% if row.error_code %}<div class="text-[11px] text-ink-400 mb-2 break-all">{{ row.error_code }}{% if row.error_message %}: {{ row.error_message }}{% endif %}</div>{% endif %}
+        <div class="text-xs text-ink-800 mb-2 line-clamp-2">{{ row.guidance }}</div>
+        {% if row.error_code %}<div class="text-[11px] text-ink-400 mb-2 break-all line-clamp-2">{{ row.error_code }}{% if row.error_message %}: {{ row.error_message }}{% endif %}</div>{% endif %}
         {{ retry_form(row) }}
       {% endif %}
     </div>
@@ -158,6 +152,29 @@ response: {{ row.response_payload | tojson(indent=2) }}{% endif %}</pre>
     </div>
   {% endfor %}
 </div>
+
+{# The full error, guidance and payloads live in the row's panel. #}
+{% for row in rows %}
+  {% call ui.panel('sync-' ~ row.id, row.sku_code or ('#' ~ row.id)) %}
+    {{ ui.field('日時', (row.started_at|jst).strftime('%Y-%m-%d %H:%M:%S')) }}
+    {{ ui.field('チャネル', row.channel) }}
+    {% if row.payload and row.payload.channel_sku %}{{ ui.field('チャネルのSKU', row.payload.channel_sku, mono=True) }}{% endif %}
+    {% if row.status == 'failed' %}
+      {{ ui.field('対処', row.guidance) }}
+      {{ ui.field('エラー', (row.error_code or '') ~ (': ' ~ row.error_message if row.error_message else ''), mono=True) }}
+      {% if row.parent_attempt_id %}{{ ui.field('再実行元', '#' ~ row.parent_attempt_id) }}{% endif %}
+      {% if row.payload or row.response_payload %}
+        <div class="py-2.5">
+          <div class="text-xs font-medium text-ink-500 mb-1">詳細データ</div>
+          <pre class="p-2 bg-ink-900 text-ink-100 rounded text-[11px] leading-relaxed overflow-x-auto scroll-area">payload: {{ row.payload | tojson(indent=2) }}{% if row.response_payload %}
+response: {{ row.response_payload | tojson(indent=2) }}{% endif %}</pre>
+        </div>
+      {% endif %}
+    {% else %}
+      {{ ui.field('状態', '正常') }}
+    {% endif %}
+  {% endcall %}
+{% endfor %}
 
 {% if pagination.has_next or pagination.has_prev %}
   <div class="mt-4 flex justify-end gap-2">

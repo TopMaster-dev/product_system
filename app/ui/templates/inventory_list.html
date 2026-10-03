@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}在庫一覧 · Product System{% endblock %}
 {% block content %}
+{% import "_detail.html" as ui %}
 
 {#
   在庫状態の閾値はテンプレートに直書きしない。W8 (P2-017) 以降は SKU ごとに
@@ -200,8 +201,9 @@
   {% endif %}
 {% endmacro %}
 
-<!-- Desktop / tablet table -->
-<div class="hidden md:block bg-white rounded-xl border border-ink-200 overflow-hidden">
+<!-- Table from 1024px. Below that the cards are used: at 768px the table had
+     to squeeze eight columns into 720px (2026-10-03 responsive review). -->
+<div class="hidden lg:block bg-white rounded-xl border border-ink-200 overflow-hidden">
   <div class="scroll-area overflow-x-auto">
     <table class="data-table w-full text-sm">
       <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
@@ -209,7 +211,7 @@
           <th class="px-4 py-3 text-left font-semibold w-14">画像</th>
           {{ sort_th('sku', 'SKU コード') }}
           {{ sort_th('name', '商品名') }}
-          <th class="px-4 py-3 text-left font-semibold">JAN</th>
+          <th class="px-4 py-3 text-left font-semibold hidden xl:table-cell">JAN</th>
           {{ sort_th('qty', '在庫数', 'right') }}
           {{ sort_th('status', '状態') }}
           {{ sort_th('updated', '最終更新') }}
@@ -218,12 +220,12 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for row in rows %}
-          <tr class="hover:bg-ink-50/60 transition {% if row.archived_at %}opacity-60{% endif %}">
+          <tr {{ ui.row_attrs('inv-' ~ row.id) }} class="hover:bg-ink-50/60 transition {% if row.archived_at %}opacity-60{% endif %}">
             <td class="px-4 py-3">{{ thumb(row, 'w-10 h-10') }}</td>
             <td class="px-4 py-3 font-mono text-xs font-medium text-ink-800">{{ row.sku_code }}</td>
             <td class="px-4 py-3 text-ink-800">
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <span>{{ row.name }}</span>
+              <div class="flex items-center gap-1.5">
+                {{ ui.clip(row.name, 'max-w-[13rem] xl:max-w-[20rem]') }}
                 {% if row.id in best_sellers %}
                   <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-50 text-orange-700 ring-1 ring-orange-200">
                     <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3 4 5 4 8a4 4 0 11-8 0c0-1 .4-2 .4-2S8 9 8 11a5 5 0 105-9z"/></svg>
@@ -235,11 +237,11 @@
               {% if row.id in best_sellers and row.on_hand_qty < row.low_stock_threshold %}
                 <div class="mt-1 inline-flex items-center gap-1 text-[11px] text-red-600 font-medium">
                   <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                  売れ筋商品が在庫不足です（補充を検討）
+                  売れ筋・在庫不足
                 </div>
               {% endif %}
             </td>
-            <td class="px-4 py-3 font-mono text-xs text-ink-500">{{ row.jan_code or '—' }}</td>
+            <td class="px-4 py-3 font-mono text-xs text-ink-500 hidden xl:table-cell">{{ row.jan_code or '—' }}</td>
             <td class="px-4 py-3 text-right">
               {{ qty_cell(row.on_hand_qty, row.low_stock_threshold) }}
               <div class="text-[11px] text-ink-400 tabular-nums">閾値 {{ row.low_stock_threshold }}</div>
@@ -272,10 +274,10 @@
   </div>
 </div>
 
-<!-- Mobile cards -->
-<div class="md:hidden space-y-2">
+<!-- Cards below 1024px -->
+<div class="lg:hidden space-y-2">
   {% for row in rows %}
-    <div class="bg-white rounded-xl border border-ink-200 p-4 {% if row.archived_at %}opacity-60{% endif %}
+    <div {{ ui.row_attrs('inv-' ~ row.id) }} class="bg-white rounded-xl border border-ink-200 p-4 {% if row.archived_at %}opacity-60{% endif %}
                 {% if row.on_hand_qty < 0 %}border-l-4 border-l-red-500
                 {% elif row.on_hand_qty == 0 %}border-l-4 border-l-ink-400
                 {% elif row.on_hand_qty < row.low_stock_threshold %}border-l-4 border-l-amber-500{% endif %}">
@@ -287,7 +289,7 @@
         <div>{{ qty_cell(row.on_hand_qty, row.low_stock_threshold) }}</div>
       </div>
       <div class="text-sm text-ink-800 mb-1 flex items-center gap-1.5 flex-wrap">
-        <span>{{ row.name }}</span>
+        <span class="line-clamp-2">{{ row.name }}</span>
         {% if row.id in best_sellers %}
           <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-50 text-orange-700 ring-1 ring-orange-200">売れ筋</span>
         {% endif %}
@@ -341,4 +343,27 @@
     </div>
   </div>
 {% endif %}
+
+{# One detail panel per row, shared by the table and the cards. #}
+{% for row in rows %}
+  {% set low = row.on_hand_qty < row.low_stock_threshold %}
+  {% call ui.panel('inv-' ~ row.id, row.sku_code) %}
+    {{ ui.field('商品名', row.name) }}
+    {{ ui.field('在庫数', row.on_hand_qty) }}
+    {{ ui.field('状態', 'マイナス' if row.on_hand_qty < 0 else ('ゼロ' if row.on_hand_qty == 0 else ('低在庫' if low else '正常'))) }}
+    {{ ui.field('低在庫の基準', row.low_stock_threshold ~ '（販売速度から算出）') }}
+    {% if row.id in best_sellers %}
+      {{ ui.field('売れ筋', '直近の販売上位です' ~ ('。在庫が基準を下回っています（補充を検討）' if low else '')) }}
+    {% endif %}
+    {{ ui.field('JAN', row.jan_code, mono=True) }}
+    {{ ui.field('最終更新', (row.updated_at|jst).strftime('%Y-%m-%d %H:%M') if row.updated_at else none) }}
+    {% if not row.is_stock_managed %}{{ ui.field('在庫管理', '対象外（受注時に在庫を消費しません）') }}{% endif %}
+    {% if row.archived_at %}{{ ui.field('アーカイブ', '済（通常の一覧には表示されません）') }}{% endif %}
+    {{ ui.links([
+         ('/admin/analytics/sku/' ~ row.id, '売上・在庫の推移'),
+         ('/admin/events?master_sku_id=' ~ row.id, '在庫の履歴'),
+         ('/admin/adjust?master_sku_id=' ~ row.id, '手動調整'),
+       ]) }}
+  {% endcall %}
+{% endfor %}
 {% endblock %}

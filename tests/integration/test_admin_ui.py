@@ -1433,3 +1433,39 @@ async def test_existing_rows_default_to_the_crossmall_reconciliation(_test_engin
             text("SELECT run_type FROM reconcile_runs WHERE source = 'legacy' LIMIT 1")
         )
     assert got == "reconcile"
+
+
+# --- 2026-10-03 responsive review ---------------------------------------------
+
+
+async def test_a_bundle_parent_is_not_listed_as_zero_stock(admin_client, _test_engine) -> None:
+    """A parent holds no stock of its own; listed, it read 「0・ゼロ」 and
+    inflated the zero badge against the dashboard's count."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    await _seed_stock(factory, "POOL-SKU", 0)
+    async with factory() as session, session.begin():
+        session.add(MasterSku(sku_code="SET-PARENT", name="SET-PARENT", is_bundle=True))
+
+    for hidden in ("", "&include_hidden=1"):
+        r = await admin_client.get(f"/admin/inventory?filter=all{hidden}", headers=_auth_header())
+        assert "POOL-SKU" in r.text
+        assert "SET-PARENT" not in r.text
+
+    r = await admin_client.get("/admin/inventory?filter=zero", headers=_auth_header())
+    assert "POOL-SKU" in r.text and "SET-PARENT" not in r.text
+
+
+async def test_every_inventory_row_opens_a_panel_with_the_full_name(
+    admin_client, _test_engine
+) -> None:
+    """The table shows one line; the full title lives in the row's panel."""
+    factory = async_sessionmaker(_test_engine, expire_on_commit=False, autoflush=False)
+    long_name = "【送料無料】 クロス ネックレス スマイル 笑顔 にこちゃん 十字架 チャーム" * 2
+    sku_id = await _seed_stock(factory, "LONG-NAME", 3, long_name)
+
+    r = await admin_client.get("/admin/inventory", headers=_auth_header())
+    assert f'data-detail="inv-{sku_id}"' in r.text
+    assert f'<template id="inv-{sku_id}"' in r.text
+    panel = r.text.split(f'<template id="inv-{sku_id}"', 1)[1].split("</template>", 1)[0]
+    assert long_name in panel
+    assert f"/admin/analytics/sku/{sku_id}" in panel

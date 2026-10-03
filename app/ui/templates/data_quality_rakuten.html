@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}楽天SKU管理番号 不備レポート · Product System{% endblock %}
 {% block content %}
+{% import "_detail.html" as ui %}
 
 <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
   <div>
@@ -59,11 +60,17 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for row in report.placeholder %}
-          <tr class="hover:bg-ink-50/60 transition">
+          <tr {{ ui.row_attrs('dqp-' ~ loop.index) }} class="hover:bg-ink-50/60 transition">
             <td class="px-4 py-2.5 font-mono text-xs text-amber-700">{{ row.channel_sku }}</td>
             <td class="px-4 py-2.5 font-mono text-xs text-ink-500">{{ row.channel_product_id or '—' }}</td>
             <td class="px-4 py-2.5 font-mono text-xs text-ink-800">{{ row.master_sku_code }}</td>
-            <td class="px-4 py-2.5 text-ink-700">{{ row.product_name }}</td>
+            <td class="px-4 py-2.5 text-ink-700">{{ ui.clip(row.product_name, 'max-w-[14rem] lg:max-w-[28rem]') }}
+              {% call ui.panel('dqp-' ~ loop.index, row.channel_sku) %}
+                {{ ui.field('商品名', row.product_name) }}
+                {{ ui.field('商品管理番号', row.channel_product_id, mono=True) }}
+                {{ ui.field('対象SKU', row.master_sku_code, mono=True) }}
+              {% endcall %}
+            </td>
           </tr>
         {% else %}
           <tr><td colspan="4" class="px-4 py-10 text-center text-sm text-ink-500">仮値のSKU管理番号はありません</td></tr>
@@ -87,10 +94,15 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for row in report.duplicated %}
-          <tr class="hover:bg-ink-50/60 transition">
+          <tr {{ ui.row_attrs('dqd-' ~ loop.index) }} class="hover:bg-ink-50/60 transition">
             <td class="px-4 py-2.5 font-mono text-xs text-red-700">{{ row.channel_sku }}</td>
             <td class="px-4 py-2.5 text-right tabular-nums font-semibold">{{ row.mappings }}</td>
-            <td class="px-4 py-2.5 font-mono text-xs text-ink-700">{{ row.masters }}</td>
+            <td class="px-4 py-2.5 font-mono text-xs text-ink-700">{{ ui.clip(row.masters, 'max-w-[14rem] lg:max-w-[28rem]') }}
+              {% call ui.panel('dqd-' ~ loop.index, row.channel_sku) %}
+                {{ ui.field('割当数', row.mappings) }}
+                {{ ui.field('割り当てられているSKU', row.masters, mono=True) }}
+              {% endcall %}
+            </td>
           </tr>
         {% else %}
           <tr><td colspan="3" class="px-4 py-10 text-center text-sm text-ink-500">重複はありません</td></tr>

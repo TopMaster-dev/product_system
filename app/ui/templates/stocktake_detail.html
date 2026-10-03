@@ -2,6 +2,7 @@
 {% block title %}棚卸 #{{ run.id }}{% endblock %}
 
 {% block content %}
+{% import "_detail.html" as ui %}
 <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
   <div>
     <h1 class="text-xl font-semibold text-ink-900">棚卸 #{{ run.id }}</h1>
@@ -94,7 +95,7 @@
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for d in diffs %}
-          <tr class="hover:bg-ink-50/60 transition">
+          <tr {{ ui.row_attrs('std-' ~ d.id) }} class="hover:bg-ink-50/60 transition">
             <td class="px-4 py-2.5">
               {% if d.decision == 'pending' %}
                 <input type="checkbox" name="diff_ids" value="{{ d.id }}"
@@ -102,7 +103,15 @@
               {% endif %}
             </td>
             <td class="px-4 py-2.5 font-mono text-xs text-ink-700 whitespace-nowrap">{{ d.sku_code }}</td>
-            <td class="px-4 py-2.5 text-ink-800">{{ d.name }}</td>
+            <td class="px-4 py-2.5 text-ink-800">{{ ui.clip(d.name, 'max-w-[12rem] lg:max-w-[22rem]') }}
+              {% call ui.panel('std-' ~ d.id, d.sku_code) %}
+                {{ ui.field('商品名', d.name) }}
+                {{ ui.field('システムの在庫数', d.current_qty) }}
+                {{ ui.field('数えた数', d.target_qty) }}
+                {{ ui.field('差分', ('+' if d.delta > 0 else '') ~ d.delta) }}
+                {{ ui.field('状態', '承認済' if d.decision == 'approved' else ('見送り' if d.decision == 'skipped' else '未承認')) }}
+              {% endcall %}
+            </td>
             <td class="px-4 py-2.5 text-right tabular-nums text-ink-600">{{ d.current_qty }}</td>
             <td class="px-4 py-2.5 text-right tabular-nums font-medium text-ink-900">{{ d.target_qty }}</td>
             <td class="px-4 py-2.5 text-right tabular-nums font-semibold

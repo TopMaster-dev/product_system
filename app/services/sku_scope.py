@@ -83,6 +83,7 @@ def operational_conditions(
     *,
     include_archived: bool = False,
     include_unmanaged: bool = False,
+    include_bundles: bool = True,
 ) -> list[ColumnElement[bool]]:
     """SKU population for CURRENT-STATE operational screens (inventory list,
     manual adjust, stocktake, alerts).
@@ -93,8 +94,15 @@ def operational_conditions(
     Defaults hide retired and non-stock-managed SKUs, which is what an operator
     wants; pass the flags to widen the view (e.g. an "アーカイブ済も表示"
     toggle, or the maintenance screen that assigns `non_inventory_kind`).
+
+    `include_bundles=False` is for screens that list STOCK. A bundle parent has
+    no snapshot of its own, so it read as 「0・ゼロ」 in the inventory list and
+    inflated the zero badge (107 against the dashboard's 71, 2026-10-03) while
+    duplicating its components' state.
     """
     conditions: list[ColumnElement[bool]] = []
+    if not include_bundles:
+        conditions.append(MasterSku.is_bundle.is_(False))
     if not include_archived:
         conditions.append(MasterSku.archived_at.is_(None))
     if not include_unmanaged:

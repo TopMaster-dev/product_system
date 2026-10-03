@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}取込内容の確認 · Product System{% endblock %}
 {% block content %}
+{% import "_detail.html" as ui %}
 
 <div class="mb-5">
   <div class="flex items-center gap-2 text-xs text-ink-500 mb-1">
@@ -83,7 +84,7 @@
           <thead class="text-amber-700"><tr><th class="text-left py-1 pr-4">行</th><th class="text-left py-1">理由</th></tr></thead>
           <tbody class="text-amber-900">
             {% for issue in inspection.row_issues %}
-              <tr><td class="py-0.5 pr-4 font-mono">{{ issue.line }}</td><td class="py-0.5">{{ issue.reason }}</td></tr>
+              <tr><td class="py-0.5 pr-4 font-mono">{{ issue.line }}</td><td class="py-0.5 wrap">{{ issue.reason }}</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -107,8 +108,19 @@
           </thead>
           <tbody class="divide-y divide-ink-100">
             {% for d in diffs %}
-              <tr class="hover:bg-ink-50/60">
-                <td class="px-4 py-2 font-mono text-xs font-medium text-ink-800">{{ d.sku_code }}<span class="text-ink-400 font-sans">{% if d.name %} · {{ d.name }}{% endif %}</span></td>
+              <tr {{ ui.row_attrs('rcp-' ~ loop.index) }} class="hover:bg-ink-50/60">
+                <td class="px-4 py-2 font-mono text-xs font-medium text-ink-800">
+                  <div class="flex items-center gap-1">
+                    <span>{{ d.sku_code }}</span>
+                    {% if d.name %}<span class="text-ink-300">·</span><span class="text-ink-400 font-sans">{{ ui.clip(d.name, 'max-w-[10rem] lg:max-w-[20rem]') }}</span>{% endif %}
+                  </div>
+                  {% call ui.panel('rcp-' ~ loop.index, d.sku_code) %}
+                    {{ ui.field('商品名', d.name) }}
+                    {{ ui.field('システムの在庫数', d.current) }}
+                    {{ ui.field('照合先の在庫数', d.target) }}
+                    {{ ui.field('差分', '%+d' % d.delta) }}
+                  {% endcall %}
+                </td>
                 <td class="px-4 py-2 text-right tabular-nums text-ink-600">{{ d.current }}</td>
                 <td class="px-4 py-2 text-right tabular-nums font-medium text-ink-900">{{ d.target }}</td>
                 <td class="px-4 py-2 text-right">

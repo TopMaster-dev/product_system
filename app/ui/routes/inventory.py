@@ -109,7 +109,13 @@ def _scope_conditions(q: str, *, include_hidden: bool) -> list[ColumnElement[boo
     """The SKU population this screen covers: the search term plus the
     operational scope. Every query on this page starts from exactly this list."""
     conditions: list[ColumnElement[bool]] = list(
-        operational_conditions(include_archived=include_hidden, include_unmanaged=include_hidden)
+        # Bundle parents never: they hold no stock of their own, so each one
+        # showed as 「0・ゼロ」 and counted twice against its components.
+        operational_conditions(
+            include_archived=include_hidden,
+            include_unmanaged=include_hidden,
+            include_bundles=False,
+        )
     )
     if q:
         like = f"%{q}%"

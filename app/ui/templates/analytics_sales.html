@@ -3,6 +3,7 @@
 {% block title %}売上明細{% endblock %}
 
 {% block content %}
+{% import "_detail.html" as ui %}
 <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
   <div>
     <h1 class="text-xl font-semibold text-ink-900">売上明細</h1>
@@ -122,20 +123,20 @@
         <tr>
           <th class="px-4 py-3 text-left font-semibold">SKU</th>
           <th class="px-4 py-3 text-left font-semibold">商品名</th>
-          <th class="px-4 py-3 text-left font-semibold">カテゴリ</th>
+          <th class="px-4 py-3 text-left font-semibold hidden md:table-cell">カテゴリ</th>
           <th class="px-4 py-3 text-right font-semibold">数量</th>
           <th class="px-4 py-3 text-right font-semibold">売上高</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-ink-100">
         {% for row in rows %}
-          <tr class="hover:bg-ink-50/60 transition">
+          <tr {{ ui.row_attrs('sale-' ~ row.master_sku_id) }} class="hover:bg-ink-50/60 transition">
             <td class="px-4 py-2.5 font-mono text-xs whitespace-nowrap">
               <a href="/admin/analytics/sku/{{ row.master_sku_id }}?period={{ period.preset }}"
                  class="text-brand-600 hover:text-brand-700 font-medium">{{ row.sku_code }}</a>
             </td>
-            <td class="px-4 py-2.5 text-ink-800">{{ row.name }}</td>
-            <td class="px-4 py-2.5 text-xs">
+            <td class="px-4 py-2.5 text-ink-800">{{ ui.clip(row.name, 'max-w-[9rem] sm:max-w-[14rem] lg:max-w-[22rem]') }}</td>
+            <td class="px-4 py-2.5 text-xs hidden md:table-cell">
               {% if row.category_name %}
                 <span class="text-ink-600">{{ row.category_name }}</span>
               {% else %}
@@ -156,6 +157,17 @@
     </table>
   </div>
 </div>
+
+{% for row in rows %}
+  {% call ui.panel('sale-' ~ row.master_sku_id, row.sku_code) %}
+    {{ ui.field('商品名', row.name) }}
+    {{ ui.field('カテゴリ', row.category_name or '未分類') }}
+    {{ ui.field('数量', '{:,}'.format(row.quantity)) }}
+    {{ ui.field('売上高', '¥{:,}'.format(row.gross_sales_jpy|int)) }}
+    {{ ui.field('期間', period.first_day.strftime('%Y-%m-%d') ~ ' 〜 ' ~ period.last_day.strftime('%Y-%m-%d')) }}
+    {{ ui.links([('/admin/analytics/sku/' ~ row.master_sku_id ~ '?period=' ~ period.preset, '売上・在庫の推移')]) }}
+  {% endcall %}
+{% endfor %}
 
 <p class="text-[11px] text-ink-400 mt-3 leading-relaxed">
   セット商品の売上は親SKUに計上されます。

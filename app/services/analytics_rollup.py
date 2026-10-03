@@ -401,7 +401,10 @@ class AnalyticsRollupService:
                 select(
                     func.coalesce(func.sum(SkuDailyStock.on_hand_qty), 0),
                     func.count(),
-                    func.count().filter(SkuDailyStock.on_hand_qty == 0),
+                    # Out of stock is ≤ 0, as on the risk screen. Counting only
+                    # exactly 0 left the 59 negative-stock SKUs out of
+                    # 欠品SKU数 — three screens, three figures (2026-10-03).
+                    func.count().filter(SkuDailyStock.on_hand_qty <= 0),
                     func.count().filter(SkuDailyStock.on_hand_qty < 0),
                 ).where(SkuDailyStock.stat_date == day)
             )
