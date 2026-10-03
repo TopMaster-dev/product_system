@@ -154,3 +154,18 @@ def test_the_last_axis_label_is_anchored_inside_the_frame() -> None:
         '{% from "_charts.html" import line_chart %}{{ line_chart(model) }}'
     ).render(model=model)
     assert 'text-anchor="end"' in html
+
+
+def test_cards_open_the_same_panel_as_the_table_rows() -> None:
+    """Below the table breakpoint only the cards are visible. A screen whose
+    rows open a panel but whose cards do not leaves phone users without the
+    full text — the production layout check found that on マッピング (375px)."""
+    missing = []
+    for name, text in _sources().items():
+        if "row_attrs(" not in text:
+            continue
+        cards = r'<div class="(?:md|lg):hidden space-y-2[^"]*">(.*?)\n</div>'
+        for block in re.findall(cards, text, re.S):
+            if "row_attrs(" not in block:
+                missing.append(name)
+    assert not missing, f"cards without a panel: {missing}"

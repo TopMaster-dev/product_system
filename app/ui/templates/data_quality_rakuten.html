@@ -31,7 +31,7 @@
   </div>
   <div class="rounded-xl bg-white border border-ink-200 p-4">
     <div class="text-xs text-ink-500 mb-1">分析から欠落する金額</div>
-    <div class="text-2xl font-semibold tabular-nums {% if report.unmapped_amount %}text-amber-600{% else %}text-emerald-600{% endif %}">
+    <div class="text-xl md:text-2xl font-semibold tabular-nums whitespace-nowrap {% if report.unmapped_amount %}text-amber-600{% else %}text-emerald-600{% endif %}">
       ¥{{ '{:,.0f}'.format(report.unmapped_amount) }}
     </div>
   </div>

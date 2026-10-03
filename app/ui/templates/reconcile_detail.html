@@ -133,7 +133,7 @@
 <!-- Mobile cards -->
 <div class="md:hidden space-y-2 mb-4">
   {% for d in diffs %}
-    <div class="bg-white rounded-xl border border-ink-200 p-4
+    <div {{ ui.row_attrs('rcd-' ~ d.id) }} class="bg-white rounded-xl border border-ink-200 p-4
                 {% if d.delta < 0 %}border-l-4 border-l-red-400{% else %}border-l-4 border-l-emerald-400{% endif %}">
       <div class="flex items-center justify-between gap-2 mb-2">
         <span class="font-mono text-xs font-medium text-ink-800">{{ d.sku_code }}</span>

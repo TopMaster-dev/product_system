@@ -24,11 +24,13 @@ Uses the installed Google Chrome through Playwright (`channel="chrome"`).
 from __future__ import annotations
 
 import argparse
+import base64
 import os
 import sys
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import BrowserContext, Page, Route, sync_playwright
+from playwright.sync_api import Error as PlaywrightError
 
 WIDTHS = (375, 425, 768, 1024, 1280)
 
@@ -118,24 +120,54 @@ async () => {
 """
 
 
+def measure(page: Page, url: str) -> list[str]:
+    """Problems on one page at the current width. A page that fails to load is
+    one FAIL line, not the end of the run."""
+    try:
+        response = page.goto(url, wait_until="load", timeout=45000)
+    except PlaywrightError as exc:
+        return [f"did not load: {str(exc).splitlines()[0][:80]}"]
+    # Tailwind's CDN build styles the page from a script; give it a beat.
+    page.wait_for_timeout(400)
+    status = response.status if response else 0
+    if status != 200:
+        return [f"HTTP {status}"]
+    problems = list(page.evaluate(MEASURE))
+    if page.locator("[data-detail]").count():
+        panel = page.evaluate(PANEL)
+        if panel:
+            problems.append(panel)
+    return problems
+
+
 def check(page: Page, base: str, out: Path | None) -> int:
     failures = 0
     for slug, path in PAGES:
         for width in WIDTHS:
             page.set_viewport_size({"width": width, "height": 900})
-            response = page.goto(base + path, wait_until="networkidle")
-            status = response.status if response else 0
-            problems = [f"HTTP {status}"] if status != 200 else list(page.evaluate(MEASURE))
-            if status == 200 and page.locator("[data-detail]").count():
-                panel = page.evaluate(PANEL)
-                if panel:
-                    problems.append(panel)
-            if out is not None:
+            problems = measure(page, base + path)
+            if out is not None and not any(p.startswith("did not load") for p in problems):
                 page.screenshot(path=str(out / f"{slug}_{width}.png"), full_page=True)
             mark = "PASS" if not problems else "FAIL"
             failures += bool(problems)
-            print(f"{mark}  {slug:<15}{width:>5}px  {'; '.join(problems[:4])}")
+            print(f"{mark}  {slug:<15}{width:>5}px  {'; '.join(problems[:4])}", flush=True)
     return failures
+
+
+def authenticate(context: BrowserContext, base: str, user: str, password: str) -> None:
+    """Basic auth on requests to OUR host only.
+
+    Not `http_credentials`: against Cloud Run that never completed a navigation
+    (timed out at 30s on the first page, 2026-10-03), while the same request
+    with the header set loaded in 1.3s. Not `extra_http_headers` either — that
+    would send the admin password to the Tailwind CDN and Google Fonts too.
+    """
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+
+    def add_header(route: Route) -> None:
+        route.continue_(headers={**route.request.headers, "authorization": f"Basic {token}"})
+
+    context.route(f"{base}/**", add_header)
 
 
 def main() -> int:
@@ -150,8 +182,10 @@ def main() -> int:
     password = os.environ["ADMIN_PASSWORD"]
     with sync_playwright() as pw:
         browser = pw.chromium.launch(channel="chrome", headless=True)
-        context = browser.new_context(http_credentials={"username": user, "password": password})
-        failures = check(context.new_page(), args.base_url.rstrip("/"), out)
+        base = args.base_url.rstrip("/")
+        context = browser.new_context()
+        authenticate(context, base, user, password)
+        failures = check(context.new_page(), base, out)
         browser.close()
     verdict = "all screens pass" if not failures else f"{failures} screen/width combinations fail"
     print(f"\n{verdict}")
