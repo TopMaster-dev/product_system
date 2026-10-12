@@ -46,6 +46,10 @@ PAGES = (
     ("sync-errors", "/admin/sync-errors"),
     ("rakuten-report", "/admin/data-quality/rakuten"),
     ("mappings", "/admin/mappings"),
+    ("dq-no-category", "/admin/data-quality/skus?kind=no_category"),
+    ("dq-bundles", "/admin/data-quality/skus?kind=bundles"),
+    ("inventory-search", "/admin/inventory?q=N108"),
+    ("sales-search", "/admin/analytics/sales?period=28d&q=N108"),
 )
 
 #: Returns a list of problem strings for the page as currently laid out.
@@ -84,6 +88,23 @@ MEASURE = """
       problems.push(`KPI value 「${value}」 overflows its tile by ${Math.ceil(over)}px`);
     }
   });
+
+  // A short label — 「セット」「未対応」「十分」 — never has a reason to wrap,
+  // wherever it is. Caught outside tables too: a badge in a search-result chip
+  // broke 「セッ/ト」 at 375px (2026-10-12).
+  const walkerAll = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let t = walkerAll.nextNode(); t; t = walkerAll.nextNode()) {
+    const text = t.textContent.trim();
+    const el = t.parentElement;
+    if (!text || text.length > 6 || !el) continue;
+    if (el.closest('template, pre, .wrap, #detailPanel')) continue;
+    if (!visible(el)) continue;
+    // Bold words inside a sentence wrap with the sentence; that is prose.
+    const host = el.parentElement;
+    if (getComputedStyle(el).display === 'inline' && host
+        && host.textContent.trim().length > text.length + 2) continue;
+    if (lines(t) > 1) problems.push(`short label wrapped: 「${text}」`);
+  }
 
   document.querySelectorAll('table.data-table th, table.data-table td').forEach((cell) => {
     if (!visible(cell) || cell.classList.contains('wrap')) return;

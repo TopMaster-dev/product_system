@@ -53,6 +53,7 @@ __all__ = [
     "ArchiveBlockers",
     "analysable_conditions",
     "archive_blockers",
+    "bundle_parent_conditions",
     "operational_conditions",
 ]
 
@@ -107,6 +108,20 @@ def operational_conditions(
         conditions.append(MasterSku.archived_at.is_(None))
     if not include_unmanaged:
         conditions.append(MasterSku.is_stock_managed.is_(True))
+    return conditions
+
+
+def bundle_parent_conditions(*, include_archived: bool = False) -> list[ColumnElement[bool]]:
+    """The set / shared-stock PARENTS themselves.
+
+    For screens that have to find a parent after the stock screens stopped
+    listing them (2026-10-03): searching 「N108」 in 在庫一覧 showed only the
+    shared component, and the client asked how to reach the 45cm and 42cm pages
+    (acceptance Q&A, 2026-10-12).
+    """
+    conditions: list[ColumnElement[bool]] = [MasterSku.is_bundle.is_(True)]
+    if not include_archived:
+        conditions.append(MasterSku.archived_at.is_(None))
     return conditions
 
 

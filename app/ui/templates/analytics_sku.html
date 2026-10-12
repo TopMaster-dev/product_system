@@ -63,6 +63,38 @@
   </div>
 </div>
 
+{# A set and its components point at each other (acceptance Q&A, 2026-10-12). #}
+{% if components %}
+  <div class="mb-4 rounded-xl border border-violet-200 bg-violet-50/60 px-4 py-3">
+    <div class="text-sm font-semibold text-violet-900">構成品（在庫はこちらで管理しています）</div>
+    <div class="mt-2 flex flex-wrap gap-2">
+      {% for c in components %}
+        <a href="/admin/analytics/sku/{{ c.id }}?period={{ period.preset }}"
+           class="inline-flex max-w-full items-center gap-1.5 whitespace-nowrap rounded-md bg-white ring-1 ring-violet-200 hover:ring-violet-400 px-2.5 py-1 text-xs transition">
+          <span class="font-mono font-medium text-violet-800">{{ c.sku_code }}</span>
+          <span class="text-ink-500">x{{ c.quantity_per }}</span>
+          <span class="text-ink-500">在庫 <span class="tabular-nums font-medium text-ink-800">{{ c.on_hand_qty }}</span></span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+{% if used_by %}
+  <div class="mb-4 rounded-xl border border-ink-200 bg-white px-4 py-3">
+    <div class="text-sm font-semibold text-ink-800">この在庫を使うセット商品</div>
+    <p class="text-xs text-ink-500 mt-0.5">これらの商品が売れると、この商品の在庫が減ります。売上は各セット商品に計上されます。</p>
+    <div class="mt-2 flex flex-wrap gap-2">
+      {% for u in used_by %}
+        <a href="/admin/analytics/sku/{{ u.id }}?period={{ period.preset }}"
+           class="inline-flex max-w-full items-center gap-1.5 rounded-md bg-white ring-1 ring-ink-200 hover:ring-brand-400 px-2.5 py-1 text-xs transition">
+          <span class="flex-shrink-0 font-mono font-medium text-brand-700">{{ u.sku_code }}</span>
+          <span class="min-w-0 text-ink-500 truncate max-w-[14rem]">{{ u.name }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
 {#
   在庫と売上は別のチャートにする。片方は残高、片方はフローで、
   同じ軸に載せると尺度の選び方次第で無関係な2本を相関して見せられてしまう。

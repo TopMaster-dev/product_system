@@ -159,3 +159,18 @@ def test_a_category_change_is_described_as_the_nightly_repair_applies_it(html: s
 
     assert f"直近{DEFAULT_REPAIR_DAYS}日分" in html
     assert "過去の集計にもさかのぼって反映" not in html
+
+
+def test_the_manual_does_not_promise_a_date_picker(html: str) -> None:
+    """The screens offer preset periods only. The manual said a date could be
+    picked, which the client would have looked for (found 2026-10-12)."""
+    assert "日付を指定" not in html
+    assert "7d / 28d / 90d / 180d / 365d" in html
+
+
+def test_the_manual_explains_the_acceptance_follow_ups(html: str) -> None:
+    """Q&A of 2026-10-12: category preview detail, data-quality lists, finding sets."""
+    assert "変更前" in html and "変更後" in html
+    assert "対象の商品だけの一覧" in html
+    assert "N108silver45 など" in html
+    assert "も検索できます" in html

@@ -49,6 +49,7 @@ from app.services.analytics_query import (
 )
 from app.services.analytics_query import provenance as load_provenance
 from app.services.categories import load_overview
+from app.services.sku_links import components_of, parents_of, search_skus
 from app.services.timeframe import PRESET_DAYS, Period, resolve_period, to_jst_date
 from app.services.velocity import (
     CONFIDENCE_LABELS,
@@ -164,6 +165,7 @@ async def analytics_sales(
     granularity: str = "day",
     channel: str | None = None,
     category: str | None = None,
+    q: str = "",
 ) -> Response:
     now = datetime.now(UTC)
     current = resolve_period(period, now=now)
@@ -211,6 +213,11 @@ async def analytics_sales(
             "selected_category": category or "",
             "unclassified_value": UNCLASSIFIED,
             "buckets": buckets,
+            # Finding a product's page, sets included — the stock screens no
+            # longer list sets (acceptance Q&A, 2026-10-12). Does not narrow
+            # the chart or the table; it only lists matches to open.
+            "q": q,
+            "hits": await search_skus(session, q) if q.strip() else [],
             "rows": rows,
             "trend": trend,
             "period_quantity": sum(b.quantity for b in buckets),
@@ -363,6 +370,11 @@ async def analytics_sku(
     # forward would draw a line through a period we have no record of; zero
     # would invent an out-of-stock day. Neither is honest, so the gap is drawn
     # at the level it was last seen and the footnote says how many days lack data.
+    # A set and its components link to each other: a set's page is where the
+    # client lands from search, and its stock lives in the components.
+    components = (await components_of(session, [master_sku_id])).get(master_sku_id, [])
+    used_by = (await parents_of(session, [master_sku_id])).get(master_sku_id, [])
+
     last_known = 0.0
     stock_values: list[float] = []
     for day in days:
@@ -389,6 +401,8 @@ async def analytics_sku(
             ),
             "period_quantity": sum(d.quantity for d in days),
             "period_sales": sum((d.gross_sales_jpy for d in days), start=Decimal(0)),
+            "components": components,
+            "used_by": used_by,
         },
     )
 

@@ -11,7 +11,7 @@ import csv
 import io
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,14 @@ from app import __version__
 from app.config import Settings, get_settings
 from app.csv_export import csv_response
 from app.db import get_session
-from app.services.data_quality import rakuten_sku_report, summary_tiles
+from app.services.data_quality import (
+    SKU_LIST_KINDS,
+    SKU_LIST_LIMIT,
+    rakuten_sku_report,
+    sku_list,
+    summary_tiles,
+)
+from app.services.sku_links import components_of
 from app.ui.auth import OperatorDep
 from app.ui.deps import templates
 
@@ -57,6 +64,68 @@ async def data_quality_summary(
             "deep": bool(deep),
         },
     )
+
+
+@router.get("/data-quality/skus")
+async def data_quality_skus(
+    request: Request,
+    operator: OperatorDep,
+    kind: str,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """The products behind one tile, with the way to where the work is done.
+
+    The tiles used to open the work screen itself, which did not say which
+    products were affected (acceptance Q&A, 2026-10-12).
+    """
+    meta = SKU_LIST_KINDS.get(kind)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="unknown list")
+    total, rows = await sku_list(session, kind)
+    components = await components_of(session, [r["id"] for r in rows]) if kind == "bundles" else {}
+    return templates.TemplateResponse(
+        request,
+        "data_quality_skus.html",
+        {
+            "operator": operator,
+            "version": __version__,
+            "meta": meta,
+            "total": total,
+            "rows": rows,
+            "limit": SKU_LIST_LIMIT,
+            "components": components,
+        },
+    )
+
+
+@router.get("/data-quality/skus/export.csv")
+async def data_quality_skus_csv(
+    operator: OperatorDep,
+    kind: str,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Every row, not the page's first 500. Leads with `sku_code` and an empty
+    `category_code`, so the カテゴリ未設定 list goes straight back into the
+    category import once that column is filled in."""
+    meta = SKU_LIST_KINDS.get(kind)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="unknown list")
+    _, rows = await sku_list(session, kind, limit=None)
+    components = await components_of(session, [r["id"] for r in rows]) if kind == "bundles" else {}
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["sku_code", "category_code", "商品名", "現在のカテゴリ", "構成品"])
+    for r in rows:
+        writer.writerow(
+            [
+                r["sku_code"],
+                "",
+                r["name"],
+                r["category_name"] or "未分類",
+                " / ".join(f"{c.sku_code} x{c.quantity_per}" for c in components.get(r["id"], [])),
+            ]
+        )
+    return csv_response(buf.getvalue(), filename=f"data_quality_{kind}.csv")
 
 
 @router.get("/data-quality/rakuten")

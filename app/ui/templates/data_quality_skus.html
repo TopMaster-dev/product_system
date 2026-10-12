@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.label }} · データ品質 · Product System{% endblock %}
+{% block content %}
+{% import "_detail.html" as ui %}
+
+{#
+  The products behind one data-quality tile. The tile count and this list come
+  from the same condition (`sku_list_conditions`), so they always agree.
+#}
+<div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-4">
+  <div>
+    <a href="/admin/data-quality" class="text-sm text-brand-600 hover:text-brand-700 font-medium">← データ品質へ</a>
+    <h1 class="mt-1 text-xl sm:text-2xl font-semibold tracking-tight text-ink-900">
+      {{ meta.label }} <span class="text-ink-400 font-normal tabular-nums">{{ '{:,}'.format(total) }}件</span>
+    </h1>
+    <p class="text-sm text-ink-500 mt-1">{{ meta.hint }}</p>
+  </div>
+  <div class="flex flex-wrap gap-2 self-start sm:self-end">
+    <a href="/admin/data-quality/skus/export.csv?kind={{ meta.key }}"
+       class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-ink-300 bg-white hover:bg-ink-50 text-ink-700 text-sm font-medium px-4 py-2 transition">
+      CSV出力
+    </a>
+    {% if meta.action_href %}
+      <a href="{{ meta.action_href }}"
+         class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium px-4 py-2 transition">
+        {{ meta.action_label }} →
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{% if meta.note %}
+  <div class="mb-4 rounded-lg border border-ink-200 bg-white px-4 py-3 text-sm text-ink-600">{{ meta.note }}</div>
+{% endif %}
+
+<div class="bg-white rounded-xl border border-ink-200 overflow-hidden">
+  <div class="scroll-area overflow-x-auto">
+    <table class="data-table w-full text-sm">
+      <thead class="bg-ink-50 text-ink-600 text-xs uppercase tracking-wide border-b border-ink-200">
+        <tr>
+          <th class="px-4 py-3 text-left font-semibold">SKU</th>
+          <th class="px-4 py-3 text-left font-semibold">商品名</th>
+          {% if meta.key == 'bundles' %}
+            <th class="px-4 py-3 text-left font-semibold">構成品</th>
+          {% else %}
+            <th class="px-4 py-3 text-left font-semibold">カテゴリ</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-100">
+        {% for r in rows %}
+          {% set parts = components.get(r.id, []) %}
+          <tr {{ ui.row_attrs('dqs-' ~ r.id) }} class="hover:bg-ink-50/60 transition">
+            <td class="px-4 py-2.5 font-mono text-xs">
+              <a href="/admin/analytics/sku/{{ r.id }}" class="text-brand-600 hover:text-brand-700 font-medium">{{ r.sku_code }}</a>
+            </td>
+            <td class="px-4 py-2.5 text-ink-800">
+              {{ ui.clip(r.name, 'max-w-[10rem] sm:max-w-[16rem] lg:max-w-[28rem]') }}
+              {% call ui.panel('dqs-' ~ r.id, r.sku_code) %}
+                {{ ui.field('商品名', r.name) }}
+                {{ ui.field('カテゴリ', r.category_name or '未分類') }}
+                {% if r.is_bundle %}
+                  {{ ui.field('構成品（在庫はこちらで管理）', parts|map(attribute='sku_code')|join(' / ') if parts else none, mono=True) }}
+                {% endif %}
+                {% if not r.is_stock_managed %}{{ ui.field('在庫管理', '対象外（受注時に在庫を消費しません）') }}{% endif %}
+                {% if r.archived_at %}{{ ui.field('アーカイブ', '済') }}{% endif %}
+                {# namespace: a plain `set` inside the for loop would not outlive it. #}
+                {% set ns = namespace(links=[('/admin/analytics/sku/' ~ r.id, '売上・在庫の推移')]) %}
+                {% if not r.is_bundle %}{% set ns.links = ns.links + [('/admin/events?master_sku_id=' ~ r.id, '在庫の履歴')] %}{% endif %}
+                {% for c in parts %}{% set ns.links = ns.links + [('/admin/analytics/sku/' ~ c.id, '構成品 ' ~ c.sku_code)] %}{% endfor %}
+                {{ ui.links(ns.links) }}
+              {% endcall %}
+            </td>
+            {% if meta.key == 'bundles' %}
+              <td class="px-4 py-2.5 font-mono text-xs text-ink-600">
+                {% for c in parts %}{{ c.sku_code }} x{{ c.quantity_per }}{% if not loop.last %}<span class="text-ink-300"> / </span>{% endif %}{% else %}—{% endfor %}
+              </td>
+            {% else %}
+              <td class="px-4 py-2.5 text-xs {% if r.category_name %}text-ink-600{% else %}text-ink-400{% endif %}">{{ r.category_name or '未分類' }}</td>
+            {% endif %}
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="3" class="px-4 py-12 text-center text-sm text-ink-500">該当する商品はありません。</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if total > rows|length %}
+  <p class="text-xs text-ink-500 mt-3">
+    画面には先頭の{{ rows|length }}件を表示しています。全{{ '{:,}'.format(total) }}件は CSV出力 でご確認ください。
+  </p>
+{% endif %}
+<p class="text-[11px] text-ink-400 mt-3">行をクリックすると詳細を表示します。</p>
+{% endblock %}

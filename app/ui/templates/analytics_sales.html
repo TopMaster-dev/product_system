@@ -19,6 +19,40 @@
   絞込は GET のフォーム1つにまとめる。期間・粒度・チャネル・カテゴリが別々のリンクだと
   組み合わせのたびに他の選択が消え、「絞り込んだら期間が戻った」という挙動になる。
 #}
+{# Finding a product's own page — sets included, which the stock screens no
+   longer list. A separate form on purpose: it opens pages, it does not narrow
+   the chart or the table below (acceptance Q&A, 2026-10-12). #}
+<form method="get" class="bg-white rounded-xl border border-ink-200 p-3 mb-3 flex flex-wrap items-end gap-2">
+  <input type="hidden" name="period" value="{{ period.preset }}" />
+  <div class="flex-1 min-w-[12rem]">
+    <label class="block text-xs text-ink-500 mb-1">商品を探す（商品コード・商品名。セット商品も含みます）</label>
+    <input type="search" name="q" value="{{ q }}" placeholder="例: N108"
+           class="w-full text-sm border border-ink-300 rounded-md px-3 py-1.5 bg-white focus:ring-2 focus:ring-brand-500 outline-none" />
+  </div>
+  <button type="submit" class="rounded-md bg-ink-900 hover:bg-ink-800 text-white text-sm font-medium px-4 py-1.5 transition">検索</button>
+</form>
+
+{% if q %}
+  <div class="bg-white rounded-xl border border-ink-200 p-3 mb-4">
+    {% if hits %}
+      <div class="text-xs text-ink-500 mb-2">「{{ q }}」の検索結果 {{ hits|length }}件{% if hits|length >= 30 %}（先頭30件）{% endif %}。商品コードを押すと、その商品の売上・在庫の推移を開きます。</div>
+      <div class="flex flex-wrap gap-2">
+        {% for h in hits %}
+          <a href="/admin/analytics/sku/{{ h.id }}?period={{ period.preset }}"
+             class="inline-flex max-w-full items-center gap-1.5 rounded-md ring-1 ring-ink-200 hover:ring-brand-400 px-2.5 py-1 text-xs transition {% if h.archived %}opacity-60{% endif %}">
+            <span class="flex-shrink-0 font-mono font-medium text-brand-700">{{ h.sku_code }}</span>
+            <span class="min-w-0 text-ink-500 truncate max-w-[12rem]">{{ h.name }}</span>
+            {% if h.is_bundle %}<span class="flex-shrink-0 whitespace-nowrap rounded bg-violet-50 text-violet-700 ring-1 ring-violet-200 px-1 text-[10px]">セット</span>{% endif %}
+            {% if h.archived %}<span class="flex-shrink-0 whitespace-nowrap rounded bg-ink-100 text-ink-500 ring-1 ring-ink-300 px-1 text-[10px]">アーカイブ</span>{% endif %}
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-sm text-ink-500">「{{ q }}」に該当する商品はありません。</div>
+    {% endif %}
+  </div>
+{% endif %}
+
 <form method="get" class="bg-white rounded-xl border border-ink-200 p-3 mb-4 flex flex-wrap items-end gap-3">
   <div>
     <label class="block text-xs text-ink-500 mb-1">期間</label>

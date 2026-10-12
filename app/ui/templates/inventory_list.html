@@ -108,6 +108,24 @@
   </div>
 </form>
 
+{# Sets are not listed here — their stock lives in the components — so a
+   search that matches one says where it went (acceptance Q&A, 2026-10-12). #}
+{% if matching_sets %}
+  <div class="mb-4 rounded-xl border border-violet-200 bg-violet-50/60 px-4 py-3">
+    <div class="text-sm font-semibold text-violet-900">「{{ q }}」に該当するセット商品・共有在庫</div>
+    <p class="text-xs text-violet-800 mt-0.5">在庫は構成品で管理しているため、この一覧には表示しません。各商品の売上と構成品は、商品コードから確認できます。</p>
+    <div class="mt-2 flex flex-wrap gap-2">
+      {% for m in matching_sets %}
+        <a href="/admin/analytics/sku/{{ m.id }}"
+           class="inline-flex max-w-full items-center gap-1.5 rounded-md bg-white ring-1 ring-violet-200 hover:ring-violet-400 px-2.5 py-1 text-xs transition">
+          <span class="flex-shrink-0 font-mono font-medium text-violet-800">{{ m.sku_code }}</span>
+          <span class="min-w-0 text-ink-500 truncate max-w-[12rem]">{{ m.name }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
 {% macro sort_th(col, label, align='left') %}
   {% set nextdir = 'desc' if (sort == col and dir == 'asc') else 'asc' %}
   <th class="px-4 py-3 text-{{ align }} font-semibold whitespace-nowrap">
@@ -355,15 +373,22 @@
     {% if row.id in best_sellers %}
       {{ ui.field('売れ筋', '直近の販売上位です' ~ ('。在庫が基準を下回っています（補充を検討）' if low else '')) }}
     {% endif %}
+    {{ ui.field('カテゴリ', row.category_name or '未分類') }}
+    {% set sets = sets_using.get(row.id, []) %}
+    {% if sets %}
+      {{ ui.field('この在庫を使うセット商品', sets|map(attribute='sku_code')|join(' / '), mono=True) }}
+    {% endif %}
     {{ ui.field('JAN', row.jan_code, mono=True) }}
     {{ ui.field('最終更新', (row.updated_at|jst).strftime('%Y-%m-%d %H:%M') if row.updated_at else none) }}
     {% if not row.is_stock_managed %}{{ ui.field('在庫管理', '対象外（受注時に在庫を消費しません）') }}{% endif %}
     {% if row.archived_at %}{{ ui.field('アーカイブ', '済（通常の一覧には表示されません）') }}{% endif %}
-    {{ ui.links([
+    {% set ns = namespace(links=[
          ('/admin/analytics/sku/' ~ row.id, '売上・在庫の推移'),
          ('/admin/events?master_sku_id=' ~ row.id, '在庫の履歴'),
          ('/admin/adjust?master_sku_id=' ~ row.id, '手動調整'),
-       ]) }}
+       ]) %}
+    {% for set_sku in sets %}{% set ns.links = ns.links + [('/admin/analytics/sku/' ~ set_sku.id, set_sku.sku_code ~ ' の売上')] %}{% endfor %}
+    {{ ui.links(ns.links) }}
   {% endcall %}
 {% endfor %}
 {% endblock %}

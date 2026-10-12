@@ -25,8 +25,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -37,6 +38,7 @@ from app.models import (
     Order,
     OrderItem,
 )
+from app.services.categories import category_label_column, join_category
 from app.services.sku_scope import operational_conditions
 
 RAKUTEN = "rakuten"
@@ -220,6 +222,139 @@ def matches_placeholder(channel_sku: str, pattern: str) -> bool:
     return re.match(pattern, channel_sku) is not None
 
 
+@dataclass(frozen=True, slots=True)
+class SkuListKind:
+    """A tile whose defect is a set of SKUs, listed on its own page.
+
+    These tiles used to link to the screen where the work is done — the CSV
+    upload, the mapping list, the whole inventory — so the client landed on a
+    screen that did not show WHICH products were affected, against the
+    acceptance criterion 「件数と該当商品への導線」 (Q&A, 2026-10-12). The list
+    and the tile count are built from the same `sku_list_conditions`, so the
+    number on the tile is always the length of the list it opens.
+    """
+
+    key: str
+    label: str
+    hint: str
+    #: Where the work itself is done, offered from the list. None when the fix
+    #: is not an operation on this system (images come from Shopify).
+    action_href: str | None = None
+    action_label: str | None = None
+    note: str = ""
+    informational: bool = False
+
+
+SKU_LIST_KINDS: dict[str, SkuListKind] = {
+    k.key: k
+    for k in (
+        SkuListKind(
+            "no_image",
+            "画像なし",
+            "Shopifyの商品画像が未取得のSKUです。",
+            note="画像はShopifyの商品登録から自動で取り込みます。"
+            "Shopifyに画像を登録したあと、技術担当が取り込みを実行します。",
+        ),
+        SkuListKind(
+            "no_category",
+            "カテゴリ未設定",
+            "カテゴリ別分析では「未分類」に集約されます。",
+            action_href="/admin/categories/upload",
+            action_label="CSVでカテゴリを一括設定する",
+            note="この一覧をCSVで出力し、category_code 列を追記して取り込むと、"
+            "まとめて設定できます。",
+        ),
+        SkuListKind(
+            "no_mapping",
+            "マッピング欠落",
+            "有効なチャネルマッピングが1件もないSKUです。受注しても紐づきません。",
+            action_href="/admin/mappings/new",
+            action_label="マッピングを追加する",
+        ),
+        SkuListKind(
+            "unmanaged",
+            "在庫管理対象外",
+            "意図的な設定です (ギフトボックス等)。",
+            action_href="/admin/inventory?include_hidden=1",
+            action_label="在庫一覧で設定を変更する",
+            informational=True,
+        ),
+        SkuListKind(
+            "archived",
+            "アーカイブ済",
+            "移行で役目を終えた旧マスタです。過去の集計には引き続き含まれます。",
+            action_href="/admin/inventory?include_hidden=1",
+            action_label="在庫一覧で設定を変更する",
+            informational=True,
+        ),
+        SkuListKind(
+            "bundles",
+            "セット商品 (親)",
+            "在庫は構成品で管理し、販売できる数は構成品から自動計算します。",
+            informational=True,
+        ),
+    )
+}
+
+
+def sku_list_href(key: str) -> str:
+    return f"/admin/data-quality/skus?kind={key}"
+
+
+def sku_list_conditions(key: str) -> list[ColumnElement[bool]]:
+    """The population each SKU-list tile counts and its list shows."""
+    operational = operational_conditions()
+    if key == "no_image":
+        return [MasterSku.image_url.is_(None), *operational]
+    if key == "no_category":
+        return [MasterSku.category_id.is_(None), *operational]
+    if key == "no_mapping":
+        # A SKU nothing can order: no active mapping on any channel.
+        mapped_ids = select(ChannelSkuMapping.master_sku_id).where(
+            ChannelSkuMapping.is_active.is_(True)
+        )
+        return [MasterSku.id.not_in(mapped_ids), *operational]
+    if key == "unmanaged":
+        return [MasterSku.is_stock_managed.is_(False), MasterSku.archived_at.is_(None)]
+    if key == "archived":
+        return [MasterSku.archived_at.is_not(None)]
+    if key == "bundles":
+        return [MasterSku.is_bundle.is_(True), MasterSku.archived_at.is_(None)]
+    raise KeyError(key)
+
+
+#: Rows the list page renders; the CSV carries every row.
+SKU_LIST_LIMIT = 500
+
+
+async def sku_list(
+    session: AsyncSession, key: str, *, limit: int | None = SKU_LIST_LIMIT
+) -> tuple[int, list[Any]]:
+    """(total, rows) for one SKU-list tile. Rows are mappings with id, sku_code,
+    name, category_name, is_stock_managed, archived_at, is_bundle."""
+    conditions = sku_list_conditions(key)
+    total = await _count(session, select(MasterSku.id).where(*conditions))
+    stmt = (
+        join_category(
+            select(
+                MasterSku.id,
+                MasterSku.sku_code,
+                MasterSku.name,
+                MasterSku.is_stock_managed,
+                MasterSku.archived_at,
+                MasterSku.is_bundle,
+                category_label_column(),
+            ).select_from(MasterSku)
+        )
+        .where(*conditions)
+        .order_by(MasterSku.sku_code)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = (await session.execute(stmt)).mappings().all()
+    return total, list(rows)
+
+
 async def _count(session: AsyncSession, stmt) -> int:  # type: ignore[no-untyped-def]
     return await session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
@@ -233,22 +368,12 @@ async def summary_tiles(
     """Every defect class, counted over the population the linked screen shows."""
     operational = operational_conditions()
 
-    no_image = await _count(
-        session,
-        select(MasterSku.id).where(MasterSku.image_url.is_(None), *operational),
-    )
-    no_category = await _count(
-        session,
-        select(MasterSku.id).where(MasterSku.category_id.is_(None), *operational),
-    )
-    # A SKU nothing can order: no active mapping on any channel.
-    mapped_ids = select(ChannelSkuMapping.master_sku_id).where(
-        ChannelSkuMapping.is_active.is_(True)
-    )
-    no_mapping = await _count(
-        session,
-        select(MasterSku.id).where(MasterSku.id.not_in(mapped_ids), *operational),
-    )
+    async def listed(key: str) -> int:
+        return await _count(session, select(MasterSku.id).where(*sku_list_conditions(key)))
+
+    no_image = await listed("no_image")
+    no_category = await listed("no_category")
+    no_mapping = await listed("no_mapping")
     negative = await _count(
         session,
         select(InventorySnapshot.master_sku_id)
@@ -269,38 +394,30 @@ async def summary_tiles(
         .join(Order, Order.id == OrderItem.order_id)
         .where(OrderItem.master_sku_id.is_(None)),
     )
-    unmanaged = await _count(
-        session,
-        select(MasterSku.id).where(
-            MasterSku.is_stock_managed.is_(False), MasterSku.archived_at.is_(None)
-        ),
-    )
-    archived = await _count(session, select(MasterSku.id).where(MasterSku.archived_at.is_not(None)))
-    bundles = await _count(
-        session,
-        select(MasterSku.id).where(MasterSku.is_bundle.is_(True), MasterSku.archived_at.is_(None)),
-    )
+    unmanaged = await listed("unmanaged")
+    archived = await listed("archived")
+    bundles = await listed("bundles")
 
     tiles = [
         Tile(
             "no_image",
             "画像なし",
             no_image,
-            "/admin/inventory",
+            sku_list_href("no_image"),
             "Shopifyの商品画像が未取得。sync_shopify_images で補完できます。",
         ),
         Tile(
             "no_category",
             "カテゴリ未設定",
             no_category,
-            "/admin/categories/upload",
+            sku_list_href("no_category"),
             "カテゴリ別分析では「未分類」に集約されます。",
         ),
         Tile(
             "no_mapping",
             "マッピング欠落",
             no_mapping,
-            "/admin/mappings",
+            sku_list_href("no_mapping"),
             "有効なチャネルマッピングが1件もないSKU。受注しても紐づきません。",
         ),
         Tile(
@@ -328,7 +445,7 @@ async def summary_tiles(
             "unmanaged",
             "在庫管理対象外",
             unmanaged,
-            "/admin/inventory?include_hidden=1",
+            sku_list_href("unmanaged"),
             "意図的な設定です (ギフトボックス等)。",
             informational=True,
         ),
@@ -336,7 +453,7 @@ async def summary_tiles(
             "archived",
             "アーカイブ済",
             archived,
-            "/admin/inventory?include_hidden=1",
+            sku_list_href("archived"),
             "移行で役目を終えた旧マスタ。集計には引き続き含まれます。",
             informational=True,
         ),
@@ -344,7 +461,7 @@ async def summary_tiles(
             "bundles",
             "セット商品 (親)",
             bundles,
-            "/admin/inventory",
+            sku_list_href("bundles"),
             "在庫は構成品から自動計算されます。",
             informational=True,
         ),

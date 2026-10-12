@@ -17,9 +17,11 @@ retired ~355 masters, sending the client hunting for work that does not exist.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, Select, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.csv_intake import ColumnSpec, CsvSpec, Inspection, OnEmpty, inspect, iter_rows
 from app.models import MasterSku, ProductCategory
@@ -38,6 +40,28 @@ SKU_CATEGORY_CSV = CsvSpec(
         ),
     )
 )
+
+
+#: The 大分類 of a 中分類, for 「大分類 / 中分類」 labels in list queries.
+_PARENT_CATEGORY = aliased(ProductCategory, name="parent_category")
+
+
+def category_label_column() -> ColumnElement[Any]:
+    """「大分類 / 中分類」 for a SKU in a 中分類, the name alone for a 大分類,
+    NULL for none. Pair with `join_category` on a query selecting MasterSku."""
+    return case(
+        (
+            _PARENT_CATEGORY.id.is_not(None),
+            _PARENT_CATEGORY.name + " / " + ProductCategory.name,
+        ),
+        else_=ProductCategory.name,
+    ).label("category_name")
+
+
+def join_category(stmt: Select[Any]) -> Select[Any]:
+    return stmt.outerjoin(ProductCategory, ProductCategory.id == MasterSku.category_id).outerjoin(
+        _PARENT_CATEGORY, _PARENT_CATEGORY.id == ProductCategory.parent_id
+    )
 
 
 @dataclass(slots=True)
@@ -192,6 +216,21 @@ async def assert_can_delete(session: AsyncSession, category: ProductCategory) ->
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AssignmentChange:
+    """One SKU whose category the import would change, as the preview shows it."""
+
+    sku_code: str
+    name: str
+    before: str
+    after: str
+
+
+#: How the preview names "no category" on each side of a change.
+UNCLASSIFIED_LABEL = "未分類"
+CLEARED_LABEL = "未分類 (解除)"
+
+
 class AssignmentPlan:
     """What an import would do, resolved but not yet written."""
 
@@ -201,6 +240,12 @@ class AssignmentPlan:
         self.unknown_skus: list[str] = []
         self.unknown_categories: list[str] = []
         self.unchanged = 0
+        #: Per SKU, before -> after. The preview showed only counts, so the client
+        #: could not see WHICH product would move where (acceptance Q&A,
+        #: 2026-10-12).
+        self.changes: list[AssignmentChange] = []
+        #: SKU codes that appear on more than one valid row; the last row wins.
+        self.duplicate_skus: list[str] = []
 
     @property
     def assigned(self) -> int:
@@ -211,11 +256,45 @@ class AssignmentPlan:
         return len(self.by_category.get(None, []))
 
 
+async def category_labels(session: AsyncSession, ids: set[int]) -> dict[int, str]:
+    """「大分類 / 中分類」 for a 中分類, the name alone for a 大分類."""
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(ProductCategory.id, ProductCategory.name, ProductCategory.parent_id).where(
+                ProductCategory.id.in_(ids)
+            )
+        )
+    ).all()
+    parents = {pid for _, _, pid in rows if pid is not None}
+    parent_names: dict[int, str] = {}
+    if parents:
+        parent_names = dict(
+            (
+                await session.execute(
+                    select(ProductCategory.id, ProductCategory.name).where(
+                        ProductCategory.id.in_(parents)
+                    )
+                )
+            ).all()  # type: ignore[arg-type]
+        )
+    return {
+        cid: f"{parent_names[pid]} / {name}" if pid in parent_names else name
+        for cid, name, pid in rows
+    }
+
+
 async def plan_assignments(session: AsyncSession, data: bytes) -> tuple[Inspection, AssignmentPlan]:
     """Resolve a CSV against the database without writing anything.
 
     Runs for both the preview and the apply, so the two can never disagree about
     what the file means.
+
+    Resolved PER SKU, last valid row winning. The plan used to queue each row
+    under its target category, so a SKU listed twice was queued twice and the
+    one applied last depended on which category happened to be met first —
+    not on the order of the rows the client wrote.
     """
     inspection = inspect(data, SKU_CATEGORY_CSV)
     plan = AssignmentPlan()
@@ -227,12 +306,12 @@ async def plan_assignments(session: AsyncSession, data: bytes) -> tuple[Inspecti
     wanted_codes = {r["category_code"] for r in rows if r.get("category_code")}
 
     sku_by_code = {
-        code: (mid, current)
-        for code, mid, current in (
+        code: (mid, name, current)
+        for code, mid, name, current in (
             await session.execute(
-                select(MasterSku.sku_code, MasterSku.id, MasterSku.category_id).where(
-                    MasterSku.sku_code.in_(wanted_skus or [""])
-                )
+                select(
+                    MasterSku.sku_code, MasterSku.id, MasterSku.name, MasterSku.category_id
+                ).where(MasterSku.sku_code.in_(wanted_skus or [""]))
             )
         ).all()
     }
@@ -243,13 +322,13 @@ async def plan_assignments(session: AsyncSession, data: bytes) -> tuple[Inspecti
     )
     category_by_code: dict[str, int] = dict(category_rows.all())  # type: ignore[arg-type]
 
+    #: sku_code -> target category (None = clear), in first-seen order.
+    targets: dict[str, int | None] = {}
     for row in rows:
         sku_code = row["sku_code"]
-        found = sku_by_code.get(sku_code)
-        if found is None:
+        if sku_code not in sku_by_code:
             plan.unknown_skus.append(sku_code)
             continue
-        master_id, current_category = found
 
         raw_code = row.get("category_code") or ""
         if not raw_code:
@@ -261,11 +340,29 @@ async def plan_assignments(session: AsyncSession, data: bytes) -> tuple[Inspecti
                 plan.unknown_categories.append(raw_code)
                 continue
 
-        if target == current_category:
+        if sku_code in targets and sku_code not in plan.duplicate_skus:
+            plan.duplicate_skus.append(sku_code)
+        targets[sku_code] = target
+
+    current_ids = {cur for _, _, cur in sku_by_code.values() if cur is not None}
+    target_ids = {t for t in targets.values() if t is not None}
+    labels = await category_labels(session, current_ids | target_ids)
+
+    for sku_code, target in targets.items():
+        master_id, name, current = sku_by_code[sku_code]
+        if target == current:
             # Re-importing the same file is a no-op, which is what makes a
             # corrected re-send safe to run twice.
             plan.unchanged += 1
             continue
         plan.by_category.setdefault(target, []).append(master_id)
+        plan.changes.append(
+            AssignmentChange(
+                sku_code=sku_code,
+                name=name,
+                before=labels.get(current, UNCLASSIFIED_LABEL) if current else UNCLASSIFIED_LABEL,
+                after=labels.get(target, "") if target else CLEARED_LABEL,
+            )
+        )
 
     return inspection, plan

@@ -78,6 +78,9 @@ def _context(**overrides: Any) -> dict[str, Any]:
             "qs_prev": "",
             "qs_next": "",
         },
+        # Sets reached from this screen (acceptance Q&A, 2026-10-12).
+        "sets_using": {},
+        "matching_sets": [],
     }
     base.update(overrides)
     return base

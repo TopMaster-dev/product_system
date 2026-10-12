@@ -37,6 +37,8 @@ from app.models import (
     MasterSku,
     SkuVelocity,
 )
+from app.services.categories import category_label_column, join_category
+from app.services.sku_links import parents_of, search_bundle_parents
 from app.services.sku_scope import (
     analysable_conditions,
     archive_blockers,
@@ -159,18 +161,21 @@ def _rows_query(
     would eventually disagree with the one the WHERE clause used — a file whose
     status column contradicts the filter that produced it.
     """
-    return _from_masters(
-        MasterSku.id,
-        MasterSku.sku_code,
-        MasterSku.name,
-        MasterSku.jan_code,
-        MasterSku.image_url,
-        MasterSku.archived_at,
-        MasterSku.is_stock_managed,
-        qty_expression().label("on_hand_qty"),
-        threshold.label("low_stock_threshold"),
-        SkuVelocity.per_day.label("velocity_per_day"),
-        InventorySnapshot.updated_at,
+    return join_category(
+        _from_masters(
+            MasterSku.id,
+            MasterSku.sku_code,
+            MasterSku.name,
+            MasterSku.jan_code,
+            MasterSku.image_url,
+            MasterSku.archived_at,
+            MasterSku.is_stock_managed,
+            qty_expression().label("on_hand_qty"),
+            threshold.label("low_stock_threshold"),
+            SkuVelocity.per_day.label("velocity_per_day"),
+            InventorySnapshot.updated_at,
+            category_label_column(),
+        )
     ).where(*conditions)
 
 
@@ -271,6 +276,12 @@ async def inventory_list(
         .all()
     )
 
+    # The way back to a set's own page, which this screen no longer lists
+    # (acceptance Q&A, 2026-10-12): the sets each component on the page feeds,
+    # and any set whose code or name matches the search.
+    sets_using = await parents_of(session, [r["id"] for r in rows])
+    matching_sets = await search_bundle_parents(session, q) if q else []
+
     base = {"q": q, "filter": filter, "sort": sort, "dir": dir}
     if show_hidden:
         base["include_hidden"] = "1"
@@ -308,6 +319,8 @@ async def inventory_list(
             "base_qs": urlencode(base),
             "export_qs": urlencode(base),
             "pagination": pagination,
+            "sets_using": sets_using,
+            "matching_sets": matching_sets,
         },
     )
 
@@ -353,6 +366,7 @@ async def inventory_export(
             "archived",
             "low_stock_threshold",
             "velocity_per_day",
+            "category",
         ]
     )
     for r in rows:
@@ -369,6 +383,7 @@ async def inventory_export(
                 "はい" if r["archived_at"] else "",
                 r["low_stock_threshold"],
                 f"{r['velocity_per_day']:.2f}" if r["velocity_per_day"] is not None else "",
+                r["category_name"] or "未分類",
             ]
         )
     return csv_response(buf.getvalue(), filename="inventory.csv")
