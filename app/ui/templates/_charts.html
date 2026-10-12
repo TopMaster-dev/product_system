@@ -154,16 +154,18 @@
   {% set body %}
     <div class="text-xs text-ink-500 mb-1">{{ label }}</div>
     <div class="text-xl md:text-2xl font-semibold tabular-nums text-ink-900 whitespace-nowrap">{{ value }}</div>
-    <div class="mt-1 text-xs flex items-center gap-1.5">
+    {# Wraps between the figure and its label, never inside the label:
+       「前期間比」 split in two beside a wide percentage (2026-10-12). #}
+    <div class="mt-1 text-xs flex flex-wrap items-center gap-x-1.5">
       {% if delta is none %}
-        <span class="text-ink-400">前期間比 —</span>
+        <span class="text-ink-400 whitespace-nowrap">前期間比 —</span>
       {% else %}
         {% set positive = delta >= 0 %}
         {% set favourable = positive if good_when_up else not positive %}
-        <span class="{% if delta == 0 %}text-ink-400{% elif favourable %}text-emerald-600{% else %}text-red-600{% endif %} font-medium tabular-nums">
+        <span class="{% if delta == 0 %}text-ink-400{% elif favourable %}text-emerald-600{% else %}text-red-600{% endif %} font-medium tabular-nums whitespace-nowrap">
           {{ '+' if positive else '' }}{{ '%.1f'|format(delta) }}%
         </span>
-        <span class="text-ink-400">前期間比</span>
+        <span class="text-ink-400 whitespace-nowrap">前期間比</span>
       {% endif %}
     </div>
     {% if hint %}<div class="text-[11px] text-ink-400 mt-1">{{ hint }}</div>{% endif %}

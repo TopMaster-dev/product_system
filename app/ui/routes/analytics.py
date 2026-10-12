@@ -124,19 +124,34 @@ async def analytics_overview(
             "source": source,
             "trend": trend,
             "shares": charts.share_bars([(label, float(v)) for label, v in shares]),
-            "deltas": overview_deltas(kpis, prior),
+            "deltas": overview_deltas(kpis, prior, previous_days=previous.days),
         },
     )
 
 
-def overview_deltas(kpis: Kpis, prior: Kpis) -> dict[str, Delta]:
+def overview_deltas(kpis: Kpis, prior: Kpis, *, previous_days: int) -> dict[str, Delta]:
     """Each change is computed on the number its tile shows.
 
     The 売上高 tile shows sales INCLUDING unmapped lines, but its change was
     computed on mapped sales only, so the percentage under it described a
     different figure — and one that moves whenever a mapping is resolved,
     although no sale changed. Found 2026-10-02 preparing the 検収.
+
+    No change at all when the comparison period is not fully covered by data.
+    The 365-day view compared a year against the eleven days of the previous
+    year that the data reaches back to, and printed +620466.7% (production,
+    2026-10-12). A percentage over a partial period is not a smaller truth; it
+    is a different question, so the tile shows 「—」 instead.
     """
+    if prior.days_with_data < previous_days:
+        return {
+            key: Delta(float(current), 0.0, None)
+            for key, current in (
+                ("sales", kpis.total_with_unmapped_jpy),
+                ("quantity", kpis.sold_quantity),
+                ("orders", kpis.order_count),
+            )
+        }
     return {
         "sales": Delta.of(kpis.total_with_unmapped_jpy, prior.total_with_unmapped_jpy),
         "quantity": Delta.of(kpis.sold_quantity, prior.sold_quantity),

@@ -200,4 +200,24 @@ def test_the_sales_change_is_computed_on_the_figure_the_tile_shows() -> None:
     before = _kpis(gross_sales_jpy=Decimal(900), unmapped_sales_jpy=Decimal(100))
     after_resolving = _kpis(gross_sales_jpy=Decimal(1000), unmapped_sales_jpy=Decimal(0))
 
-    assert overview_deltas(after_resolving, before)["sales"].change == 0.0
+    assert overview_deltas(after_resolving, before, previous_days=28)["sales"].change == 0.0
+
+
+def test_no_change_is_shown_against_a_partly_empty_period() -> None:
+    """365 days compared with the eleven days of the previous year the data
+    reaches back to printed +620466.7% on production (2026-10-12)."""
+    from app.ui.routes.analytics import overview_deltas
+
+    year = _kpis(gross_sales_jpy=Decimal(20_000_000))
+    eleven_days = _kpis(gross_sales_jpy=Decimal(30_000), days_with_data=11)
+
+    deltas = overview_deltas(year, eleven_days, previous_days=365)
+    assert all(d.change is None for d in deltas.values())
+
+    full = _kpis(gross_sales_jpy=Decimal(18_000_000), days_with_data=365)
+    assert overview_deltas(year, full, previous_days=365)["sales"].change is not None
+
+
+def test_the_change_label_never_splits() -> None:
+    html = _render()
+    assert 'whitespace-nowrap">前期間比</span>' in html
