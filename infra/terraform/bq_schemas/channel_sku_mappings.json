@@ -3,6 +3,7 @@
   { "name": "master_sku_id", "type": "INTEGER", "mode": "REQUIRED" },
   { "name": "channel", "type": "STRING", "mode": "REQUIRED" },
   { "name": "channel_sku", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "channel_variant_key", "type": "STRING", "mode": "NULLABLE" },
   { "name": "channel_product_id", "type": "STRING", "mode": "NULLABLE" },
   { "name": "marketplace_id", "type": "STRING", "mode": "NULLABLE" },
   { "name": "fulfillment_type", "type": "STRING", "mode": "NULLABLE" },

@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +38,61 @@ from app.services.timeframe import to_jst_date
 
 #: Same set `OrderIngestService` uses; a cancelled line was never consumed.
 _CANCEL_STATUSES = {"cancelled", "returned"}
+
+
+async def resolve_master_sku_id(
+    session: AsyncSession,
+    *,
+    channel: str,
+    channel_sku: str,
+    marketplace_id: str | None = None,
+    variant_key: str | None = None,
+) -> int | None:
+    """The one definition of "which master does this channel line belong to".
+
+    Two steps, because a Rakuten page keeps its page-level mapping row while its
+    SKUs are mapped one at a time (see `ChannelSkuMapping`):
+
+    1. the row whose `channel_variant_key` is exactly `variant_key`, NULL included;
+    2. only when a `variant_key` was supplied and step 1 found nothing, the
+       page-level row — so a page that is not yet mapped per variant still
+       resolves, and no flag day is needed.
+
+    Pinning `channel_variant_key` is the point. A query that leaves it out
+    matches the page-level row AND every variant row of that page, so the
+    `scalar_one_or_none()` below would raise MultipleResultsFound the moment the
+    first variant row is inserted — on the hourly order poll, which
+    `internal_jobs._run_job` turns into an HTTP 500 and a critical Slack alert.
+
+    Each step is covered by `uq_channel_sku_mapping`, so each returns at most one
+    row. `scalar_one_or_none()` is kept deliberately over `.first()`: if that
+    constraint is ever lost, this must fail loudly rather than silently pick one
+    of several variants.
+    """
+    for key_condition in _variant_key_steps(variant_key):
+        result = await session.execute(
+            select(ChannelSkuMapping.master_sku_id).where(
+                ChannelSkuMapping.channel == channel,
+                ChannelSkuMapping.channel_sku == channel_sku,
+                ChannelSkuMapping.marketplace_id.is_(marketplace_id),
+                key_condition,
+                ChannelSkuMapping.is_active.is_(True),
+            ),
+        )
+        found = result.scalar_one_or_none()
+        if found is not None:
+            return found
+    return None
+
+
+def _variant_key_steps(variant_key: str | None) -> list[Any]:
+    """The variant-key predicate per step, most specific first."""
+    if variant_key is None:
+        return [ChannelSkuMapping.channel_variant_key.is_(None)]
+    return [
+        ChannelSkuMapping.channel_variant_key == variant_key,
+        ChannelSkuMapping.channel_variant_key.is_(None),
+    ]
 
 
 class MappingService:
@@ -92,16 +148,15 @@ class MappingService:
         channel: str,
         channel_sku: str,
         marketplace_id: str | None = None,
+        variant_key: str | None = None,
     ) -> int | None:
-        result = await self._session.execute(
-            select(ChannelSkuMapping.master_sku_id).where(
-                ChannelSkuMapping.channel == channel,
-                ChannelSkuMapping.channel_sku == channel_sku,
-                ChannelSkuMapping.marketplace_id.is_(marketplace_id),
-                ChannelSkuMapping.is_active.is_(True),
-            ),
+        return await resolve_master_sku_id(
+            self._session,
+            channel=channel,
+            channel_sku=channel_sku,
+            marketplace_id=marketplace_id,
+            variant_key=variant_key,
         )
-        return result.scalar_one_or_none()
 
     # ---------- internals ----------
 
@@ -337,15 +392,12 @@ async def reresolve_unmapped_lines(
             blank_key_sales += live_amount
             continue
 
-        found = await session.execute(
-            select(ChannelSkuMapping.master_sku_id).where(
-                ChannelSkuMapping.channel == order.channel,
-                ChannelSkuMapping.channel_sku == item.channel_sku,
-                ChannelSkuMapping.marketplace_id.is_(order.marketplace_id),
-                ChannelSkuMapping.is_active.is_(True),
-            ),
+        master_sku_id = await resolve_master_sku_id(
+            session,
+            channel=order.channel,
+            channel_sku=item.channel_sku,
+            marketplace_id=order.marketplace_id,
         )
-        master_sku_id = found.scalar_one_or_none()
         # Cancelled lines are excluded from both amounts, to match how the KPI
         # counts 未マッピング売上 — otherwise the figure here would not be
         # comparable with the one on the screen.

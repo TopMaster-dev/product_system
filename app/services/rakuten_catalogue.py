@@ -490,6 +490,23 @@ class Split:
         return "商品の新規作成が必要" if not self.candidates else "候補が複数 — 要確認"
 
 
+def codeish_collisions(master_codes: list[str]) -> dict[str, list[str]]:
+    """Master codes that reduce to the same comparable form.
+
+    `_codeish` drops case and punctuation, so `B43-gold-M` and `B43goldM` become
+    one token. Where two real masters collide, the code no longer identifies a
+    master, and the quantity a re-point sends to a live page would depend on
+    which row the database happened to return — so the collision has to be read
+    by a person, not resolved by ordering.
+    """
+    groups: dict[str, list[str]] = {}
+    for code in master_codes:
+        key = _codeish(code)
+        if key:
+            groups.setdefault(key, []).append(code)
+    return {key: sorted(set(codes)) for key, codes in groups.items() if len(set(codes)) > 1}
+
+
 def split_candidates(
     assignments: list[VariantAssignment], *, master_codes: list[str]
 ) -> list[Split]:
@@ -502,8 +519,16 @@ def split_candidates(
     each Rakuten variant at its own — no new products, and the quantity lands in
     one place. Where it did not, the master has to be created, and this says so
     rather than picking a sibling at random.
+
+    A master whose code collides with another under `_codeish` is never offered,
+    because the offer would carry a confidence the codes do not support.
     """
-    by_code = {_codeish(code): code for code in master_codes if _codeish(code)}
+    colliding = set(codeish_collisions(master_codes))
+    by_code: dict[str, str] = {}
+    for code in master_codes:
+        key = _codeish(code)
+        if key and key not in colliding:
+            by_code[key] = code
     splits: list[Split] = []
     for group in masters_claimed_twice(assignments).values():
         claimed = group[0].master_code or ""

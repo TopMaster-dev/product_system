@@ -199,7 +199,19 @@ def test_channel_sku_mapping_uniqueness() -> None:
         for uc in table.constraints
         if uc.__class__.__name__ == "UniqueConstraint"
     }
-    assert ("channel", "channel_sku", "marketplace_id") in cols
+    assert ("channel", "channel_sku", "channel_variant_key", "marketplace_id") in cols
+    # NULLS NOT DISTINCT is what keeps the four-column form as strict as the
+    # three-column one it replaced: every pre-0015 row has a NULL variant key,
+    # and without this the widening would permit duplicate (channel, channel_sku)
+    # mappings instead of forbidding them.
+    unique = next(
+        uc
+        for uc in table.constraints
+        if uc.__class__.__name__ == "UniqueConstraint"
+        and tuple(sorted(c.name for c in uc.columns))
+        == ("channel", "channel_sku", "channel_variant_key", "marketplace_id")
+    )
+    assert unique.dialect_options["postgresql"]["nulls_not_distinct"] is True
 
 
 @pytest.mark.unit

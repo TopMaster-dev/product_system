@@ -19,6 +19,7 @@ from app.services.rakuten_catalogue import (
     RakutenSku,
     VariantAssignment,
     assign_masters,
+    codeish_collisions,
     group_variants,
     masters_claimed_twice,
     normalise_choice,
@@ -395,3 +396,44 @@ def test_a_master_claimed_by_only_one_variant_is_not_a_split() -> None:
         variants, proven={("b66", "1"): 7}, master_by_code={"b66": (7, "B66")}
     )
     assert split_candidates(assigned, master_codes=["B66", "B66goldM"]) == []
+
+
+def test_colliding_master_codes_are_never_offered_as_candidates() -> None:
+    """`B43-gold-M` and `B43goldM` reduce to one token, so neither identifies a
+    master. Offering either would depend on which row the database returned
+    last — the earlier code kept whichever came second."""
+    splits = split_candidates(
+        two_variants_on_one_master(),
+        master_codes=["B66", "B66-gold-M", "B66goldM", "B66silverM"],
+    )
+
+    found = {s.variant.label: s.candidates for s in splits}
+    assert found["gold / m"] == ()
+    assert found["gold / m"] != ("B66goldM",)
+    # The non-colliding sibling is still offered.
+    assert found["m / silver"] == ("B66silverM",)
+
+
+def test_the_collision_is_reported_so_it_can_be_read() -> None:
+    collisions = codeish_collisions(["B43-gold-M", "B43goldM", "B43goldS", "N74"])
+    assert collisions == {"b43goldm": ["B43-gold-M", "B43goldM"]}
+
+
+def test_the_same_code_listed_twice_is_not_a_collision() -> None:
+    """Two rows carrying one code is a duplicate, not an ambiguity — it still
+    names one master."""
+    assert codeish_collisions(["B43goldM", "B43goldM"]) == {}
+
+
+def test_candidate_selection_does_not_depend_on_master_order() -> None:
+    """The master codes arrive from an unordered SELECT, so the result has to be
+    the same whichever order they come in."""
+    codes = ["B66", "B66goldM", "B66silverM", "B66goldS", "B66silverS"]
+    first = [
+        s.candidates for s in split_candidates(two_variants_on_one_master(), master_codes=codes)
+    ]
+    second = [
+        s.candidates
+        for s in split_candidates(two_variants_on_one_master(), master_codes=list(reversed(codes)))
+    ]
+    assert first == second

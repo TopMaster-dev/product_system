@@ -27,7 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters import NormalizedOrder, NormalizedOrderLine
 from app.models import (
-    ChannelSkuMapping,
     MappingAlert,
     MappingAlertStatusEnum,
     Order,
@@ -35,6 +34,7 @@ from app.models import (
     OrderStatusEnum,
 )
 from app.services.inventory import EventSource, InventoryService
+from app.services.mapping import resolve_master_sku_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,15 +219,15 @@ class OrderIngestService:
         line: NormalizedOrderLine,
         marketplace_id: str | None,
     ) -> int | None:
-        result = await self._session.execute(
-            select(ChannelSkuMapping.master_sku_id).where(
-                ChannelSkuMapping.channel == channel,
-                ChannelSkuMapping.channel_sku == line.channel_sku,
-                ChannelSkuMapping.marketplace_id.is_(marketplace_id),
-                ChannelSkuMapping.is_active.is_(True),
-            ),
+        # variant_key stays None until Rakuten ingest carries SKU管理番号 (a
+        # separate change); the resolver then pins the page-level row, which is
+        # exactly the row this matched before `channel_variant_key` existed.
+        return await resolve_master_sku_id(
+            self._session,
+            channel=channel,
+            channel_sku=line.channel_sku,
+            marketplace_id=marketplace_id,
         )
-        return result.scalar_one_or_none()
 
     async def _record_alert(
         self,

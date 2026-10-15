@@ -103,10 +103,11 @@ async def join_to_masters(session: AsyncSession, skus: list[RakutenSku]) -> Cove
     """Four routes, most trustworthy first. Each row is attributed to exactly the
     route that found it, so the report says how the catalogue would be covered."""
     proven = await links_from_orders(session)
-    by_code = {
-        code.strip().lower(): (mid, code)
-        for mid, code in (await session.execute(select(MasterSku.id, MasterSku.sku_code))).all()
-    }
+    #: Ordered so a code collision resolves the same way on every run.
+    master_rows = await session.execute(
+        select(MasterSku.id, MasterSku.sku_code).order_by(MasterSku.id)
+    )
+    by_code = {code.strip().lower(): (mid, code) for mid, code in master_rows.all()}
     existing = {
         (sku or "").strip(): mid
         for sku, mid in (

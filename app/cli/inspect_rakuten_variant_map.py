@@ -41,6 +41,7 @@ from app.services.rakuten_catalogue import (
     Split,
     VariantAssignment,
     assign_masters,
+    codeish_collisions,
     group_variants,
     links_from_orders,
     masters_claimed_twice,
@@ -116,7 +117,7 @@ async def load_masters(session: AsyncSession) -> tuple[dict[str, tuple[int, str]
     master_by_code = {
         code.strip().lower(): (master_id, code)
         for master_id, code in (
-            await session.execute(select(MasterSku.id, MasterSku.sku_code))
+            await session.execute(select(MasterSku.id, MasterSku.sku_code).order_by(MasterSku.id))
         ).all()
     }
     snapshots = await session.execute(
@@ -204,10 +205,15 @@ def print_double_claims(assignments: list[VariantAssignment]) -> None:
         print(f"       {code:<20}{len(group)}バリアント  {labels}")
 
 
-def print_splits(splits: list[Split]) -> None:
+def print_splits(splits: list[Split], collisions: dict[str, list[str]]) -> None:
     """How the double claims come apart: a master that already exists per
     variant, or one that has to be created."""
     print(f"\n  5. 重複している対応づけの切り分け — 対象 {len(splits)}バリアント")
+    if collisions:
+        print(f"     ★ 記号を無視すると同一になる商品コード {len(collisions)}組")
+        print("       どちらを指すか決められないため、付け替え候補から除外しました")
+        for codes in list(collisions.values())[:5]:
+            print(f"       {' / '.join(codes)}")
     if not splits:
         return
     by_verdict: dict[str, list[Split]] = {}
@@ -292,12 +298,13 @@ async def run(*, csv_path: Path, pairs_path: Path, out_dir: Path | None) -> int:
         master_by_code, on_hand = await load_masters(session)
     assignments = assign_masters(variants, proven=proven, master_by_code=master_by_code)
 
-    splits = split_candidates(assignments, master_codes=[c for _, c in master_by_code.values()])
+    master_codes = [c for _, c in master_by_code.values()]
+    splits = split_candidates(assignments, master_codes=master_codes)
 
     print_grouping(variants, len(skus), len(pairs), problems + pair_problems)
     print_assignments(assignments)
     print_double_claims(assignments)
-    print_splits(splits)
+    print_splits(splits, codeish_collisions(master_codes))
     print_stock(assignments, on_hand)
 
     if out_dir is not None:
