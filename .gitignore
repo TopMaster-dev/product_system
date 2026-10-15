@@ -69,3 +69,4 @@ infra/terraform/terraform.tfvars
 **.csv
 **.xlsx
 **.docx
+/csv_file/**.jpg

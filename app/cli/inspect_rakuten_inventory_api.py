@@ -47,10 +47,71 @@ from app.models import Order
 
 log = get_logger(__name__)
 
-API_ROOT = "https://api.rms.rakuten.co.jp/es/2.0"
-ITEM_PATH = "/items/manage-numbers/{manage_number}"
-INVENTORY_PATH = "/inventories/manage-numbers/{manage_number}/variants/{variant_id}"
-SEARCH_PATH = "/items/search?hits=1"
+API_HOST = "https://api.rms.rakuten.co.jp/es"
+ITEM_PATH = "/2.0/items/manage-numbers/{manage_number}"
+INVENTORY_PATH = "/2.0/inventories/manage-numbers/{manage_number}/variants/{variant_id}"
+
+#: How the RMS gateway answers, and what each answer proves. Established by probing
+#: with a DELIBERATELY BOGUS token on 2026-10-12, so routing could be read without
+#: any credential in play:
+#:
+#:   404 + server: Apache      the path is not an RMS route at all
+#:   404 + GF0002 (istio)      the prefix is routed, this leaf is not an endpoint
+#:   400 + GF0001 (istio)      real endpoint, bad path parameter
+#:   400 + GK0001 (istio)      real endpoint, no Authorization header
+#:   401 + GA0001 (istio)      real endpoint, credential presented and REFUSED
+#:
+#: Routing is resolved BEFORE the credential, so 401 can only mean "this endpoint
+#: exists and your licence key may not use it". That is what makes the grant map
+#: below readable: with the real key, 200 = granted, 401 = not granted.
+NOT_A_ROUTE = "ルートなし (RMSのAPIではない)"
+NOT_AN_ENDPOINT = "エンドポイントなし"
+BAD_PATH_PARAM = "パスパラメータ誤り (エンドポイントは実在)"
+NO_AUTH_HEADER = "Authorizationヘッダ欠落"
+NOT_GRANTED = "未許可 (利用機能設定)"
+GRANTED = "利用可能"
+BAD_METHOD = "メソッド誤り"
+BAD_BODY = "許可あり・リクエスト本文が不一致"
+
+
+#: Enough of a 200 to learn the field names from, short enough to read.
+BODY_PREVIEW = 150
+
+
+def describe_body(body: dict[str, Any]) -> str:
+    """Top-level keys, and the first element's keys when the answer is a list —
+    that is where a per-SKU record's field names live."""
+    parts: list[str] = []
+    for key, value in list(body.items())[:6]:
+        if isinstance(value, list):
+            inner = value[0] if value and isinstance(value[0], dict) else None
+            shape = "{" + ", ".join(list(inner)[:8]) + "}" if inner else f"[{len(value)}]"
+            parts.append(f"{key}[{len(value)}]={shape}")
+        elif isinstance(value, dict):
+            parts.append(f"{key}{{{', '.join(list(value)[:6])}}}")
+        else:
+            parts.append(f"{key}={value}")
+    return "; ".join(parts)[:BODY_PREVIEW]
+
+
+def classify(status: int, server: str, code: str) -> str:
+    """What one response proves about the endpoint and our licence."""
+    if status == 200:
+        return GRANTED
+    if status == 404:
+        return NOT_AN_ENDPOINT if "istio" in server.lower() else NOT_A_ROUTE
+    if status == 401:
+        return NOT_GRANTED
+    if status == 405:
+        return BAD_METHOD
+    if status == 400:
+        if code.startswith("GF0001"):
+            return BAD_PATH_PARAM
+        if code.startswith("GK0001"):
+            return NO_AUTH_HEADER
+        return BAD_BODY
+    return f"HTTP {status}"
+
 
 #: Recent Rakuten orders scanned for SKU references.
 ORDER_SCAN_LIMIT = 500
@@ -126,15 +187,38 @@ async def collect_order_refs(session: AsyncSession, *, limit: int = ORDER_SCAN_L
 
 @dataclass(frozen=True, slots=True)
 class Probe:
-    """One GET: its status, its JSON when there is any, Rakuten's error if any."""
+    """One call: its status, the `server` header, its JSON, Rakuten's error if any.
+
+    `server` is not decoration — it is the only thing separating "not an RMS route"
+    (Apache) from "routed, but not an endpoint" (istio-envoy).
+    """
 
     status: int
     body: dict[str, Any] | None
     error: str = ""
+    server: str = ""
 
     @property
     def ok(self) -> bool:
         return self.status == 200 and self.body is not None
+
+    @property
+    def meaning(self) -> str:
+        return classify(self.status, self.server, self.error)
+
+    @property
+    def summary(self) -> str:
+        """What to show beside the verdict: the error when there is one, and on
+        success the SHAPE of the answer.
+
+        The shape is the point once the permission is granted. Rakuten's own
+        spec is behind a login, so the field names in a real 200 are how we
+        learn what the stock write must send. Inventory responses carry stock
+        numbers only — no purchaser data — so printing them is safe.
+        """
+        if self.error:
+            return self.error[:46]
+        return "" if self.body is None else describe_body(self.body)
 
 
 def rakuten_error(body: Any) -> str:
@@ -153,7 +237,12 @@ def rakuten_error(body: Any) -> str:
 
 
 class RmsReader:
-    """GET-only client for the RMS v2 item and inventory APIs."""
+    """Read-only RMS client. GET, plus POST for the two `bulk-get` endpoints —
+    which are reads despite the verb. It can reach no endpoint that writes."""
+
+    #: POST is allowed ONLY to these. `bulk-upsert` writes stock and is absent on
+    #: purpose: a typo in a manage number there would zero a live product's stock.
+    READ_ONLY_POSTS = frozenset({"/2.0/inventories/bulk-get", "/2.1/inventories/bulk-get"})
 
     def __init__(self, *, service_secret: str, license_key: str, client: httpx.AsyncClient):
         # .strip(): Windows-sourced secrets carry a trailing CR that corrupts
@@ -161,26 +250,39 @@ class RmsReader:
         token = base64.b64encode(f"{service_secret.strip()}:{license_key.strip()}".encode()).decode(
             "ascii"
         )
-        self._headers = {"Authorization": f"ESA {token}"}
+        self._headers = {
+            "Authorization": f"ESA {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        }
         self._client = client
         self._first = True
 
-    async def get(self, path: str) -> Probe:
+    async def call(self, method: str, path: str, body: dict[str, Any] | None = None) -> Probe:
+        if method == "POST" and path not in self.READ_ONLY_POSTS:
+            raise ValueError(f"this probe may not POST to {path}")
         if not self._first:
             await asyncio.sleep(CALL_INTERVAL)
         self._first = False
         try:
-            resp = await self._client.get(API_ROOT + path, headers=self._headers, timeout=30.0)
+            resp = await self._client.request(
+                method, API_HOST + path, headers=self._headers, json=body, timeout=30.0
+            )
         except httpx.HTTPError as exc:
             return Probe(status=0, body=None, error=f"{type(exc).__name__}: {exc}"[:200])
         try:
-            body = resp.json()
+            parsed = resp.json()
         except ValueError:
-            body = None
-        error = "" if resp.status_code == 200 else rakuten_error(body) or resp.text[:200]
+            parsed = None
+        error = "" if resp.status_code == 200 else rakuten_error(parsed) or resp.text[:120]
         return Probe(
-            status=resp.status_code, body=body if isinstance(body, dict) else None, error=error
+            status=resp.status_code,
+            body=parsed if isinstance(parsed, dict) else None,
+            error=error,
+            server=resp.headers.get("server", ""),
         )
+
+    async def get(self, path: str) -> Probe:
+        return await self.call("GET", path)
 
     async def item(self, manage_number: str) -> Probe:
         return await self.get(ITEM_PATH.format(manage_number=quote(manage_number, safe="")))
@@ -191,9 +293,6 @@ class RmsReader:
                 manage_number=quote(manage_number, safe=""), variant_id=quote(variant_id, safe="")
             )
         )
-
-    async def search(self) -> Probe:
-        return await self.get(SEARCH_PATH)
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,20 +334,130 @@ def read_item(body: dict[str, Any], ref: VariantRef) -> ItemView:
     )
 
 
-def verdict(statuses: list[int]) -> str:
-    """One line on whether this API is usable with our license."""
+def verdict(statuses: list[int], *, baseline_ok: bool) -> str:
+    """One line on whether this API is usable with our licence.
+
+    `baseline_ok` is whether the item API answered 200 in THIS run with THESE
+    credentials. It is what separates the two readings of a 401: with a working
+    baseline the credentials are proven good, so a 401 is a permission the shop
+    has not granted — not a key to go and check. The first version of this
+    function said 「認証エラー — サービスシークレット/ライセンスキーを確認」 for
+    every 401, which would have sent the client hunting a credential that is
+    demonstrably fine (2026-10-12).
+    """
     if not statuses:
         return "未確認"
     counts = Counter(statuses)
     if counts[200]:
-        return f"利用可能 ({counts[200]}/{len(statuses)} 件で応答)"
+        return f"{GRANTED} ({counts[200]}/{len(statuses)} 件で応答)"
     if counts[401]:
-        return "認証エラー — サービスシークレット/ライセンスキーを確認"
-    if counts[403]:
-        return "権限なし — RMS の「WEB API サービス」設定でこのAPIの利用を有効にする必要があります"
-    if counts[404] == len(statuses):
-        return "404 のみ — エンドポイントの誤り、または対象が存在しない (エラー内容を確認)"
+        return (
+            f"{NOT_GRANTED} — 同一実行で商品APIは200のため、認証情報は正常。"
+            "RMSの利用機能設定で、このAPIが有効になっていません"
+            if baseline_ok
+            else "401 — 商品APIも200ではないため、認証情報と権限のどちらが原因か切り分け不能"
+        )
+    if counts[400]:
+        return f"{BAD_BODY} — リクエスト本文を要確認"
+    if counts[404]:
+        return "エンドポイントに到達できません"
     return f"応答なし (ステータス {dict(counts)})"
+
+
+# --- 2. Which APIs may this licence key use? ---------------------------------------
+
+
+#: The grant map's baseline: the one call already proven to work. Everything else
+#: is read relative to it.
+BASELINE_FAMILY = "商品API 2.0 取得"
+
+
+@dataclass(frozen=True, slots=True)
+class GrantCall:
+    """One probe of the gateway. `family` groups calls into the grant map."""
+
+    family: str
+    method: str
+    path: str
+    body: dict[str, Any] | None = None
+    #: A control establishes how the gateway behaves; it is not a grant question.
+    control: str = ""
+
+
+def grant_calls(manage_number: str, variant_id: str) -> list[GrantCall]:
+    """Controls first, so the run proves its own discriminators before leaning
+    on them, then one call per API family we might need.
+
+    `bulk-get` is a POST that READS. `bulk-upsert`, the write, is deliberately
+    absent: whether we may write is a separate question that needs the client's
+    sign-off and a SKU chosen so a mistake cannot cost a live product its stock.
+    """
+    one = {"inventories": [{"manageNumber": manage_number, "variantId": variant_id}]}
+    return [
+        GrantCall(
+            BASELINE_FAMILY,
+            "GET",
+            ITEM_PATH.format(manage_number=manage_number),
+            control="基準: これが200でなければ以降は解釈不能",
+        ),
+        GrantCall(
+            "(制御) 不正なパスパラメータ",
+            "GET",
+            ITEM_PATH.format(manage_number=manage_number) + "/no-such-leaf",
+            control="期待: 400 GF0001 — 経路の検証が認証より先である証拠",
+        ),
+        GrantCall(
+            "(制御) 未登録のエンドポイント",
+            "GET",
+            "/2.0/inventories/no-such-endpoint",
+            control="期待: 404 GF0002 — 401は経路単位であり前方一致ではない証拠",
+        ),
+        GrantCall(
+            "(制御) RMSの経路ではないURL",
+            "GET",
+            "/2.0/this/path/does/not/exist",
+            control="期待: 404 (Apache) — 本番コードの送信先と同じ分類",
+        ),
+        GrantCall("商品API 2.0 検索", "GET", "/2.0/items/search"),
+        GrantCall(
+            "在庫API 2.0 単体取得",
+            "GET",
+            INVENTORY_PATH.format(manage_number=manage_number, variant_id=variant_id),
+        ),
+        GrantCall("在庫API 2.0 一括取得", "POST", "/2.0/inventories/bulk-get", one),
+        GrantCall(
+            "在庫API 2.0 範囲取得",
+            "GET",
+            "/2.0/inventories/bulk-get/range?minQuantity=0&maxQuantity=1",
+        ),
+        GrantCall(
+            "在庫API 2.1 単体取得",
+            "GET",
+            f"/2.1/inventories/manage-numbers/{manage_number}/variants/{variant_id}",
+        ),
+        GrantCall("在庫API 2.1 一括取得", "POST", "/2.1/inventories/bulk-get", one),
+    ]
+
+
+def scope_branch(grants: dict[str, Probe]) -> str:
+    """Which of the three explanations the grant map is consistent with."""
+    baseline = grants.get(BASELINE_FAMILY)
+    item_ok = baseline is not None and baseline.ok
+    inventory = [p for f, p in grants.items() if f.startswith("在庫API")]
+    if not item_ok:
+        return "判定不能 — 基準の商品APIが200ではありません"
+    if any(p.ok for p in inventory):
+        return (
+            "在庫APIの読み取りは既に利用可能です。"
+            "クライアントへの依頼は不要か、書き込みのみに縮小できます"
+        )
+    if all(p.status == 401 for p in inventory if p.status):
+        return (
+            "認証情報は正常で、在庫APIだけが未許可です。"
+            "原因は (a) 利用機能が未設定 (b) 設定後にキーを再発行していない (c) 在庫APIが未契約 "
+            "のいずれかで、画面を見ないと区別できません"
+        )
+    return "混在した応答です。下の表をそのまま共有してください"
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,16 +535,27 @@ async def run(*, samples: int, scan: int) -> int:
     inv_status: list[int] = []
     matched = 0
     first_keys: tuple[str, ...] = ()
+    grants: dict[str, Probe] = {}
     async with httpx.AsyncClient() as client:
         rms = RmsReader(
             service_secret=settings.rakuten_service_secret,
             license_key=settings.rakuten_license_key,
             client=client,
         )
-        search = await rms.search()
-        print(f"\n  2. 商品API 2.0 検索: HTTP {search.status} {search.error}")
-        if search.ok and search.body is not None:
-            print(f"     登録商品数 numFound={search.body.get('numFound')}")
+
+        print("\n  2. このライセンスキーで使えるAPI (読み取りのみ)")
+        for call in grant_calls(picked[0].manage_number, picked[0].variant_id):
+            probe = await rms.call(call.method, call.path, call.body)
+            grants[call.family] = probe
+            print(f"     {call.family:<26}{probe.meaning:<30}{probe.status:<6}{probe.summary}")
+            if call.control:
+                print(f"       {call.control}")
+            if call.control.startswith("基準") and not probe.ok:
+                print(
+                    "\n     ★ 基準の商品APIが200を返しません。"
+                    "認証情報そのものを先に確認してください。"
+                )
+                return 1
 
         print(f"\n  3. サンプル {len(picked)}件")
         for ref in picked:
@@ -350,12 +570,14 @@ async def run(*, samples: int, scan: int) -> int:
         if first_keys:
             print(f"\n     参考: SKU の項目 {', '.join(first_keys)}")
 
+    baseline_ok = any(s == 200 for s in item_status)
     print("\n  4. 判定")
-    print(f"     商品API 2.0 : {verdict(item_status)}")
-    print(f"     在庫API 2.0 : {verdict(inv_status)}")
-    if any(s == 200 for s in item_status):
+    print(f"     商品API 2.0 : {verdict(item_status, baseline_ok=baseline_ok)}")
+    print(f"     在庫API 2.0 : {verdict(inv_status, baseline_ok=baseline_ok)}")
+    if baseline_ok:
         answered = sum(s == 200 for s in item_status)
         print(f"     受注のSKUが商品のSKUに見つかった: {matched}/{answered}")
+    print(f"\n     {scope_branch(grants)}")
 
     log.info(
         "rakuten_inventory_api.done",
@@ -363,6 +585,7 @@ async def run(*, samples: int, scan: int) -> int:
         item_status=dict(Counter(item_status)),
         inventory_status=dict(Counter(inv_status)),
         matched=matched,
+        grants={family: probe.status for family, probe in grants.items()},
     )
     return 0
 

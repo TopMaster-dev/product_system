@@ -3,7 +3,8 @@
 Phase 1-A scope:
 - `fetch_orders`: searchOrder + getOrder against Rakuten ペイ注文API.
 - Webhook is not provided by Rakuten — `verify_webhook` is a stub returning True.
-- `push_inventory`: NOT IMPLEMENTED — lands in Phase 1-B.
+- `push_inventory`: WRITTEN, BUT ITS ENDPOINT DOES NOT EXIST. See the warning
+  above the inventory constants below before touching it.
 
 Authentication is ESA (Encrypted Service Auth):
     Authorization: ESA <base64(serviceSecret:licenseKey)>
@@ -43,11 +44,35 @@ _GET_PATH = "/getOrder/"
 # RakutenPay Order API response schema version. v7 is current as of 2024+.
 _RAKUTEN_PAY_VERSION = 7
 
-# Inventory API (Phase 1-B F1.5). Per client decision D-1 we use the
-# dedicated `updateInventory` endpoint rather than `updateItem`.
+# ---------------------------------------------------------------------------
+# DEAD ENDPOINT. `push_inventory` below has never once reached Rakuten.
+#
+# Measured 2026-10-12 against the live gateway (bogus token, so routing could be
+# read without a credential): POST to this URL returns 404 from Apache — the
+# same answer as a path invented on the spot. RMS routes requests before it
+# checks credentials, so a real endpoint answers 400/401 from istio-envoy, never
+# an Apache 404. This URL is simply not part of the API.
+#
+# That, and not the licence, is why F1.5 was never verified in production: every
+# push failed at the edge and was recorded as a failed sync_attempt.
+#
+# The replacement is the SKU-level endpoint POST /es/2.0/inventories/bulk-upsert
+# (route existence measured; request body not yet confirmed against Rakuten's
+# own spec, which is behind a login). It is keyed on the PAIR
+# (manageNumber, variantId) because this shop's catalogue is 100%
+# 項目選択肢別在庫. Do NOT build to docs/28's 「inventoryType=2」: inventoryType
+# belongs to the retired pre-SKU API, and in the only generation that had it, 2
+# meant 通常在庫 — i.e. following that doc would set PRODUCT-level stock on a
+# SKU-level catalogue.
+#
+# Blocked until the licence is granted the inventory API: the same credentials
+# that get 200 on the item API get 401 GA0001 on every /inventories/ endpoint.
+# Run `app/cli/inspect_rakuten_inventory_api.py` for the current grant map.
+# ---------------------------------------------------------------------------
 _INVENTORY_BASE_URL = "https://api.rms.rakuten.co.jp/es/2.0/inventory"
 _INVENTORY_UPDATE_PATH = "/updateInventory/"
-# inventoryType 1 = 通常在庫 (normal stock); we don't manage 予約在庫 in Phase 1-B.
+# inventoryType: only ever existed in the retired pre-SKU API, where 2 = 通常在庫.
+# Kept because the dead request body below still carries it.
 _INVENTORY_TYPE_NORMAL = 1
 # inventoryOperation 1 = SET (override). We never want INCREMENT/DECREMENT here
 # because the central DB carries the authoritative count.
