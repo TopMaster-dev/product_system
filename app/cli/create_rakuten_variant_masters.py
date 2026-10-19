@@ -51,6 +51,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.csv_export import UTF8_BOM, csv_body
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ChannelSkuMapping, MasterSku
@@ -59,12 +60,15 @@ from app.services.rakuten_catalogue import (
     PhysicalVariant,
     Split,
     VariantAssignment,
+    apply_decisions,
     assign_masters,
     group_variants,
     links_from_legacy_mappings,
     links_from_orders,
     masters_claimed_twice,
     read_catalogue,
+    read_conflict_decisions,
+    read_excluded_pages,
     read_pair_table,
     split_candidates,
 )
@@ -72,6 +76,8 @@ from app.services.rakuten_catalogue import (
 log = get_logger(__name__)
 
 DEFAULT_PAIRS = Path("csv_file/phase2/source/楽天ペア対応表-表1.csv")
+DEFAULT_DECISIONS = Path("csv_file/phase2/source/rakuten_conflict_decisions.csv")
+DEFAULT_EXCLUDED = Path("csv_file/phase2/source/rakuten_excluded_pages.csv")
 
 #: Rakuten refuses a 商品管理番号 / SKU管理番号 longer than this, so a mapping we
 #: could never push is not worth writing.
@@ -84,8 +90,60 @@ ACTION_SKIP = "対応済み"
 ACTION_MAP = "既存商品に対応づけ"
 ACTION_CREATE = "商品を新規作成"
 ACTION_BLOCKED = "★保留"
+ACTION_EXCLUDED = "除外 (在庫ではありません)"
 
 MAX_ROWS = 12
+
+PLAN_HEADER = [
+    "処理",
+    "物理バリアント",
+    "選択肢",
+    "作成する商品コード",
+    "商品名",
+    "対応づける既存商品",
+    "カテゴリID",
+    "商品管理番号",
+    "SKU管理番号",
+    "楽天の在庫数",
+    "備考",
+]
+
+
+def plan_rows(planned: list[Planned]) -> list[list[object]]:
+    """The WHOLE plan, one row per Rakuten SKU.
+
+    The screen prints twelve of each kind, which is right for reading and wrong
+    for checking. 97 products and 937 mappings are about to be written to a live
+    catalogue, so the reviewable artefact has to be the complete list.
+    """
+    rows: list[list[object]] = []
+    for item in planned:
+        variant = item.variant
+        for sku in sorted(variant.skus, key=lambda s: s.manage_number):
+            rows.append(
+                [
+                    item.action,
+                    f"{variant.group}:{variant.label}",
+                    variant.label,
+                    item.sku_code,
+                    item.name,
+                    item.master_code,
+                    "" if item.category_id is None else item.category_id,
+                    sku.manage_number,
+                    sku.variant_id,
+                    sku.quantity,
+                    item.reason,
+                ]
+            )
+    return rows
+
+
+def write_plan(out_dir: Path, planned: list[Planned]) -> Path:
+    """Sync on purpose: file IO does not belong inside the async run (ASYNC240)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "rakuten_variant_master_plan.csv"
+    path.write_text(UTF8_BOM + csv_body(PLAN_HEADER, plan_rows(planned)), encoding="utf-8")
+    return path
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +162,9 @@ class Planned:
 
     @property
     def new_mappings(self) -> int:
-        return 0 if self.action in {ACTION_SKIP, ACTION_BLOCKED} else len(self.variant.skus)
+        if self.action in {ACTION_SKIP, ACTION_BLOCKED, ACTION_EXCLUDED}:
+            return 0
+        return len(self.variant.skus)
 
 
 def _safe(text: str) -> str:
@@ -163,6 +223,8 @@ class CatalogueState:
     already_mapped: set[tuple[str, str]]
     #: Rakuten page -> the category its mapping's master carries
     category_by_page: dict[str, int]
+    #: master ids that are retired. Kept out of code matching.
+    archived: set[int]
     #: channel_sku -> master, for Rakuten rows with no variant key. Most of these
     #: hold a SKU管理番号 rather than a page; `links_from_legacy_mappings` sorts
     #: that out using the export.
@@ -179,13 +241,21 @@ async def load_state(session: AsyncSession) -> CatalogueState:
     creating 475.
     """
     rows = await session.execute(
-        select(MasterSku.id, MasterSku.sku_code, MasterSku.category_id).order_by(MasterSku.id)
+        select(
+            MasterSku.id,
+            MasterSku.sku_code,
+            MasterSku.category_id,
+            MasterSku.archived_at,
+        ).order_by(MasterSku.id)
     )
     by_code: dict[str, tuple[int, str]] = {}
     category_of: dict[int, int | None] = {}
-    for master_id, code, category_id in rows.all():
+    archived: set[int] = set()
+    for master_id, code, category_id, archived_at in rows.all():
         by_code[code.strip().lower()] = (master_id, code)
         category_of[master_id] = category_id
+        if archived_at is not None:
+            archived.add(master_id)
 
     mapped = await session.execute(
         select(ChannelSkuMapping.channel_sku, ChannelSkuMapping.channel_variant_key).where(
@@ -225,6 +295,7 @@ async def load_state(session: AsyncSession) -> CatalogueState:
         master_by_code=by_code,
         category_of=category_of,
         already_mapped=existing,
+        archived=archived,
         category_by_page=category_by_page,
         by_channel_sku=by_channel_sku,
     )
@@ -239,19 +310,48 @@ def build_plan(
     already_mapped: set[tuple[str, str]],
     category_by_page: dict[str, int] | None = None,
     legacy: dict[tuple[str, str], int] | None = None,
+    decisions: dict[tuple[str, str], str] | None = None,
+    excluded: set[str] | None = None,
+    archived: set[int] | None = None,
 ) -> list[Planned]:
     """Decide one action per variant, refusing anything ambiguous."""
     assignments = assign_masters(
-        variants, proven=proven, master_by_code=master_by_code, legacy=legacy
+        variants,
+        proven=proven,
+        master_by_code=master_by_code,
+        legacy=legacy,
+        archived=archived,
     )
-    shared = masters_claimed_twice(assignments)
+    assignments, decision_problems = apply_decisions(
+        assignments, decisions=decisions or {}, master_by_code=master_by_code
+    )
+    for problem in decision_problems:
+        print(f"  ★ 判断ファイル: {problem}")
+
+    # Drop the excluded pages BEFORE counting who claims what. An excluded page
+    # is not a claimant: `10060cc` is a duplicate listing of `10060`, and while
+    # it was still counted, `P07gold` looked like it was wanted by two variants,
+    # so neither could take it and BOTH created a master beside the product that
+    # already existed. The exclusion has to apply first for it to mean anything.
+    def is_excluded(assignment: VariantAssignment) -> bool:
+        variant = assignment.variant
+        return bool(excluded) and (
+            variant.group in (excluded or ()) or bool(set(variant.pages) & (excluded or set()))
+        )
+
+    live = [a for a in assignments if not is_excluded(a)]
+    shared = masters_claimed_twice(live)
+    by_group = category_by_group(live, category_of, category_by_page or {})
     codes = [code for _, code in master_by_code.values()]
-    splits = {split.variant: split for split in split_candidates(assignments, master_codes=codes)}
+    splits = {split.variant: split for split in split_candidates(live, master_codes=codes)}
     taken = {code.lower() for code in master_by_code}
 
     planned: list[Planned] = []
     for assignment in assignments:
         variant = assignment.variant
+        if is_excluded(assignment):
+            planned.append(Planned(variant, ACTION_EXCLUDED))
+            continue
         if all((sku.manage_number, sku.variant_id) in already_mapped for sku in variant.skus):
             planned.append(Planned(variant, ACTION_SKIP))
             continue
@@ -291,11 +391,53 @@ def build_plan(
                 # The variant must land in the SAME category as the product it
                 # came from, or a category-filtered count sheet omits it and the
                 # shelf gets counted while the variant does not.
-                category_id=_category_for(assignment, variant, category_of, category_by_page or {}),
+                category_id=_category_for(
+                    assignment, variant, category_of, category_by_page or {}, by_group
+                ),
                 master_code=assignment.master_code,
             )
         )
     return planned
+
+
+def _direct_category(
+    assignment: VariantAssignment,
+    category_of: dict[int, int | None],
+    category_by_page: dict[str, int],
+) -> int | None:
+    """This variant's own category: its master's, else its Rakuten page's."""
+    claimed = category_of.get(assignment.master_id or -1)
+    if claimed is not None:
+        return claimed
+    for page in assignment.variant.pages:
+        found = category_by_page.get(page)
+        if found is not None:
+            return found
+    return None
+
+
+def category_by_group(
+    assignments: list[VariantAssignment],
+    category_of: dict[int, int | None],
+    category_by_page: dict[str, int],
+) -> dict[str, int]:
+    """One category per Rakuten product, where its own variants agree on it.
+
+    A 商品管理番号 is one product, so its sizes and colours belong in the same
+    place. Where the variants that DO resolve agree, the ones that do not can
+    inherit from their siblings — `073 gold / 20cm` belongs wherever
+    `073 gold / 19cm` does.
+
+    Where they disagree, nothing is inherited. Guessing would put a product on
+    the wrong count sheet, and a variant missing from the sheet it should be on
+    is the failure this whole exercise exists to prevent.
+    """
+    seen: dict[str, set[int]] = {}
+    for assignment in assignments:
+        found = _direct_category(assignment, category_of, category_by_page)
+        if found is not None:
+            seen.setdefault(assignment.variant.group, set()).add(found)
+    return {group: next(iter(cats)) for group, cats in seen.items() if len(cats) == 1}
 
 
 def _category_for(
@@ -303,21 +445,19 @@ def _category_for(
     variant: PhysicalVariant,
     category_of: dict[int, int | None],
     category_by_page: dict[str, int],
+    by_group: dict[str, int] | None = None,
 ) -> int | None:
-    """The claimed master's category, else the one its Rakuten page already has.
+    """Three steps: this variant's master, its page, then its siblings.
 
-    The page fallback carries most of the weight: a variant no sale has placed
-    has no claimed master, and without it 461 of 475 new masters came out 未分類
-    against a catalogue that is otherwise 99% classified.
+    The page step carries most of the weight — a variant no sale has placed has
+    no claimed master, and without it 461 of 475 new masters came out 未分類
+    against a catalogue that is otherwise 99% classified. The sibling step picks
+    up the remainder, where a product's other sizes resolved and this one did not.
     """
-    claimed = category_of.get(assignment.master_id or -1)
-    if claimed is not None:
-        return claimed
-    for page in variant.pages:
-        found = category_by_page.get(page)
-        if found is not None:
-            return found
-    return None
+    direct = _direct_category(assignment, category_of, category_by_page)
+    if direct is not None:
+        return direct
+    return (by_group or {}).get(variant.group)
 
 
 def _blocked_reason(
@@ -361,7 +501,7 @@ def print_plan(planned: list[Planned], variants: int) -> None:
 
     print("\n  === 楽天SKU単位の商品作成 — 計画 ===")
     print(f"\n  物理バリアント {variants}件")
-    for action in (ACTION_SKIP, ACTION_MAP, ACTION_CREATE, ACTION_BLOCKED):
+    for action in (ACTION_SKIP, ACTION_MAP, ACTION_CREATE, ACTION_EXCLUDED, ACTION_BLOCKED):
         group = by_action.get(action, [])
         mappings = sum(item.new_mappings for item in group)
         extra = f" / 対応づけ {mappings}件" if mappings else ""
@@ -372,6 +512,10 @@ def print_plan(planned: list[Planned], variants: int) -> None:
     if uncategorised:
         print(f"\n  ★ カテゴリが決まらない商品 {len(uncategorised)}件")
         print("     棚卸のカテゴリ別集計表に出ないため、作成後に分類してください")
+        # Named, not just counted: these are the only ones a person still has to
+        # decide, and a count alone leaves them to go hunting for which.
+        for item in uncategorised:
+            print(f"       {item.sku_code:<28}{item.name[:46]}")
 
     for action in (ACTION_CREATE, ACTION_MAP, ACTION_BLOCKED):
         group = by_action.get(action, [])
@@ -431,7 +575,15 @@ async def apply_plan(session: AsyncSession, planned: list[Planned]) -> tuple[int
     return masters, mappings
 
 
-async def run(*, csv_path: Path, pairs_path: Path, apply_changes: bool) -> int:
+async def run(
+    *,
+    csv_path: Path,
+    pairs_path: Path,
+    decisions_path: Path,
+    excluded_path: Path,
+    out_dir: Path | None,
+    apply_changes: bool,
+) -> int:
     skus, problems = read_catalogue(csv_path)
     pairs, pair_problems = read_pair_table(pairs_path)
     if not skus or not pairs:
@@ -440,6 +592,11 @@ async def run(*, csv_path: Path, pairs_path: Path, apply_changes: bool) -> int:
         return 1
 
     variants = group_variants(skus, pairs)
+    decisions, decision_problems = read_conflict_decisions(decisions_path)
+    excluded, exclude_problems = read_excluded_pages(excluded_path)
+    decision_problems += exclude_problems
+    for problem in decision_problems:
+        print(f"  ★ 判断ファイル: {problem}")
     async with async_session_factory() as session:
         proven = await links_from_orders(session)
         state = await load_state(session)
@@ -451,8 +608,14 @@ async def run(*, csv_path: Path, pairs_path: Path, apply_changes: bool) -> int:
             already_mapped=state.already_mapped,
             category_by_page=state.category_by_page,
             legacy=links_from_legacy_mappings(skus, state.by_channel_sku),
+            decisions=decisions,
+            excluded=excluded,
+            archived=state.archived,
         )
         print_plan(planned, len(variants))
+
+        if out_dir is not None:
+            print(f"\n  計画の全件 -> {write_plan(out_dir, planned)}")
 
         if not apply_changes:
             print("\n  ※ 作成していません (--apply で実行)")
@@ -487,6 +650,17 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Create SKU-level masters for the Rakuten catalogue")
     p.add_argument("--csv", required=True, help="dl-normal-item CSV exported from RMS")
     p.add_argument("--pairs", default=str(DEFAULT_PAIRS), help="client's page pair table")
+    p.add_argument(
+        "--decisions",
+        default=str(DEFAULT_DECISIONS),
+        help="reviewed decisions settling ambiguous variants",
+    )
+    p.add_argument(
+        "--excluded",
+        default=str(DEFAULT_EXCLUDED),
+        help="商品管理番号 that must not become products of ours",
+    )
+    p.add_argument("--out", default=None, help="directory to write the full plan CSV into")
     p.add_argument("--apply", action="store_true", help="actually create (default: plan only)")
     args = p.parse_args()
     configure_logging("INFO")
@@ -495,6 +669,9 @@ def main() -> None:
             run(
                 csv_path=Path(args.csv),
                 pairs_path=Path(args.pairs),
+                decisions_path=Path(args.decisions),
+                excluded_path=Path(args.excluded),
+                out_dir=Path(args.out) if args.out else None,
                 apply_changes=args.apply,
             )
         )

@@ -41,6 +41,7 @@ from app.services.rakuten_catalogue import (
     PhysicalVariant,
     Split,
     VariantAssignment,
+    apply_decisions,
     assign_masters,
     codeish_collisions,
     group_variants,
@@ -48,6 +49,7 @@ from app.services.rakuten_catalogue import (
     links_from_orders,
     masters_claimed_twice,
     read_catalogue,
+    read_conflict_decisions,
     read_pair_table,
     split_candidates,
 )
@@ -55,6 +57,7 @@ from app.services.rakuten_catalogue import (
 log = get_logger(__name__)
 
 DEFAULT_PAIRS = Path("csv_file/phase2/source/楽天ペア対応表-表1.csv")
+DEFAULT_DECISIONS = Path("csv_file/phase2/source/rakuten_conflict_decisions.csv")
 
 CSV_HEADER = [
     "物理バリアント",
@@ -117,13 +120,14 @@ def variant_rows(
 
 async def load_masters(
     session: AsyncSession,
-) -> tuple[dict[str, tuple[int, str]], dict[int, int], dict[str, int]]:
-    master_by_code = {
-        code.strip().lower(): (master_id, code)
-        for master_id, code in (
-            await session.execute(select(MasterSku.id, MasterSku.sku_code).order_by(MasterSku.id))
-        ).all()
-    }
+) -> tuple[dict[str, tuple[int, str]], dict[int, int], dict[str, int], dict[int, str]]:
+    master_rows = (
+        await session.execute(
+            select(MasterSku.id, MasterSku.sku_code, MasterSku.name).order_by(MasterSku.id)
+        )
+    ).all()
+    master_by_code = {code.strip().lower(): (mid, code) for mid, code, _ in master_rows}
+    names = {mid: name for mid, _, name in master_rows}
     snapshots = await session.execute(
         select(InventorySnapshot.master_sku_id, InventorySnapshot.on_hand_qty)
     )
@@ -137,7 +141,12 @@ async def load_masters(
         .order_by(ChannelSkuMapping.master_sku_id)
     )
     by_channel_sku: dict[str, int] = dict(legacy_rows.all())  # type: ignore[arg-type]
-    return master_by_code, dict(snapshots.all()), by_channel_sku  # type: ignore[arg-type]
+    return (
+        master_by_code,
+        dict(snapshots.all()),  # type: ignore[arg-type]
+        by_channel_sku,
+        names,
+    )
 
 
 def print_grouping(
@@ -173,6 +182,41 @@ def print_grouping_integrity(variants: list[PhysicalVariant]) -> None:
         print(f"       {variant.group:<10}{variant.label:<22}{pages}")
 
 
+def print_conflicts(
+    conflicts: list[VariantAssignment],
+    names: dict[int, str],
+    codes: dict[int, str],
+    on_hand: dict[int, int],
+) -> None:
+    """A conflict is the one thing here nobody should resolve by rule.
+
+    It means the SKUs of one physical variant point at different products, which
+    for this shop is the reused SKU管理番号: 118 of them are shared across pages,
+    and some of those pages sell unrelated things. `066 gold / us5` naming both
+    an anklet and a ring is not a near-miss to be broken by preferring one
+    source — it is two products that need telling apart by someone who can see
+    them. So this prints what judging needs: both live pages with their own
+    stock, and each candidate product's name and our stock for it.
+    """
+    print("\n  3-1. 矛盾の内訳 — どちらが正しいか商品名で判断してください")
+    for assignment in conflicts:
+        variant = assignment.variant
+        print(f"\n     {variant.group} / {variant.label}")
+        for sku in sorted(variant.skus, key=lambda s: s.manage_number):
+            side = "メンズ" if sku.manage_number == variant.group else "レディース"
+            print(
+                f"       {side:<7}{sku.manage_number:<10}SKU {sku.variant_id:<12}"
+                f"楽天在庫 {sku.quantity}"
+            )
+        for master_id in assignment.conflicting:
+            stock = on_hand.get(master_id)
+            shown = "—" if stock is None else str(stock)
+            print(
+                f"       候補 {codes.get(master_id, f'#{master_id}'):<20}"
+                f"当方在庫 {shown:<6}{names.get(master_id, '')[:42]}"
+            )
+
+
 def print_assignments(assignments: list[VariantAssignment]) -> None:
     resolved = [a for a in assignments if a.resolved]
     conflicts = [a for a in assignments if a.conflicting]
@@ -197,12 +241,6 @@ def print_assignments(assignments: list[VariantAssignment]) -> None:
     print(f"\n  3. 対応づけの矛盾 {len(conflicts)}件")
     if not conflicts:
         print("     ありません")
-    else:
-        print("     同じ物理バリアントのSKUが、別々の商品に紐づいています")
-        for assignment in conflicts[:MAX_ROWS]:
-            variant = assignment.variant
-            pages = ", ".join(f"{s.manage_number}/{s.variant_id}" for s in variant.skus)
-            print(f"       {variant.group:<10}{variant.label:<22}{pages}")
 
 
 def print_double_claims(assignments: list[VariantAssignment]) -> None:
@@ -294,7 +332,9 @@ def write_proposal(
     return path
 
 
-async def run(*, csv_path: Path, pairs_path: Path, out_dir: Path | None) -> int:
+async def run(
+    *, csv_path: Path, pairs_path: Path, decisions_path: Path, out_dir: Path | None
+) -> int:
     skus, problems = read_catalogue(csv_path)
     pairs, pair_problems = read_pair_table(pairs_path)
     if not skus:
@@ -309,19 +349,33 @@ async def run(*, csv_path: Path, pairs_path: Path, out_dir: Path | None) -> int:
     variants = group_variants(skus, pairs)
     async with async_session_factory() as session:
         proven = await links_from_orders(session)
-        master_by_code, on_hand, by_channel_sku = await load_masters(session)
+        master_by_code, on_hand, by_channel_sku, names = await load_masters(session)
     assignments = assign_masters(
         variants,
         proven=proven,
         master_by_code=master_by_code,
         legacy=links_from_legacy_mappings(skus, by_channel_sku),
     )
+    decisions, decision_problems = read_conflict_decisions(decisions_path)
+    assignments, applied_problems = apply_decisions(
+        assignments, decisions=decisions, master_by_code=master_by_code
+    )
+    for problem in decision_problems + applied_problems:
+        print(f"  ★ 判断ファイル: {problem}")
 
     master_codes = [c for _, c in master_by_code.values()]
     splits = split_candidates(assignments, master_codes=master_codes)
 
     print_grouping(variants, len(skus), len(pairs), problems + pair_problems)
     print_assignments(assignments)
+    conflicts = [a for a in assignments if a.conflicting]
+    if conflicts:
+        print_conflicts(
+            conflicts,
+            names,
+            dict(master_by_code.values()),
+            on_hand,
+        )
     print_double_claims(assignments)
     print_splits(splits, codeish_collisions(master_codes))
     print_stock(assignments, on_hand)
@@ -347,6 +401,11 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Read-only proposal for the Rakuten SKU mapping")
     p.add_argument("--csv", required=True, help="dl-normal-item CSV exported from RMS")
     p.add_argument("--pairs", default=str(DEFAULT_PAIRS), help="client's page pair table")
+    p.add_argument(
+        "--decisions",
+        default=str(DEFAULT_DECISIONS),
+        help="reviewed decisions settling ambiguous variants",
+    )
     p.add_argument("--out", default=None, help="directory to write the proposal CSV into")
     args = p.parse_args()
     configure_logging("INFO")
@@ -355,6 +414,7 @@ def main() -> None:
             run(
                 csv_path=Path(args.csv),
                 pairs_path=Path(args.pairs),
+                decisions_path=Path(args.decisions),
                 out_dir=Path(args.out) if args.out else None,
             )
         )

@@ -12,6 +12,7 @@ import pytest
 from app.cli.create_rakuten_variant_masters import (
     ACTION_BLOCKED,
     ACTION_CREATE,
+    ACTION_EXCLUDED,
     ACTION_MAP,
     ACTION_SKIP,
     SKU_CODE_MAX,
@@ -31,7 +32,15 @@ def sku(manage: str, variant: str, *choices: str, name: str = "リング") -> Ra
 
 
 def plan_for(
-    skus, *, proven=None, masters=None, categories=None, mapped=None, pairs=PAIR, pages=None
+    skus,
+    *,
+    proven=None,
+    masters=None,
+    categories=None,
+    mapped=None,
+    pairs=PAIR,
+    pages=None,
+    excluded=None,
 ):
     return build_plan(
         group_variants(skus, pairs),
@@ -40,6 +49,7 @@ def plan_for(
         category_of=categories or {},
         already_mapped=mapped or set(),
         category_by_page=pages or {},
+        excluded=excluded or set(),
     )
 
 
@@ -249,3 +259,75 @@ def test_a_variant_with_no_category_anywhere_is_still_created_and_reported() -> 
     planned = plan_for([sku("073", "1435", "gold", "19cm")], pairs=[])
     assert planned[0].action == ACTION_CREATE
     assert planned[0].category_id is None
+
+
+def test_a_variant_inherits_the_category_its_siblings_agree_on() -> None:
+    """A 商品管理番号 is one product, so its sizes belong in the same place. Where
+    one size resolved to a categorised master and another resolved to nothing,
+    the second should land beside the first rather than 未分類."""
+    planned = plan_for(
+        [
+            sku("073", "1435", "gold", "19cm"),
+            sku("073", "1436", "gold", "20cm"),
+            sku("073", "1437", "gold", "22cm"),
+        ],
+        proven={("073", "1435"): 7},
+        masters={"b07": (7, "B07")},
+        categories={7: 42},
+        pairs=[],
+    )
+
+    created = [item for item in planned if item.action == ACTION_CREATE]
+    assert {item.category_id for item in created} == {42}
+
+
+def test_siblings_disagreeing_about_the_category_teach_nothing() -> None:
+    """Guessing here puts a product on the wrong count sheet, and a variant
+    missing from the sheet it belongs on is the failure this exists to stop."""
+    planned = plan_for(
+        [
+            sku("073", "1435", "gold", "19cm"),
+            sku("073", "1436", "gold", "20cm"),
+            sku("073", "1437", "gold", "22cm"),
+        ],
+        proven={("073", "1435"): 7, ("073", "1436"): 8},
+        masters={"b07": (7, "B07"), "b08": (8, "B08")},
+        categories={7: 42, 8: 99},
+        pairs=[],
+    )
+
+    uncategorised = [
+        item for item in planned if item.action == ACTION_CREATE and item.category_id is None
+    ]
+    assert uncategorised
+
+
+def test_the_group_category_is_only_taken_when_nothing_closer_exists() -> None:
+    """A variant's own master still wins over what its siblings suggest."""
+    planned = plan_for(
+        [sku("073", "1435", "gold", "19cm"), sku("073", "1436", "gold", "20cm")],
+        proven={("073", "1435"): 7, ("073", "1436"): 7},
+        masters={"073c": (7, "073c")},
+        categories={7: 42},
+        pairs=[],
+    )
+    assert {item.category_id for item in planned} == {42}
+
+
+def test_an_excluded_page_does_not_block_its_twin_from_taking_the_master() -> None:
+    """`10060cc` is a duplicate listing of `10060`. While it still counted as a
+    claimant, `P07gold` looked wanted by two variants, so neither could take it
+    and BOTH created a master beside the product that already existed."""
+    skus = [sku("10060", "p07-gold", "gold"), sku("10060cc", "p07-gold-dup", "gold")]
+    planned = plan_for(
+        skus,
+        proven={("10060", "p07-gold"): 7, ("10060cc", "p07-gold-dup"): 7},
+        masters={"p07gold": (7, "P07gold")},
+        pairs=[],
+        excluded={"10060cc"},
+    )
+
+    by_page = {item.variant.group: item for item in planned}
+    assert by_page["10060cc"].action == ACTION_EXCLUDED
+    assert by_page["10060"].action == ACTION_MAP
+    assert by_page["10060"].master_code == "P07gold"

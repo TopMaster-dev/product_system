@@ -70,3 +70,10 @@ infra/terraform/terraform.tfvars
 **.xlsx
 **.docx
 /csv_file/**.jpg
+
+# ...except these two. They are not shop data: they are OUR reviewed judgements
+# about the Rakuten catalogue, derived from analysis that cost real effort.
+# Losing them on a fresh checkout is silent — the conflicts simply reopen and
+# the excluded pages come back as products, with nothing to say they ever went.
+!/csv_file/phase2/source/rakuten_conflict_decisions.csv
+!/csv_file/phase2/source/rakuten_excluded_pages.csv

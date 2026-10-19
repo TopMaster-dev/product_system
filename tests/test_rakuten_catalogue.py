@@ -15,19 +15,25 @@ from pathlib import Path
 import pytest
 
 from app.services.rakuten_catalogue import (
+    VIA_DECIDED,
     VIA_MAPPING,
     VIA_MERCHANT,
     VIA_ORDERS,
+    VIA_VARIANT,
     PagePair,
     RakutenSku,
     VariantAssignment,
+    apply_decisions,
     assign_masters,
     codeish_collisions,
+    codeish_index,
     group_variants,
     links_from_legacy_mappings,
     masters_claimed_twice,
     normalise_choice,
     read_catalogue,
+    read_conflict_decisions,
+    read_excluded_pages,
     read_pair_table,
     split_candidates,
 )
@@ -550,3 +556,178 @@ def test_the_code_routes_still_run_when_no_mapping_exists() -> None:
         legacy={},
     )
     assert assigned[0].via == VIA_MERCHANT
+
+
+# --- 人が判断した矛盾の解消 --------------------------------------------------
+
+
+def conflicted() -> list[VariantAssignment]:
+    """066 gold/us5 resolving to both a ring and an anklet — the real case."""
+    variants = group_variants(
+        [sku("066", "r-sku00000004", "gold", "us5"), sku("066c", "915", "gold", "us5")],
+        [PagePair("066", "066c")],
+    )
+    return assign_masters(
+        variants,
+        proven={},
+        master_by_code={},
+        legacy={("066", "r-sku00000004"): 7, ("066c", "915"): 9},
+    )
+
+
+MASTERS = {"r34goldus5": (7, "R34goldus5"), "b45silveranklet": (9, "B45silveranklet")}
+
+
+def test_a_reviewed_decision_settles_the_conflict() -> None:
+    settled, problems = apply_decisions(
+        conflicted(),
+        decisions={("066", "gold / us5"): "R34goldus5"},
+        master_by_code=MASTERS,
+    )
+
+    assert settled[0].resolved
+    assert settled[0].master_code == "R34goldus5"
+    assert settled[0].via == VIA_DECIDED
+    assert problems == []
+
+
+def test_a_decision_naming_a_product_that_was_never_a_candidate_is_refused() -> None:
+    """The guard that makes a stale file harmless. If the catalogue moves on,
+    an old decision must not quietly map a variant to an unrelated product."""
+    settled, problems = apply_decisions(
+        conflicted(),
+        decisions={("066", "gold / us5"): "N30gold"},
+        master_by_code={**MASTERS, "n30gold": (99, "N30gold")},
+    )
+
+    assert not settled[0].resolved
+    assert settled[0].conflicting == (7, 9)
+    assert any("候補ではありません" in p for p in problems)
+
+
+def test_a_mistyped_product_code_is_reported_not_ignored() -> None:
+    settled, problems = apply_decisions(
+        conflicted(), decisions={("066", "gold / us5"): "R34goldus55"}, master_by_code=MASTERS
+    )
+
+    assert not settled[0].resolved
+    assert any("見つかりません" in p for p in problems)
+
+
+def test_a_decision_cannot_overrule_a_variant_the_data_agrees_about() -> None:
+    """Only a conflict may be decided. Otherwise the file becomes a back door
+    for overriding mappings nobody flagged."""
+    variants = group_variants([sku("073", "1435", "gold", "19cm")], [])
+    assigned = assign_masters(
+        variants, proven={("073", "1435"): 7}, master_by_code={"b07": (7, "B07")}
+    )
+
+    settled, problems = apply_decisions(
+        assigned,
+        decisions={("073", "19cm / gold"): "B45silveranklet"},
+        master_by_code=MASTERS,
+    )
+
+    assert settled[0].master_id == 7
+    assert any("対応する矛盾がありません" in p for p in problems)
+
+
+def test_a_decision_for_a_variant_that_no_longer_exists_is_reported() -> None:
+    _, problems = apply_decisions(
+        conflicted(), decisions={("999", "gone"): "R34goldus5"}, master_by_code=MASTERS
+    )
+    assert any("999" in p for p in problems)
+
+
+def test_the_real_decision_file_loads_and_covers_the_conflicts() -> None:
+    path = Path("csv_file/phase2/source/rakuten_conflict_decisions.csv")
+    if not path.exists():
+        pytest.skip("the decision file is not in this checkout")
+    decisions, problems = read_conflict_decisions(path)
+
+    assert problems == []
+    assert len(decisions) == 18
+    assert decisions[("066", "gold / us5")] == "R34goldus5"
+    assert decisions[("10033", "gold / アンクレット")] == "B25goldanklet"
+
+
+def test_a_missing_decision_file_is_not_an_error() -> None:
+    """Nothing decided yet is a normal state, not a failure."""
+    decisions, problems = read_conflict_decisions(Path("no/such/file.csv"))
+    assert decisions == {}
+    assert problems == []
+
+
+# --- 記号と大小文字を無視した商品コードの一致 --------------------------------
+
+
+def test_a_punctuated_sku_matches_the_same_code_written_plainly() -> None:
+    """`p07-gold` and `P07gold` are one code written two ways. Comparing them
+    literally is how 10060cc came within one --apply of creating duplicates of
+    P07gold and P07silver, which already existed and were named by the Rakuten
+    SKU itself."""
+    variants = group_variants([sku("10060cc", "p07-gold", "gold")], [])
+    assigned = assign_masters(
+        variants, proven={}, master_by_code={"p07gold": (7, "P07gold")}, legacy={}
+    )
+
+    assert assigned[0].master_id == 7
+    assert assigned[0].via == VIA_VARIANT
+
+
+def test_the_merchant_code_matches_the_same_way() -> None:
+    variants = group_variants([sku("0016", "1392", "gold", merchant="0016-gold-US7")], [])
+    assigned = assign_masters(
+        variants, proven={}, master_by_code={"0016goldus7": (3, "0016goldus7")}, legacy={}
+    )
+    assert assigned[0].master_id == 3
+    assert assigned[0].via == VIA_MERCHANT
+
+
+def test_two_masters_reducing_to_one_token_match_nothing() -> None:
+    """If `B43-gold-M` and `B43goldM` both exist, neither identifies a product,
+    so the SKU must match neither rather than whichever was indexed last."""
+    index = codeish_index({"b43-gold-m": (7, "B43-gold-M"), "b43goldm": (9, "B43goldM")})
+    assert index == {}
+
+    variants = group_variants([sku("073", "b43goldm", "gold")], [])
+    assigned = assign_masters(
+        variants,
+        proven={},
+        master_by_code={"b43-gold-m": (7, "B43-gold-M"), "b43goldm": (9, "B43goldM")},
+        legacy={},
+    )
+    assert assigned[0].master_id is None
+
+
+# --- 在庫ではないページの除外 ------------------------------------------------
+
+
+def test_the_real_exclusion_file_loads() -> None:
+    path = Path("csv_file/phase2/source/rakuten_excluded_pages.csv")
+    if not path.exists():
+        pytest.skip("the exclusion file is not in this checkout")
+    pages, problems = read_excluded_pages(path)
+    assert problems == []
+    assert "gift-set" in pages
+
+
+def test_a_missing_exclusion_file_excludes_nothing() -> None:
+    pages, problems = read_excluded_pages(Path("no/such/file.csv"))
+    assert pages == set()
+    assert problems == []
+
+
+def test_a_retired_product_does_not_take_a_live_sku() -> None:
+    """`N79` is archived with no stock; `N79-` is live with 281 units — one
+    product entered twice. Dropping both as a collision cost the live one its
+    match, so the retired row is left out of the index instead."""
+    masters = {"n79": (306, "N79"), "n79-": (2533, "N79-")}
+    assert codeish_index(masters) == {}
+    assert codeish_index(masters, archived={306}) == {"n79": (2533, "N79-")}
+
+    variants = group_variants([sku("10150", "n79", "gold")], [])
+    assigned = assign_masters(
+        variants, proven={}, master_by_code=masters, legacy={}, archived={306}
+    )
+    assert assigned[0].master_id == 2533

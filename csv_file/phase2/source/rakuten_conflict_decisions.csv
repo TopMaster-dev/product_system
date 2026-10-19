@@ -1,0 +1,19 @@
+商品管理番号,選択肢,採用する商品コード,判断の根拠
+066,gold / us5,R34goldus5,色とリングサイズが一致。対立候補 B45silveranklet はアンクレットで色も違う
+066,gold / us7,R34goldus7,色とリングサイズが一致。対立候補 R47silverus7 は色が違う
+066,gold / us9,R34goldus9,色とリングサイズが一致。対立候補 R47silverus9 は色が違う
+066,goldsilver / us5,R34goldsilverus5,色とリングサイズが一致。対立候補 B45goldbracelet はブレスレット
+066,goldsilver / us7,R34goldsilverus7,色とリングサイズが一致。対立候補 B45goldanklet はアンクレット
+066,goldsilver / us9,R34goldsilverus9,色とリングサイズが一致。対立候補 B45silverbracelet はブレスレット
+070,gold,N30gold,対立候補 B34gold22cm は 073 のSKU管理番号 1437 の使い回しによる誤結合
+070,silver,N30silver,対立候補 B34silver19cm は 073 側の商品。当方在庫 -151 も異常
+071,gold,N41gold,対立候補 B34gold19cm は 073 側の商品。SKU管理番号 1435 は 073 と共用
+071,silver,N41silver,対立候補 B34gold20cm は色が違う（silver のバリアントに gold の候補）
+10033,gold / アンクレット,B25goldanklet,選択肢が「アンクレット」。対立候補 B25goldbracelet はブレスレット
+10033,silver / アンクレット,B25silveranklet,選択肢が「アンクレット」。対立候補 B25silverbracelet はブレスレット
+10070,gold,B39gold,対立候補 B34silver20cm は色が違ううえ当方在庫 -483 で異常
+10070,silver,B39silver,対立候補 B34silver22cm は 073 側の商品。当方在庫 -384 も異常
+10094,gold,N73-gold,楽天のSKU管理番号が N73gold。対立候補 B47goldbraceret は在庫行なし
+10094,silver,N73-silver,楽天のSKU管理番号が N73silver。対立候補 B47silverbraceret は在庫行なし
+10095,gold,B48gold,楽天のSKU管理番号が gold-B48。対立候補 B47goldbraceret は在庫行なし
+10095,silver,B48silver,楽天のSKU管理番号が silver-B48。対立候補 B47silverbraceret は在庫行なし

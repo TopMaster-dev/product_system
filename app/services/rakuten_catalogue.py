@@ -370,6 +370,7 @@ async def links_from_orders(session: AsyncSession) -> dict[tuple[str, str], int]
 
 VIA_ORDERS = "受注実績"
 VIA_MAPPING = "既存のSKU単位マッピング"
+VIA_DECIDED = "確認済みの判断"
 VIA_MERCHANT = "システム連携用SKU番号"
 VIA_VARIANT = "SKU管理番号"
 
@@ -440,6 +441,7 @@ def assign_masters(
     proven: dict[tuple[str, str], int],
     master_by_code: dict[str, tuple[int, str]],
     legacy: dict[tuple[str, str], int] | None = None,
+    archived: set[int] | None = None,
 ) -> list[VariantAssignment]:
     """The existing per-SKU mapping first, then sales history, then SKU codes.
 
@@ -469,6 +471,7 @@ def assign_masters(
     Matching on codes is last because it is inference from spelling.
     """
     sources = ((legacy or {}, VIA_MAPPING), (proven, VIA_ORDERS))
+    by_codeish = codeish_index(master_by_code, archived)
     out: list[VariantAssignment] = []
     for variant in variants:
         answer = None
@@ -483,12 +486,13 @@ def assign_masters(
         found: tuple[int, str] | None = None
         via = ""
         for sku in variant.skus:
-            merchant = sku.merchant_sku_id.strip().lower()
-            if merchant and merchant in master_by_code:
-                found, via = master_by_code[merchant], VIA_MERCHANT
+            merchant = _codeish(sku.merchant_sku_id)
+            if merchant and merchant in by_codeish:
+                found, via = by_codeish[merchant], VIA_MERCHANT
                 break
-            if sku.variant_id.strip().lower() in master_by_code:
-                found, via = master_by_code[sku.variant_id.strip().lower()], VIA_VARIANT
+            variant_code = _codeish(sku.variant_id)
+            if variant_code and variant_code in by_codeish:
+                found, via = by_codeish[variant_code], VIA_VARIANT
                 break
         if found is not None:
             out.append(VariantAssignment(variant, found[0], found[1], via))
@@ -556,6 +560,36 @@ class Split:
         return "商品の新規作成が必要" if not self.candidates else "候補が複数 — 要確認"
 
 
+def codeish_index(
+    master_by_code: dict[str, tuple[int, str]], archived: set[int] | None = None
+) -> dict[str, tuple[int, str]]:
+    """Master codes indexed without case or punctuation.
+
+    `p07-gold` and `P07gold` are one code written two ways, and comparing them
+    literally is how `10060cc` came within one `--apply` of creating duplicates
+    of `P07gold` and `P07silver` — products that already existed, were
+    stock-managed, and were named by the Rakuten SKU itself.
+
+    Codes that collide under this reading are dropped rather than picked
+    between: if two real masters reduce to one token, neither identifies a
+    product. `codeish_collisions` reports them.
+
+    Archived masters are left out. A retired product should not take a live
+    Rakuten SKU, and measured 2026-10-19 nothing depends on it doing so: zero
+    active Rakuten mappings point at an archived master. It also resolves the
+    one real collision in the catalogue — `N79` (archived, no stock) against
+    `N79-` (live, 281 units), which is one product entered twice. Without this
+    both were dropped and the live one lost its match.
+    """
+    retired = archived or set()
+    groups: dict[str, set[tuple[int, str]]] = {}
+    for master_id, code in master_by_code.values():
+        key = _codeish(code)
+        if key and master_id not in retired:
+            groups.setdefault(key, set()).add((master_id, code))
+    return {key: next(iter(found)) for key, found in groups.items() if len(found) == 1}
+
+
 def codeish_collisions(master_codes: list[str]) -> dict[str, list[str]]:
     """Master codes that reduce to the same comparable form.
 
@@ -615,3 +649,133 @@ def split_candidates(
             )
             splits.append(Split(assignment.variant, claimed, matches))
     return splits
+
+
+# --- 人が判断した矛盾の解消 ------------------------------------------------------------
+
+#: Columns of the reviewed decision file.
+DECISION_COL_GROUP = "商品管理番号"
+DECISION_COL_LABEL = "選択肢"
+DECISION_COL_CODE = "採用する商品コード"
+
+
+def read_conflict_decisions(path: Path) -> tuple[dict[tuple[str, str], str], list[str]]:
+    """(商品管理番号, 選択肢) -> the master code a person chose.
+
+    A conflict means one physical variant's SKUs point at different products,
+    which for this shop is a reused SKU管理番号 spanning unrelated things — an
+    anklet and a ring under one number. No rule settles that; somebody has to
+    look at the two products. This file is where those judgements live, as data
+    that can be re-read, corrected and argued with rather than as code.
+
+    Missing file is not an error: it means nothing has been decided yet.
+    """
+    if not path.exists():
+        return {}, []
+    text = _decode(path)
+    if text is None:
+        return {}, ["判断ファイルの文字コードを判別できませんでした"]
+    rows = list(csv.reader(text.splitlines()))
+    if not rows:
+        return {}, []
+    header = [cell.strip().lstrip("﻿") for cell in rows[0]]
+    required = (DECISION_COL_GROUP, DECISION_COL_LABEL, DECISION_COL_CODE)
+    if any(column not in header for column in required):
+        return {}, [f"判断ファイルに必要な列がありません: {', '.join(required)}"]
+    index = {name: header.index(name) for name in required}
+
+    decisions: dict[tuple[str, str], str] = {}
+    problems: list[str] = []
+    for line, row in enumerate(rows[1:], start=2):
+        if len(row) <= max(index.values()):
+            continue
+        group = row[index[DECISION_COL_GROUP]].strip()
+        label = row[index[DECISION_COL_LABEL]].strip()
+        code = row[index[DECISION_COL_CODE]].strip()
+        if not (group and label and code):
+            continue
+        key = (group, label)
+        if key in decisions and decisions[key] != code:
+            problems.append(f"{line}行目: {group} / {label} の判断が重複しています")
+            continue
+        decisions[key] = code
+    return decisions, problems
+
+
+def apply_decisions(
+    assignments: list[VariantAssignment],
+    *,
+    decisions: dict[tuple[str, str], str],
+    master_by_code: dict[str, tuple[int, str]],
+) -> tuple[list[VariantAssignment], list[str]]:
+    """Settle conflicts a person has already judged, and nothing else.
+
+    Two restrictions make a stale or mistyped file harmless rather than
+    dangerous:
+
+    * only a CONFLICTED variant is touched, so a decision cannot overrule a
+      mapping the data agrees about;
+    * the chosen code must be one of the candidates the data actually offered.
+      A typo, or a decision left behind after the catalogue moved on, therefore
+      cannot invent a mapping — it is reported and the conflict stands.
+    """
+    settled: list[VariantAssignment] = []
+    problems: list[str] = []
+    for assignment in assignments:
+        key = (assignment.variant.group, assignment.variant.label)
+        code = decisions.get(key)
+        if code is None or not assignment.conflicting:
+            settled.append(assignment)
+            continue
+        found = master_by_code.get(code.strip().lower())
+        if found is None:
+            problems.append(f"{key[0]} / {key[1]}: 商品コード {code} が見つかりません")
+            settled.append(assignment)
+            continue
+        if found[0] not in assignment.conflicting:
+            problems.append(
+                f"{key[0]} / {key[1]}: {code} は候補ではありません "
+                f"(候補: {', '.join(str(m) for m in assignment.conflicting)})"
+            )
+            settled.append(assignment)
+            continue
+        settled.append(VariantAssignment(assignment.variant, found[0], found[1], VIA_DECIDED))
+    unused = sorted(
+        key
+        for key in decisions
+        if not any((a.variant.group, a.variant.label) == key and a.conflicting for a in assignments)
+    )
+    problems.extend(f"{group} / {label}: 対応する矛盾がありません" for group, label in unused)
+    return settled, problems
+
+
+#: Columns of the reviewed exclusion file.
+EXCLUDE_COL_PAGE = "商品管理番号"
+
+
+def read_excluded_pages(path: Path) -> tuple[set[str], list[str]]:
+    """商品管理番号 that must not become products of ours.
+
+    Not everything a shop lists is stock. `gift-set` is a gift box: it carries a
+    quantity, so every automated route treats it as merchandise, and this
+    project already has a -12,509 discrepancy from an item of exactly that shape
+    being stock-managed when it should not have been. No rule distinguishes a
+    gift box from a bracelet — the quantity, the page and the SKU all look
+    identical — so the judgement is recorded here instead of inferred.
+
+    Missing file means nothing is excluded.
+    """
+    if not path.exists():
+        return set(), []
+    text = _decode(path)
+    if text is None:
+        return set(), ["除外ファイルの文字コードを判別できませんでした"]
+    rows = list(csv.reader(text.splitlines()))
+    if not rows:
+        return set(), []
+    header = [cell.strip().lstrip("﻿") for cell in rows[0]]
+    if EXCLUDE_COL_PAGE not in header:
+        return set(), [f"除外ファイルに {EXCLUDE_COL_PAGE} の列がありません"]
+    column = header.index(EXCLUDE_COL_PAGE)
+    pages = {row[column].strip() for row in rows[1:] if len(row) > column and row[column].strip()}
+    return pages, []
