@@ -15,12 +15,16 @@ from pathlib import Path
 import pytest
 
 from app.services.rakuten_catalogue import (
+    VIA_MAPPING,
+    VIA_MERCHANT,
+    VIA_ORDERS,
     PagePair,
     RakutenSku,
     VariantAssignment,
     assign_masters,
     codeish_collisions,
     group_variants,
+    links_from_legacy_mappings,
     masters_claimed_twice,
     normalise_choice,
     read_catalogue,
@@ -437,3 +441,112 @@ def test_candidate_selection_does_not_depend_on_master_order() -> None:
         for s in split_candidates(two_variants_on_one_master(), master_codes=list(reversed(codes)))
     ]
     assert first == second
+
+
+# --- 既存のSKU単位マッピングからの対応づけ ------------------------------------
+
+
+def test_a_mapping_filed_under_the_sku_number_is_read_as_a_variant_link() -> None:
+    """480 of 512 active Rakuten mappings hold a SKU管理番号 in `channel_sku`,
+    where the column is meant to hold the 商品管理番号. The export is what
+    supplies the missing page."""
+    skus = [sku("0017", "1467", "gold"), sku("0017c", "1468", "gold")]
+    links = links_from_legacy_mappings(skus, {"1467": 7, "1468": 9})
+
+    assert links == {("0017", "1467"): 7, ("0017c", "1468"): 9}
+
+
+def test_a_value_that_is_also_a_page_code_is_skipped() -> None:
+    """Ten rows carry a value that exists as both. Reading one as a SKU when it
+    was filed as a page attaches a master to the wrong variant, with nothing to
+    contradict it."""
+    skus = [sku("1467", "9001", "gold"), sku("0017", "1467", "gold")]
+    links = links_from_legacy_mappings(skus, {"1467": 7})
+
+    assert links == {}
+
+
+def test_a_reused_sku_number_links_every_page_that_carries_it() -> None:
+    """118 SKU管理番号 are reused across products, so one mapping speaks for
+    several pages — and the disagreement that creates has to surface, not be
+    resolved silently."""
+    skus = [sku("066", "1467", "gold"), sku("099", "1467", "silver")]
+    links = links_from_legacy_mappings(skus, {"1467": 7})
+
+    assert links == {("066", "1467"): 7, ("099", "1467"): 7}
+
+
+def test_the_existing_mapping_answers_where_no_sale_has() -> None:
+    variants = group_variants([sku("0017", "1467", "gold")], [])
+    assigned = assign_masters(
+        variants,
+        proven={},
+        master_by_code={"b08gold": (7, "B08gold")},
+        legacy={("0017", "1467"): 7},
+    )
+
+    assert assigned[0].master_id == 7
+    assert assigned[0].master_code == "B08gold"
+    assert assigned[0].via == VIA_MAPPING
+
+
+def test_the_per_sku_mapping_outranks_sales_history() -> None:
+    """The counterintuitive one, and it is measured rather than assumed.
+
+    `links_from_orders` reads what the resolver wrote at ingest time, using
+    whatever mapping existed then — and Rakuten ingest keys on the PAGE. So a
+    "sale" reports the page-level master for every size of a product. Measured
+    over production on 2026-10-19 the two sources agreed 0 times and disagreed
+    183 times, every disagreement being a page-coded master against a
+    variant-level one.
+    """
+    variants = group_variants([sku("0017", "1467", "gold")], [])
+    assigned = assign_masters(
+        variants,
+        proven={("0017", "1467"): 3},
+        master_by_code={},
+        legacy={("0017", "1467"): 7},
+    )
+
+    assert assigned[0].master_id == 7
+    assert assigned[0].via == VIA_MAPPING
+
+
+def test_sales_history_still_answers_where_no_mapping_does() -> None:
+    """24 variants are reachable only this way; dropping the route entirely
+    would lose them."""
+    variants = group_variants([sku("0017", "1467", "gold")], [])
+    assigned = assign_masters(variants, proven={("0017", "1467"): 3}, master_by_code={}, legacy={})
+
+    assert assigned[0].master_id == 3
+    assert assigned[0].via == VIA_ORDERS
+
+
+def test_mappings_disagreeing_within_one_variant_is_a_conflict_not_a_guess() -> None:
+    """066 gold/us5 resolves to both an anklet master and a ring master, because
+    the SKU管理番号 is reused across unrelated products."""
+    variants = group_variants(
+        [sku("066", "1467", "gold", "us5"), sku("066c", "1468", "gold", "us5")],
+        [PagePair("066", "066c")],
+    )
+    assigned = assign_masters(
+        variants,
+        proven={},
+        master_by_code={},
+        legacy={("066", "1467"): 7, ("066c", "1468"): 9},
+    )
+
+    assert not assigned[0].resolved
+    assert assigned[0].conflicting == (7, 9)
+    assert assigned[0].via == VIA_MAPPING
+
+
+def test_the_code_routes_still_run_when_no_mapping_exists() -> None:
+    variants = group_variants([sku("0016", "1392", "gold", merchant="0016goldus7")], [])
+    assigned = assign_masters(
+        variants,
+        proven={},
+        master_by_code={"0016goldus7": (3, "0016goldus7")},
+        legacy={},
+    )
+    assert assigned[0].via == VIA_MERCHANT

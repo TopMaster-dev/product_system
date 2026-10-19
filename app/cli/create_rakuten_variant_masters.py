@@ -61,6 +61,7 @@ from app.services.rakuten_catalogue import (
     VariantAssignment,
     assign_masters,
     group_variants,
+    links_from_legacy_mappings,
     links_from_orders,
     masters_claimed_twice,
     read_catalogue,
@@ -150,10 +151,33 @@ def _too_long_for_rakuten(variant: PhysicalVariant) -> str:
     return ""
 
 
-async def load_state(
-    session: AsyncSession,
-) -> tuple[dict[str, tuple[int, str]], dict[int, int | None], set[tuple[str, str]]]:
-    """Master codes, each master's category, and the pairs already mapped."""
+@dataclass(frozen=True, slots=True)
+class CatalogueState:
+    """Everything the plan needs to read out of our own database."""
+
+    #: lowered sku_code -> (master id, as-written code)
+    master_by_code: dict[str, tuple[int, str]]
+    #: master id -> category
+    category_of: dict[int, int | None]
+    #: (商品管理番号, SKU管理番号) pairs already mapped at SKU level
+    already_mapped: set[tuple[str, str]]
+    #: Rakuten page -> the category its mapping's master carries
+    category_by_page: dict[str, int]
+    #: channel_sku -> master, for Rakuten rows with no variant key. Most of these
+    #: hold a SKU管理番号 rather than a page; `links_from_legacy_mappings` sorts
+    #: that out using the export.
+    by_channel_sku: dict[str, int]
+
+
+async def load_state(session: AsyncSession) -> CatalogueState:
+    """Master codes, categories, what is already mapped, and the mappings we
+    already hold.
+
+    The last of those carries most of the weight. Measured 2026-10-19, 480 of
+    512 active Rakuten mappings are variant-level truth filed under the wrong
+    column, and reading them is the difference between creating 52 masters and
+    creating 475.
+    """
     rows = await session.execute(
         select(MasterSku.id, MasterSku.sku_code, MasterSku.category_id).order_by(MasterSku.id)
     )
@@ -170,7 +194,40 @@ async def load_state(
         )
     )
     existing = {(page, key) for page, key in mapped.all() if key}
-    return by_code, category_of, existing
+
+    page_rows = await session.execute(
+        select(ChannelSkuMapping.channel_sku, MasterSku.category_id)
+        .join(MasterSku, MasterSku.id == ChannelSkuMapping.master_sku_id)
+        .where(
+            ChannelSkuMapping.channel == RAKUTEN,
+            ChannelSkuMapping.is_active.is_(True),
+            ChannelSkuMapping.channel_variant_key.is_(None),
+            MasterSku.category_id.is_not(None),
+        )
+        .order_by(MasterSku.id)
+    )
+    category_by_page = {page: category for page, category in page_rows.all() if category}
+
+    # Rakuten rows that carry no variant key. Most of them hold a SKU管理番号
+    # in channel_sku rather than a page; `links_from_legacy_mappings` decides
+    # which, using the export.
+    legacy_rows = await session.execute(
+        select(ChannelSkuMapping.channel_sku, ChannelSkuMapping.master_sku_id)
+        .where(
+            ChannelSkuMapping.channel == RAKUTEN,
+            ChannelSkuMapping.is_active.is_(True),
+            ChannelSkuMapping.channel_variant_key.is_(None),
+        )
+        .order_by(ChannelSkuMapping.master_sku_id)
+    )
+    by_channel_sku: dict[str, int] = dict(legacy_rows.all())  # type: ignore[arg-type]
+    return CatalogueState(
+        master_by_code=by_code,
+        category_of=category_of,
+        already_mapped=existing,
+        category_by_page=category_by_page,
+        by_channel_sku=by_channel_sku,
+    )
 
 
 def build_plan(
@@ -180,9 +237,13 @@ def build_plan(
     master_by_code: dict[str, tuple[int, str]],
     category_of: dict[int, int | None],
     already_mapped: set[tuple[str, str]],
+    category_by_page: dict[str, int] | None = None,
+    legacy: dict[tuple[str, str], int] | None = None,
 ) -> list[Planned]:
     """Decide one action per variant, refusing anything ambiguous."""
-    assignments = assign_masters(variants, proven=proven, master_by_code=master_by_code)
+    assignments = assign_masters(
+        variants, proven=proven, master_by_code=master_by_code, legacy=legacy
+    )
     shared = masters_claimed_twice(assignments)
     codes = [code for _, code in master_by_code.values()]
     splits = {split.variant: split for split in split_candidates(assignments, master_codes=codes)}
@@ -227,14 +288,36 @@ def build_plan(
                 ACTION_CREATE,
                 sku_code=code,
                 name=variant_name(variant),
-                # Inherit the claimed master's category so the variant appears on
-                # the SAME category count sheet as the product it came from.
-                # Without this it is 未分類 and a category-filtered sheet omits it.
-                category_id=category_of.get(assignment.master_id or -1),
+                # The variant must land in the SAME category as the product it
+                # came from, or a category-filtered count sheet omits it and the
+                # shelf gets counted while the variant does not.
+                category_id=_category_for(assignment, variant, category_of, category_by_page or {}),
                 master_code=assignment.master_code,
             )
         )
     return planned
+
+
+def _category_for(
+    assignment: VariantAssignment,
+    variant: PhysicalVariant,
+    category_of: dict[int, int | None],
+    category_by_page: dict[str, int],
+) -> int | None:
+    """The claimed master's category, else the one its Rakuten page already has.
+
+    The page fallback carries most of the weight: a variant no sale has placed
+    has no claimed master, and without it 461 of 475 new masters came out 未分類
+    against a catalogue that is otherwise 99% classified.
+    """
+    claimed = category_of.get(assignment.master_id or -1)
+    if claimed is not None:
+        return claimed
+    for page in variant.pages:
+        found = category_by_page.get(page)
+        if found is not None:
+            return found
+    return None
 
 
 def _blocked_reason(
@@ -359,13 +442,15 @@ async def run(*, csv_path: Path, pairs_path: Path, apply_changes: bool) -> int:
     variants = group_variants(skus, pairs)
     async with async_session_factory() as session:
         proven = await links_from_orders(session)
-        master_by_code, category_of, already = await load_state(session)
+        state = await load_state(session)
         planned = build_plan(
             variants,
             proven=proven,
-            master_by_code=master_by_code,
-            category_of=category_of,
-            already_mapped=already,
+            master_by_code=state.master_by_code,
+            category_of=state.category_of,
+            already_mapped=state.already_mapped,
+            category_by_page=state.category_by_page,
+            legacy=links_from_legacy_mappings(skus, state.by_channel_sku),
         )
         print_plan(planned, len(variants))
 

@@ -30,13 +30,16 @@ def sku(manage: str, variant: str, *choices: str, name: str = "リング") -> Ra
     return RakutenSku(manage, variant, "", 0, name, tuple(choices))
 
 
-def plan_for(skus, *, proven=None, masters=None, categories=None, mapped=None, pairs=PAIR):
+def plan_for(
+    skus, *, proven=None, masters=None, categories=None, mapped=None, pairs=PAIR, pages=None
+):
     return build_plan(
         group_variants(skus, pairs),
         proven=proven or {},
         master_by_code=masters or {},
         category_of=categories or {},
         already_mapped=mapped or set(),
+        category_by_page=pages or {},
     )
 
 
@@ -198,3 +201,51 @@ def test_two_new_variants_cannot_claim_one_generated_code() -> None:
     assert len(created) == 1
     assert len(held) == 1
     assert "既に使われています" in held[0].reason
+
+
+def test_an_unplaced_variant_takes_the_category_of_its_rakuten_page() -> None:
+    """The load-bearing fallback. A variant no sale has placed has no claimed
+    master to inherit from — but its page does, and without this route 461 of
+    475 new masters came out 未分類 against a catalogue that is 99% classified.
+    An uncategorised master is absent from a category-filtered count sheet, so
+    the shelf gets counted and the variant does not."""
+    planned = plan_for(
+        [sku("073", "1435", "gold", "19cm"), sku("073c", "931", "gold", "19cm")],
+        pages={"073c": 7},
+    )
+
+    assert planned[0].action == ACTION_CREATE
+    assert planned[0].category_id == 7
+
+
+def test_the_claimed_master_wins_over_the_page() -> None:
+    """Where a sale proves which product this is, that product's category is the
+    better answer — the page may carry several categories' worth of variants."""
+    planned = plan_for(
+        [sku("073", "1435", "gold", "19cm"), sku("073", "1436", "gold", "20cm")],
+        proven={("073", "1435"): 7, ("073", "1436"): 7},
+        masters={"073c": (7, "073c")},
+        categories={7: 42},
+        pages={"073": 99},
+        pairs=[],
+    )
+
+    assert {item.category_id for item in planned} == {42}
+
+
+def test_either_page_of_a_pair_can_supply_the_category() -> None:
+    """Only one of the twin pages needs a categorised mapping."""
+    for page in ("073", "073c"):
+        planned = plan_for(
+            [sku("073", "1435", "gold", "19cm"), sku("073c", "931", "gold", "19cm")],
+            pages={page: 5},
+        )
+        assert planned[0].category_id == 5
+
+
+def test_a_variant_with_no_category_anywhere_is_still_created_and_reported() -> None:
+    """Creating it is right — it is on the shelf. Leaving it silently 未分類 is
+    not, which is why the plan counts these separately."""
+    planned = plan_for([sku("073", "1435", "gold", "19cm")], pairs=[])
+    assert planned[0].action == ACTION_CREATE
+    assert planned[0].category_id is None

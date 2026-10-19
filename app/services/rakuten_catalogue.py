@@ -14,11 +14,14 @@ Three sources, in descending order of trust:
 1. **The client's pair table.** Authoritative, and it must be — a plain
    "X and Xc" rule looks right and is not: it pairs `10060c` with `10060cc`,
    which the client's own 未ペア sheet records as a broken duplicate.
-2. **Sales history.** A resolved Rakuten order line names its master, so where
-   a sale happened the mapping is a fact. The codes cannot be matched any other
-   way: Rakuten numbers its products (`00037c`, `0020`) while our masters came
-   from Shopify with letter codes, and there is no JAN on either side.
-3. **The variant attributes in the export**, which say which SKU on one page is
+2. **The per-SKU mappings we already hold.** Most Rakuten mapping rows are
+   variant-level truth filed under the wrong column — 480 of 512 carry a
+   SKU管理番号 in `channel_sku` — and the masters they name are already per
+   colour and size. This is the richest source, and the one to reach for first.
+3. **Sales history**, but as a fallback and with its limits understood: a
+   resolved order line only repeats whatever the mapping said when the line was
+   ingested, which for Rakuten was page-level. See `assign_masters`.
+4. **The variant attributes in the export**, which say which SKU on one page is
    the same thing as which SKU on the other.
 
 Nothing here writes. Building the mapping is a separate, reviewed step.
@@ -366,6 +369,7 @@ async def links_from_orders(session: AsyncSession) -> dict[tuple[str, str], int]
 
 
 VIA_ORDERS = "受注実績"
+VIA_MAPPING = "既存のSKU単位マッピング"
 VIA_MERCHANT = "システム連携用SKU番号"
 VIA_VARIANT = "SKU管理番号"
 
@@ -388,30 +392,92 @@ class VariantAssignment:
         return self.master_id is not None and not self.conflicting
 
 
+def links_from_legacy_mappings(
+    skus: list[RakutenSku], by_channel_sku: dict[str, int]
+) -> dict[tuple[str, str], int]:
+    """(商品管理番号, SKU管理番号) -> master, read out of the mappings we already hold.
+
+    Most Rakuten mappings in this shop are variant-level truth filed under the
+    wrong key: measured 2026-10-19, 480 of 512 active rows carry a SKU管理番号 in
+    `channel_sku`, where the column is supposed to hold the 商品管理番号. The
+    masters they name are already per colour and size (`1467` is "B08 gold"), so
+    the information needed to map the catalogue is largely present — it just has
+    no page attached to it. The export supplies the page.
+
+    A value that is ALSO a 商品管理番号 is skipped. Ten such rows exist, and
+    reading one of them as a SKU when it was filed as a page would attach a
+    master to the wrong variant with nothing to contradict it.
+    """
+    pages = {sku.manage_number for sku in skus}
+    links: dict[tuple[str, str], int] = {}
+    for sku in skus:
+        master_id = by_channel_sku.get(sku.variant_id)
+        if master_id is not None and sku.variant_id not in pages:
+            links[sku.key] = master_id
+    return links
+
+
+def _assign_from_links(
+    variant: PhysicalVariant,
+    links: dict[tuple[str, str], int],
+    label: str,
+    master_by_code: dict[str, tuple[int, str]],
+) -> VariantAssignment | None:
+    """One variant's answer from one source, or None if the source is silent."""
+    masters = {links[sku.key] for sku in variant.skus if sku.key in links}
+    if not masters:
+        return None
+    if len(masters) > 1:
+        return VariantAssignment(variant, None, "", label, tuple(sorted(masters)))
+    master_id = masters.pop()
+    code = next((c for mid, c in master_by_code.values() if mid == master_id), "")
+    return VariantAssignment(variant, master_id, code, label)
+
+
 def assign_masters(
     variants: list[PhysicalVariant],
     *,
     proven: dict[tuple[str, str], int],
     master_by_code: dict[str, tuple[int, str]],
+    legacy: dict[tuple[str, str], int] | None = None,
 ) -> list[VariantAssignment]:
-    """Sales history first, then the shop's own SKU codes.
+    """The existing per-SKU mapping first, then sales history, then SKU codes.
 
-    A variant inherits a master proven for ANY of its SKUs, which is what makes
-    the pair table pay off: one sale on the men's page maps the women's page too.
+    A variant inherits a master found for ANY of its SKUs, which is what makes
+    the pair table pay off: one link on the men's page maps the women's page too.
+
+    THE ORDER IS THE OPPOSITE OF WHAT IT LOOKS LIKE IT SHOULD BE, and that is
+    measured rather than assumed. "Sales history" sounds like the harder fact,
+    but `links_from_orders` reads `order_items.master_sku_id`, which the resolver
+    wrote using whatever mapping existed at the time — so it is a CACHE of past
+    mapping decisions at whatever granularity those decisions had, not
+    independent evidence. Rakuten ingest keys on `channel_sku = manageNumber`,
+    i.e. the PAGE, so every size and colour of a product was resolved to one
+    page-level master and now reports that master as if it were a per-variant
+    fact.
+
+    Measured against production 2026-10-19, over 587 physical variants:
+    the two sources agreed **0** times and disagreed **183** times, and every
+    disagreement had the same shape — 受注実績 naming a page-coded master
+    (`0010c`, `0020c`, `005c`) where the mapping named a variant-level one
+    (`N21gold`, `R09goldus7`, `N11gold`). In 129 of the 183 the 受注実績 master
+    demonstrably covered several variants at once.
+
+    So the per-SKU mapping wins: it is variant-level by construction. Sales
+    history still answers for the 24 variants nothing else reaches, and where it
+    hands back a page-level master the double-claim check downstream catches it.
+    Matching on codes is last because it is inference from spelling.
     """
+    sources = ((legacy or {}, VIA_MAPPING), (proven, VIA_ORDERS))
     out: list[VariantAssignment] = []
     for variant in variants:
-        masters = {proven[sku.key] for sku in variant.skus if sku.key in proven}
-        if len(masters) > 1:
-            out.append(VariantAssignment(variant, None, "", VIA_ORDERS, tuple(sorted(masters))))
-            continue
-        if masters:
-            master_id = masters.pop()
-            code = next(
-                (c for mid, c in master_by_code.values() if mid == master_id),
-                "",
-            )
-            out.append(VariantAssignment(variant, master_id, code, VIA_ORDERS))
+        answer = None
+        for links, label in sources:
+            answer = _assign_from_links(variant, links, label, master_by_code)
+            if answer is not None:
+                break
+        if answer is not None:
+            out.append(answer)
             continue
 
         found: tuple[int, str] | None = None

@@ -35,14 +35,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.csv_export import UTF8_BOM, csv_body
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
-from app.models import InventorySnapshot, MasterSku
+from app.models import ChannelSkuMapping, InventorySnapshot, MasterSku
 from app.services.rakuten_catalogue import (
+    RAKUTEN,
     PhysicalVariant,
     Split,
     VariantAssignment,
     assign_masters,
     codeish_collisions,
     group_variants,
+    links_from_legacy_mappings,
     links_from_orders,
     masters_claimed_twice,
     read_catalogue,
@@ -113,7 +115,9 @@ def variant_rows(
     return rows
 
 
-async def load_masters(session: AsyncSession) -> tuple[dict[str, tuple[int, str]], dict[int, int]]:
+async def load_masters(
+    session: AsyncSession,
+) -> tuple[dict[str, tuple[int, str]], dict[int, int], dict[str, int]]:
     master_by_code = {
         code.strip().lower(): (master_id, code)
         for master_id, code in (
@@ -123,7 +127,17 @@ async def load_masters(session: AsyncSession) -> tuple[dict[str, tuple[int, str]
     snapshots = await session.execute(
         select(InventorySnapshot.master_sku_id, InventorySnapshot.on_hand_qty)
     )
-    return master_by_code, dict(snapshots.all())  # type: ignore[arg-type]
+    legacy_rows = await session.execute(
+        select(ChannelSkuMapping.channel_sku, ChannelSkuMapping.master_sku_id)
+        .where(
+            ChannelSkuMapping.channel == RAKUTEN,
+            ChannelSkuMapping.is_active.is_(True),
+            ChannelSkuMapping.channel_variant_key.is_(None),
+        )
+        .order_by(ChannelSkuMapping.master_sku_id)
+    )
+    by_channel_sku: dict[str, int] = dict(legacy_rows.all())  # type: ignore[arg-type]
+    return master_by_code, dict(snapshots.all()), by_channel_sku  # type: ignore[arg-type]
 
 
 def print_grouping(
@@ -295,8 +309,13 @@ async def run(*, csv_path: Path, pairs_path: Path, out_dir: Path | None) -> int:
     variants = group_variants(skus, pairs)
     async with async_session_factory() as session:
         proven = await links_from_orders(session)
-        master_by_code, on_hand = await load_masters(session)
-    assignments = assign_masters(variants, proven=proven, master_by_code=master_by_code)
+        master_by_code, on_hand, by_channel_sku = await load_masters(session)
+    assignments = assign_masters(
+        variants,
+        proven=proven,
+        master_by_code=master_by_code,
+        legacy=links_from_legacy_mappings(skus, by_channel_sku),
+    )
 
     master_codes = [c for _, c in master_by_code.values()]
     splits = split_candidates(assignments, master_codes=master_codes)
