@@ -33,14 +33,21 @@ from app.csv_export import UTF8_BOM, csv_body
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ProductCategory
-from app.services.stocktake import COL_COUNTED, COL_SKU, sheet_rows
+from app.services.stocktake import COL_COUNTED, COL_SKU, read_excluded_skus, sheet_rows
 
 log = get_logger(__name__)
 
 DEFAULT_OUT = Path("csv_file/phase2/stocktake")
+DEFAULT_EXCLUDED = Path("csv_file/phase2/source/stocktake_excluded_skus.csv")
 
 
-async def run(*, categories: list[str], out_dir: Path = DEFAULT_OUT, split: bool = True) -> int:
+async def run(
+    *,
+    categories: list[str],
+    out_dir: Path = DEFAULT_OUT,
+    split: bool = True,
+    excluded_path: Path = DEFAULT_EXCLUDED,
+) -> int:
     async with async_session_factory() as session:
         known = await session.execute(select(ProductCategory.code, ProductCategory.name))
         # dict(rows) does not type-check against SQLAlchemy Rows; same
@@ -52,6 +59,12 @@ async def run(*, categories: list[str], out_dir: Path = DEFAULT_OUT, split: bool
             print(f"未知のカテゴリコードです: {', '.join(unknown)}")
             print(f"指定可能: {', '.join(sorted(names))}")
             return 2
+
+        excluded, exclude_problems = read_excluded_skus(excluded_path)
+        for problem in exclude_problems:
+            print(f"  ★ 除外ファイル: {problem}")
+        if excluded:
+            print(f"  集計表から除外する商品 {len(excluded)}件 (実物は細かい単位で数えます)")
 
         groups: list[tuple[str, list[str]]]
         if not categories:
@@ -66,7 +79,7 @@ async def run(*, categories: list[str], out_dir: Path = DEFAULT_OUT, split: bool
 
         written = 0
         for label, codes in groups:
-            rows = await sheet_rows(session, category_codes=codes or None)
+            rows = await sheet_rows(session, category_codes=codes or None, excluded=excluded)
             if not rows:
                 print(f"  {label:<12} 対象SKUがありません")
                 continue
@@ -100,11 +113,23 @@ def main() -> None:
         help="one file for all the given categories instead of one file each",
     )
     p.add_argument("--out-dir", default=str(DEFAULT_OUT))
+    p.add_argument(
+        "--excluded",
+        default=str(DEFAULT_EXCLUDED),
+        help="sku_code that must not be printed (counted under a finer master)",
+    )
     args = p.parse_args()
     configure_logging("INFO")
     codes = [c.strip().upper() for c in args.categories.split(",") if c.strip()]
     sys.exit(
-        asyncio.run(run(categories=codes, out_dir=Path(args.out_dir), split=not args.combined))
+        asyncio.run(
+            run(
+                categories=codes,
+                out_dir=Path(args.out_dir),
+                split=not args.combined,
+                excluded_path=Path(args.excluded),
+            )
+        )
     )
 
 

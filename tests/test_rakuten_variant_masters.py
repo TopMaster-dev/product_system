@@ -41,6 +41,7 @@ def plan_for(
     pairs=PAIR,
     pages=None,
     excluded=None,
+    made_here=None,
 ):
     return build_plan(
         group_variants(skus, pairs),
@@ -50,6 +51,7 @@ def plan_for(
         already_mapped=mapped or set(),
         category_by_page=pages or {},
         excluded=excluded or set(),
+        made_here=made_here or set(),
     )
 
 
@@ -331,3 +333,33 @@ def test_an_excluded_page_does_not_block_its_twin_from_taking_the_master() -> No
     assert by_page["10060cc"].action == ACTION_EXCLUDED
     assert by_page["10060"].action == ACTION_MAP
     assert by_page["10060"].master_code == "P07gold"
+
+
+def test_a_master_this_tool_already_made_is_reused_not_refused() -> None:
+    """The repair path. After bad mapping rows are removed, every master the
+    plan needs is one it already created — so a code match on OUR OWN master is
+    a re-run, not a collision, or the repair can never converge."""
+    planned = plan_for(
+        [sku("073", "1435", "gold", "19cm")],
+        masters={"073-19cm-gold": (55, "073-19cm-gold")},
+        made_here={"073-19cm-gold"},
+        categories={55: 9},
+        pairs=[],
+    )
+
+    assert planned[0].action == ACTION_MAP
+    assert planned[0].master_code == "073-19cm-gold"
+    assert planned[0].category_id == 9
+
+
+def test_someone_elses_master_with_the_same_code_is_still_refused() -> None:
+    """Only OUR provenance earns the reuse. An unrelated product that happens to
+    carry the code must still stop the run."""
+    planned = plan_for(
+        [sku("073", "1435", "gold", "19cm")],
+        masters={"073-19cm-gold": (55, "073-19cm-gold")},
+        pairs=[],
+    )
+
+    assert planned[0].action == ACTION_BLOCKED
+    assert "既に使われています" in planned[0].reason

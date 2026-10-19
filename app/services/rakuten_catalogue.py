@@ -91,7 +91,15 @@ def _decode(path: Path) -> str | None:
 
 def read_catalogue(path: Path) -> tuple[list[RakutenSku], list[str]]:
     """(SKU rows, problems). A row with no SKU管理番号 is the product's own
-    header line in the export, not a SKU, and is skipped."""
+    header line in the export, not a SKU, and is skipped.
+
+    THE 商品名 LIVES ON THAT HEADER LINE, NOT ON THE SKU ROWS. Measured over the
+    15 October export: 商品名 is filled on 419 of 1,530 rows — exactly the
+    product rows — and empty on every SKU row. Reading it from the SKU row
+    therefore yields nothing, which is how 93 masters came to be created named
+    `10079 gold(3.6mm)` instead of `チェーンネックレス … gold(3.6mm)`. The client
+    reads these off a count sheet, so the name is not decoration.
+    """
     text = _decode(path)
     if text is None:
         return [], [f"文字コードを判別できませんでした ({', '.join(ENCODINGS)} を試行)"]
@@ -111,9 +119,14 @@ def read_catalogue(path: Path) -> tuple[list[RakutenSku], list[str]]:
     skus: list[RakutenSku] = []
     problems: list[str] = []
     seen: set[tuple[str, str]] = set()
+    name_of: dict[str, str] = {}
     for line, row in enumerate(rows[1:], start=2):
         manage_number, variant_id = cell(row, COL_MANAGE_NUMBER), cell(row, COL_VARIANT_ID)
         if not variant_id:
+            # The product's header line: the only place its 商品名 appears.
+            product_name = cell(row, COL_ITEM_NAME)
+            if manage_number and product_name:
+                name_of.setdefault(manage_number, product_name)
             continue
         if not manage_number:
             problems.append(f"{line}行目: SKU管理番号はあるが商品管理番号が空です")
@@ -132,7 +145,7 @@ def read_catalogue(path: Path) -> tuple[list[RakutenSku], list[str]]:
                 variant_id=variant_id,
                 merchant_sku_id=cell(row, COL_MERCHANT_SKU),
                 quantity=int(raw) if raw.lstrip("-").isdigit() else 0,
-                name=cell(row, COL_ITEM_NAME),
+                name=cell(row, COL_ITEM_NAME) or name_of.get(manage_number, ""),
                 choices=choices,
             )
         )
@@ -405,16 +418,28 @@ def links_from_legacy_mappings(
     the information needed to map the catalogue is largely present — it just has
     no page attached to it. The export supplies the page.
 
+    Two kinds of value are refused.
+
     A value that is ALSO a 商品管理番号 is skipped. Ten such rows exist, and
     reading one of them as a SKU when it was filed as a page would attach a
     master to the wrong variant with nothing to contradict it.
+
+    **A PLACEHOLDER is skipped, and this one is not a nicety.** RMS auto-numbers
+    a SKU `r-sku00000001` when the shop has not supplied its own code, so the
+    value identifies nothing — and the same `r-sku00000001` appears on 24
+    DIFFERENT products in this catalogue. An old mapping filed under it points
+    at `B45goldbracelet`, so reading placeholders as SKU keys attached six
+    unrelated products to that one master, and scattered one Christmas set's
+    nine variants across three categories. Measured 2026-10-19: 89 such links
+    over 63 variants in 16 products, every one of them wrong.
     """
     pages = {sku.manage_number for sku in skus}
     links: dict[tuple[str, str], int] = {}
     for sku in skus:
         master_id = by_channel_sku.get(sku.variant_id)
-        if master_id is not None and sku.variant_id not in pages:
-            links[sku.key] = master_id
+        if master_id is None or sku.is_placeholder or sku.variant_id in pages:
+            continue
+        links[sku.key] = master_id
     return links
 
 
@@ -490,7 +515,7 @@ def assign_masters(
             if merchant and merchant in by_codeish:
                 found, via = by_codeish[merchant], VIA_MERCHANT
                 break
-            variant_code = _codeish(sku.variant_id)
+            variant_code = "" if sku.is_placeholder else _codeish(sku.variant_id)
             if variant_code and variant_code in by_codeish:
                 found, via = by_codeish[variant_code], VIA_VARIANT
                 break

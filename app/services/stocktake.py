@@ -31,7 +31,9 @@ count exists to establish.
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -216,8 +218,48 @@ class SheetRow:
     on_hand_qty: int
 
 
+def read_excluded_skus(path: Path) -> tuple[set[str], list[str]]:
+    """sku_code that must NOT be printed on a count sheet.
+
+    Used for masters whose physical goods are now counted under a finer master.
+    When the Rakuten catalogue moved to SKU level, `073c` stopped standing for
+    anything on a shelf — its rings are counted as `073-19cm-gold` and the rest —
+    but it cannot simply be retired: it still carries active CROSS MALL and
+    Shopify mappings, and its Rakuten page mapping is still what resolves live
+    order lines.
+
+    Leaving it OFF the sheet is exactly right, and costs nothing, because a SKU
+    absent from the sheet is not counted rather than counted as zero. Leaving it
+    ON the sheet is the expensive mistake: the client would see `073c` beside
+    six `073-*` lines for one shelf and could reasonably count both.
+    """
+    if not path.exists():
+        return set(), []
+    for encoding in ("utf-8-sig", "cp932", "utf-8"):
+        try:
+            text = path.read_text(encoding=encoding)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    else:
+        return set(), ["除外ファイルの文字コードを判別できませんでした"]
+    rows = list(csv.reader(text.splitlines()))
+    if not rows:
+        return set(), []
+    header = [cell.strip().lstrip("﻿") for cell in rows[0]]
+    if COL_SKU not in header:
+        return set(), [f"除外ファイルに {COL_SKU} の列がありません"]
+    column = header.index(COL_SKU)
+    return {
+        row[column].strip() for row in rows[1:] if len(row) > column and row[column].strip()
+    }, []
+
+
 async def sheet_rows(
-    session: AsyncSession, *, category_codes: list[str] | None = None
+    session: AsyncSession,
+    *,
+    category_codes: list[str] | None = None,
+    excluded: set[str] | None = None,
 ) -> list[SheetRow]:
     """The SKUs to print on a count sheet, optionally narrowed to categories.
 
@@ -242,9 +284,11 @@ async def sheet_rows(
         stmt = stmt.where(ProductCategory.code.in_(category_codes))
 
     rows = await session.execute(stmt)
+    skip = excluded or set()
     return [
         SheetRow(sku_code=code, name=name, category=category, on_hand_qty=int(qty or 0))
         for code, name, category, qty in rows.all()
+        if code not in skip
     ]
 
 
@@ -258,6 +302,7 @@ __all__ = [
     "build_plan",
     "parse",
     "plan_from_rows",
+    "read_excluded_skus",
     "rows_from",
     "scope_note",
     "sheet_rows",

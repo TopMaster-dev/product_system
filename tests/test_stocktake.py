@@ -18,6 +18,7 @@ restating in its own tests because here the absent rows are the majority.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -27,6 +28,7 @@ from app.services.stocktake import (
     StocktakePlan,
     parse,
     plan_from_rows,
+    read_excluded_skus,
     rows_from,
     scope_note,
 )
@@ -183,3 +185,36 @@ def test_an_unscoped_count_says_so_rather_than_reading_as_everything() -> None:
 def test_the_plan_totals_what_was_counted() -> None:
     plan = StocktakePlan(counted=[CountedRow("A", 4), CountedRow("B", 6)])
     assert plan.total_counted_qty == 10
+
+
+@pytest.mark.unit
+def test_the_real_sheet_exclusion_file_loads() -> None:
+    path = Path("csv_file/phase2/source/stocktake_excluded_skus.csv")
+    if not path.exists():
+        pytest.skip("the exclusion file is not in this checkout")
+    excluded, problems = read_excluded_skus(path)
+    assert problems == []
+    assert "073c" in excluded
+    assert len(excluded) == 14
+
+
+@pytest.mark.unit
+def test_a_missing_sheet_exclusion_file_excludes_nothing() -> None:
+    excluded, problems = read_excluded_skus(Path("no/such/file.csv"))
+    assert excluded == set()
+    assert problems == []
+
+
+@pytest.mark.unit
+def test_an_exclusion_file_without_the_column_is_reported() -> None:
+    """A silently empty exclusion list puts the superseded masters back on the
+    sheet, where the client counts one shelf twice."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bad.csv"
+        path.write_text("code,reason\n073c,x\n", encoding="utf-8")
+        excluded, problems = read_excluded_skus(path)
+
+    assert excluded == set()
+    assert problems and "sku_code" in problems[0]

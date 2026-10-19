@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.services.rakuten_catalogue import (
+    COL_MANAGE_NUMBER,
     VIA_DECIDED,
     VIA_MAPPING,
     VIA_MERCHANT,
@@ -731,3 +732,58 @@ def test_a_retired_product_does_not_take_a_live_sku() -> None:
         variants, proven={}, master_by_code=masters, legacy={}, archived={306}
     )
     assert assigned[0].master_id == 2533
+
+
+def test_a_placeholder_sku_number_is_never_a_mapping_key() -> None:
+    """RMS auto-numbers a SKU `r-sku00000001` when the shop supplies no code, so
+    the value identifies nothing — and the SAME one appears on 24 different
+    products here. An old mapping filed under it points at `B45goldbracelet`;
+    reading placeholders attached six unrelated products to that one master."""
+    skus = [
+        sku("10080", "r-sku00000001", "gold"),
+        sku("10081", "r-sku00000001", "gold"),
+        sku("202512a", "r-sku00000001", "19cm", "ring"),
+    ]
+    assert links_from_legacy_mappings(skus, {"r-sku00000001": 7}) == {}
+
+
+def test_a_placeholder_is_refused_by_the_code_route_too() -> None:
+    variants = group_variants([sku("066", "r-sku00000004", "gold", "us5")], [])
+    assigned = assign_masters(
+        variants, proven={}, master_by_code={"rsku00000004": (9, "r-sku00000004")}, legacy={}
+    )
+    assert assigned[0].master_id is None
+
+
+def test_a_real_sku_number_on_a_placeholder_page_still_links() -> None:
+    """Only the placeholder value is refused, not every SKU of a product that
+    happens to have one."""
+    skus = [sku("066", "r-sku00000004", "gold"), sku("066c", "915", "gold")]
+    assert links_from_legacy_mappings(skus, {"r-sku00000004": 7, "915": 9}) == {("066c", "915"): 9}
+
+
+def test_the_product_name_is_taken_from_the_header_line(tmp_path: Path) -> None:
+    """商品名 appears only on the product's own row — 419 of 1,530 rows in the
+    real export — and is empty on every SKU row beneath it. Reading it from the
+    SKU row yields nothing, which is how 93 masters were created named
+    `10079 gold(3.6mm)` instead of by the product the client would recognise."""
+    path = tmp_path / "export.csv"
+    path.write_text(
+        f"{COL_MANAGE_NUMBER},商品名,SKU管理番号,在庫数,バリエーション項目選択肢1\n"
+        "10079,チェーンネックレス メンズ,,,\n"
+        "10079,,1295,5,gold\n"
+        "10079,,1296,9,silver\n",
+        encoding="utf-8-sig",
+    )
+
+    skus, problems = read_catalogue(path)
+
+    assert problems == []
+    assert [s.name for s in skus] == ["チェーンネックレス メンズ"] * 2
+
+
+def test_a_name_on_the_sku_row_still_wins() -> None:
+    """If a SKU ever carries its own name, that is more specific than the page."""
+    from app.services.rakuten_catalogue import RakutenSku
+
+    assert RakutenSku("073", "1435", "", 0, "固有名", ()).name == "固有名"

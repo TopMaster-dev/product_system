@@ -225,6 +225,8 @@ class CatalogueState:
     category_by_page: dict[str, int]
     #: master ids that are retired. Kept out of code matching.
     archived: set[int]
+    #: lowered sku_code of masters THIS tool created, so a re-run reuses them.
+    made_here: set[str]
     #: channel_sku -> master, for Rakuten rows with no variant key. Most of these
     #: hold a SKU管理番号 rather than a page; `links_from_legacy_mappings` sorts
     #: that out using the export.
@@ -246,16 +248,20 @@ async def load_state(session: AsyncSession) -> CatalogueState:
             MasterSku.sku_code,
             MasterSku.category_id,
             MasterSku.archived_at,
+            MasterSku.attributes,
         ).order_by(MasterSku.id)
     )
     by_code: dict[str, tuple[int, str]] = {}
     category_of: dict[int, int | None] = {}
     archived: set[int] = set()
-    for master_id, code, category_id, archived_at in rows.all():
+    made_here: set[str] = set()
+    for master_id, code, category_id, archived_at, attributes in rows.all():
         by_code[code.strip().lower()] = (master_id, code)
         category_of[master_id] = category_id
         if archived_at is not None:
             archived.add(master_id)
+        if (attributes or {}).get("source") == "rakuten_variant":
+            made_here.add(code.strip().lower())
 
     mapped = await session.execute(
         select(ChannelSkuMapping.channel_sku, ChannelSkuMapping.channel_variant_key).where(
@@ -296,6 +302,7 @@ async def load_state(session: AsyncSession) -> CatalogueState:
         category_of=category_of,
         already_mapped=existing,
         archived=archived,
+        made_here=made_here,
         category_by_page=category_by_page,
         by_channel_sku=by_channel_sku,
     )
@@ -313,6 +320,7 @@ def build_plan(
     decisions: dict[tuple[str, str], str] | None = None,
     excluded: set[str] | None = None,
     archived: set[int] | None = None,
+    made_here: set[str] | None = None,
 ) -> list[Planned]:
     """Decide one action per variant, refusing anything ambiguous."""
     assignments = assign_masters(
@@ -345,6 +353,7 @@ def build_plan(
     codes = [code for _, code in master_by_code.values()]
     splits = {split.variant: split for split in split_candidates(live, master_codes=codes)}
     taken = {code.lower() for code in master_by_code}
+    ours = {code: found for code, found in master_by_code.items() if code in (made_here or set())}
 
     planned: list[Planned] = []
     for assignment in assignments:
@@ -377,6 +386,24 @@ def build_plan(
 
         code = variant_sku_code(variant)
         if code.lower() in taken:
+            # A master WE made earlier for THIS variant is a re-run, not a
+            # collision. The code is derived from the variant, so an exact match
+            # on a master this tool created means the product already exists and
+            # only its mapping is missing — which is the state a repair leaves
+            # behind after bad mapping rows are removed. Without this the repair
+            # cannot converge: every master it needs is one it already made.
+            mine = ours.get(code.lower())
+            if mine is not None:
+                planned.append(
+                    Planned(
+                        variant,
+                        ACTION_MAP,
+                        master_id=mine[0],
+                        master_code=mine[1],
+                        category_id=category_of.get(mine[0]),
+                    )
+                )
+                continue
             planned.append(
                 Planned(variant, ACTION_BLOCKED, reason=f"商品コード {code} は既に使われています")
             )
@@ -611,6 +638,7 @@ async def run(
             decisions=decisions,
             excluded=excluded,
             archived=state.archived,
+            made_here=state.made_here,
         )
         print_plan(planned, len(variants))
 
