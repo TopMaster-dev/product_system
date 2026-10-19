@@ -1,4 +1,4 @@
-# Build + push container image and deploy to Cloud Run.
+﻿# Build + push container image and deploy to Cloud Run.
 #
 #   ./scripts/deploy_to_cloud_run.ps1 -Tag phase2-w6-20260917
 #
@@ -90,13 +90,23 @@ Invoke-Native -What "builds submit" -Command {
 }
 
 Write-Host "==> Deploying new revision to Cloud Run..."
+# NO --no-allow-unauthenticated, deliberately. `allUsers` holds run.invoker on
+# this service on purpose: Shopify delivers webhooks to it and cannot present a
+# Google identity token (see infra/terraform/run.tf, the INTERNAL_JOBS_AUTH_MODE
+# block). /internal/jobs/* is guarded at the application layer instead, by OIDC
+# verification in app/api/auth_internal.py, enforcing since 2026-09-23.
+#
+# The flag used to be here and every deploy printed "Setting IAM policy failed".
+# That warning was the only thing protecting webhook ingestion: the flag asks
+# Cloud Run to REMOVE the allUsers binding, and on the first deploy where the
+# caller had permission to do it, Shopify webhooks would have stopped arriving
+# with nothing failing loudly. Leave the binding to Terraform, which owns it.
 Invoke-Native -What "run deploy" -Command {
     gcloud run deploy product-system `
         --project=$PROJECT_ID `
         --region=$REGION `
         --image=$IMG_URL `
-        --service-account="product-system-app@$PROJECT_ID.iam.gserviceaccount.com" `
-        --no-allow-unauthenticated
+        --service-account="product-system-app@$PROJECT_ID.iam.gserviceaccount.com"
 }
 
 Write-Host "==> Cloud Run service URL:"
