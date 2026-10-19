@@ -1,7 +1,7 @@
 """ChannelAdapter abstract base class — common interface for all channels.
 
-Phase 1-A implements `fetch_orders` and `verify_webhook`.
-`push_inventory` is implemented in Phase 1-B (writeback).
+`fetch_orders` and `verify_webhook` are the read side; `push_inventory` is the
+writeback.
 """
 
 from __future__ import annotations
@@ -74,11 +74,17 @@ class ChannelAdapter(ABC):
     ) -> dict[str, Any] | None:
         """Push inventory level to the channel.
 
-        Implementations should return the channel API response as a dict on
-        success (so the caller can persist it in `sync_attempts.response_payload`)
-        or `None` if the channel does not provide a structured response.
-        Phase 1-A stubs were ``None``-returning; Phase 1-B implementations
-        (Rakuten F1.5, Shopify F1.6) return the full response payload.
+        Return the channel's response as a dict when there is one, so the caller
+        can persist it in `sync_attempts.response_payload`, or `None` when there
+        is not. `None` is a normal success, not a degraded one: Rakuten answers a
+        successful 在庫API 2.0 upsert with 204 No Content and an empty body, so
+        there is nothing to record beyond the attempt itself. Shopify returns the
+        mutation result.
+
+        An implementation may take additional KEYWORD-ONLY arguments where the
+        channel needs more than a SKU to identify what it is setting — Rakuten
+        requires `variant_key` (SKU管理番号), because its `sku` is a page that
+        carries several sellable SKUs.
         """
 
     @abstractmethod

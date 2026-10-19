@@ -47,14 +47,12 @@ async def test_verify_webhook_is_noop_true() -> None:
 
 
 @pytest.mark.unit
-async def test_push_inventory_implemented_in_phase1b() -> None:
-    """Phase 1-B F1.5: implementation lives in test_rakuten_push_inventory.py.
-
-    This sanity test only confirms the method exists and rejects negative
-    quantities synchronously (no HTTP call required for the negative path).
-    """
-    with pytest.raises(ValueError, match="negative"):
-        await _adapter().push_inventory("SKU", -1)
+async def test_push_inventory_refuses_a_product_level_write() -> None:
+    """P2-039: Rakuten stock is SKU-level for this shop, so the SKU管理番号 is
+    required. The full write path is covered in test_rakuten_push_inventory.py;
+    this only pins the refusal, which needs no HTTP call."""
+    with pytest.raises(ValueError, match="SKU管理番号"):
+        await _adapter().push_inventory("SKU", 1)
 
 
 @pytest.mark.unit
