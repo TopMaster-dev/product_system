@@ -92,13 +92,14 @@ def test_a_quantity_over_the_ceiling_is_refused() -> None:
 
 
 def test_a_key_over_thirty_two_bytes_is_refused() -> None:
-    """The limit is BYTES, so a Japanese key hits it at a third of the length a
-    character count would suggest."""
+    """The spec gives the limit in BYTES, not characters. Measured in ASCII
+    here because a multi-byte key is refused earlier, for using characters
+    Rakuten does not accept at all."""
     build_body([InventoryRow("a" * MAX_KEY_BYTES, "1435", 1)])
     with pytest.raises(RowRejected, match="32バイト"):
         build_body([InventoryRow("a" * (MAX_KEY_BYTES + 1), "1435", 1)])
     with pytest.raises(RowRejected, match="32バイト"):
-        build_body([InventoryRow("073", "あ" * 11, 1)])
+        build_body([InventoryRow("073", "b" * (MAX_KEY_BYTES + 1), 1)])
 
 
 def test_an_empty_key_is_refused() -> None:
@@ -175,3 +176,28 @@ def test_every_row_needs_rereading_after_anything_else() -> None:
     rows = [InventoryRow("073", str(i), 1) for i in range(5)]
     for status in (400, 401, 409, 500):
         assert rows_to_reread(rows, status) == rows
+
+
+def test_a_key_using_characters_rakuten_forbids_is_refused() -> None:
+    """The spec allows a-z, A-Z, 0-9, `-` and `_` only. A key outside that set
+    is not rejected loudly by Rakuten — see the orphan note — so it has to be
+    stopped here."""
+    # Full-width digits are a real risk: RMS exports carry them elsewhere.
+    for bad in ("073/1", "073 1", "073.1", "０７３", "073#1"):  # noqa: RUF001
+        with pytest.raises(RowRejected, match="使えない文字"):
+            build_body([InventoryRow(bad, "1435", 1)])
+        with pytest.raises(RowRejected, match="使えない文字"):
+            build_body([InventoryRow("073", bad, 1)])
+
+
+def test_the_keys_this_shop_actually_uses_are_accepted() -> None:
+    """Real shapes from the export: placeholders, hyphenated merchant codes and
+    plain numbers all pass."""
+    for manage, variant in (
+        ("073", "1435"),
+        ("202512a", "r-sku00000001"),
+        ("10094", "N73gold"),
+        ("10095c", "gold-B48"),
+        ("0012c", "p07_gold"),
+    ):
+        build_body([InventoryRow(manage, variant, 1)])

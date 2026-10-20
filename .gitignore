@@ -70,6 +70,7 @@ infra/terraform/terraform.tfvars
 **.xlsx
 **.docx
 /csv_file/**.jpg
+/csv_file/New folder/**.pdf
 
 # ...except these. They are not shop data: they are OUR reviewed judgements
 # about the Rakuten catalogue, derived from analysis that cost real effort.

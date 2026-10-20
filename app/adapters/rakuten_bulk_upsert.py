@@ -29,6 +29,22 @@ TWO CONSEQUENCES WORTH STATING
   a whole. The spec does not say whether a rejected request applies none, some or
   all of its rows, so `rows_to_reread` exists to name what has to be checked with
   the (confirmed, granted) bulk-get before anything is believed.
+* **A 204 DOES NOT MEAN THE PAIR EXISTS.** From the official spec: a request
+  naming a 商品管理番号 that does not exist, or a SKU管理番号 not attached to it,
+  「エラーにはなりません」 — it succeeds, stores inventory against nothing, and
+  Rakuten deletes that orphan 24 hours after its last update. So a typo in a key
+  is answered with the same 204 as a correct write, and nothing in the response
+  distinguishes them. The only way to know a quantity reached a real SKU is to
+  read the pair back with bulk-get. Do that at least the first time any pair is
+  pushed; a silent orphan is indistinguishable from success for a day and then
+  vanishes.
+
+DO NOT REACH FOR 在庫API 2.1
+  Its bulk-upsert covers 在庫数 AND 出荷リードタイム/配送リードタイム together and is
+  explicitly NOT a partial update: 「リクエストに含まれない項目は値が削除されます」.
+  Pushing only stock through 2.1 therefore wipes the shop's lead times. That is
+  the mechanism behind Rakuten's own notice about 2.1 stock updates changing
+  延着 settings, and the reason 2.1 is deliberately left unlicensed here.
 * **Validation belongs here, before the request.** A quantity over 99999 or a key
   over 32 bytes would be refused by Rakuten mid-batch, taking the whole request
   with it; refusing locally keeps one bad row from stopping 399 good ones.
@@ -36,6 +52,7 @@ TWO CONSEQUENCES WORTH STATING
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,6 +62,12 @@ MAX_ROWS_PER_REQUEST = 400
 MAX_QUANTITY = 99_999
 #: 商品管理番号 / SKU管理番号 の上限。文字数ではなくバイト数。
 MAX_KEY_BYTES = 32
+
+#: Rakuten accepts only these in a key, and LOWERCASES what it stores:
+#: 「大文字は小文字に自動変換」. Two keys differing only by case are therefore
+#: the same key to Rakuten. Measured over the 15 October export: no key uses
+#: anything else, and no pair collides once lowercased.
+KEY_CHARACTERS = re.compile(r"^[A-Za-z0-9_-]+$")
 
 MODE_ABSOLUTE = "ABSOLUTE"
 MODE_RELATIVE = "RELATIVE"
@@ -81,6 +104,10 @@ def validate(row: InventoryRow) -> None:
     for label, value in (("商品管理番号", row.manage_number), ("SKU管理番号", row.variant_id)):
         if not value:
             raise RowRejected(f"{label} が空です")
+        if not KEY_CHARACTERS.match(value):
+            raise RowRejected(
+                f"{label} に使えない文字があります ({value!r})。英数字と - _ のみ使用できます"
+            )
         if len(value.encode()) > MAX_KEY_BYTES:
             raise RowRejected(
                 f"{label} が{MAX_KEY_BYTES}バイトを超えています ({value!r} = "
