@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import csv
 import io
+from pathlib import Path
 
 import pytest
 
-from app.csv_export import UTF8_BOM, csv_body, csv_response
+from app.csv_export import UTF8_BOM, csv_body, csv_response, write_csv
 
 pytestmark = pytest.mark.unit
 
@@ -61,3 +62,33 @@ def test_body_carries_no_bom_of_its_own() -> None:
     """Only `csv_response` adds it — otherwise a body passed through both would
     carry two, and the second BOM would show up as a literal cell value."""
     assert not csv_body(["区分"], []).startswith(UTF8_BOM)
+
+
+@pytest.mark.unit
+def test_write_csv_does_not_double_the_carriage_return(tmp_path: Path) -> None:
+    """`csv.writer` ends each record with CRLF already. Writing that without
+    `newline=""` translates the LF again, so every line lands as CR CR LF and
+    Excel shows a blank row between every row of data. Measured on the count
+    sheets 2026-10-21: 61 of 61 lines doubled, and they were about to be sent to
+    the client as a 60-item sheet padded with 60 empty rows."""
+    path = write_csv(tmp_path / "sheet.csv", csv_body(["a", "b"], [[1, 2], [3, 4]]))
+    raw = path.read_bytes()
+
+    assert b"\r\r\n" not in raw
+    assert raw.count(b"\r\n") == 3  # header + two rows
+    assert raw.startswith(UTF8_BOM.encode("utf-8"))
+
+
+@pytest.mark.unit
+def test_write_csv_round_trips_through_a_reader(tmp_path: Path) -> None:
+    """The practical check: no blank rows when something reads it back."""
+    path = write_csv(tmp_path / "sheet.csv", csv_body(["sku_code", "数量"], [["073", 5]]))
+    rows = list(csv.reader(path.read_text(encoding="utf-8-sig").splitlines()))
+
+    assert rows == [["sku_code", "数量"], ["073", "5"]]
+
+
+@pytest.mark.unit
+def test_write_csv_creates_the_directory(tmp_path: Path) -> None:
+    path = write_csv(tmp_path / "deep" / "er" / "sheet.csv", csv_body(["a"], [["x"]]))
+    assert path.exists()

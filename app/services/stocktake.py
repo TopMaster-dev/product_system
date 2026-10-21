@@ -260,8 +260,15 @@ async def sheet_rows(
     *,
     category_codes: list[str] | None = None,
     excluded: set[str] | None = None,
+    only: set[str] | None = None,
 ) -> list[SheetRow]:
-    """The SKUs to print on a count sheet, optionally narrowed to categories.
+    """The SKUs to print on a count sheet, optionally narrowed.
+
+    `only` exists for a deadline that does not follow the shelves. The 22
+    wholesale products that are also on Rakuten span five of the six
+    categories — 748 of 786 lines — but are themselves just 66 masters. Asking
+    the client to count five whole categories to reach 66 items is most of a
+    catalogue of wasted effort; a sheet of exactly those 66 is a morning.
 
     Uses `operational_conditions()`: archived masters and 在庫管理対象外 items
     are not on the shelf to be counted. Set parents ARE included — they hold no
@@ -285,10 +292,11 @@ async def sheet_rows(
 
     rows = await session.execute(stmt)
     skip = excluded or set()
+    keep = only or None
     return [
         SheetRow(sku_code=code, name=name, category=category, on_hand_qty=int(qty or 0))
         for code, name, category, qty in rows.all()
-        if code not in skip
+        if code not in skip and (keep is None or code in keep)
     ]
 
 

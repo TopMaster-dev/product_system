@@ -51,7 +51,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body, write_csv
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ChannelSkuMapping, MasterSku
@@ -142,8 +142,7 @@ def write_plan(out_dir: Path, planned: list[Planned]) -> Path:
     """Sync on purpose: file IO does not belong inside the async run (ASYNC240)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "rakuten_variant_master_plan.csv"
-    path.write_text(UTF8_BOM + csv_body(PLAN_HEADER, plan_rows(planned)), encoding="utf-8")
-    return path
+    return write_csv(path, csv_body(PLAN_HEADER, plan_rows(planned)))
 
 
 @dataclass(frozen=True, slots=True)

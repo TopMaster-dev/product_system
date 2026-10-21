@@ -29,11 +29,16 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body, write_csv
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ProductCategory
-from app.services.stocktake import COL_COUNTED, COL_SKU, read_excluded_skus, sheet_rows
+from app.services.stocktake import (
+    COL_COUNTED,
+    COL_SKU,
+    read_excluded_skus,
+    sheet_rows,
+)
 
 log = get_logger(__name__)
 
@@ -47,6 +52,7 @@ async def run(
     out_dir: Path = DEFAULT_OUT,
     split: bool = True,
     excluded_path: Path = DEFAULT_EXCLUDED,
+    only_path: Path | None = None,
 ) -> int:
     async with async_session_factory() as session:
         known = await session.execute(select(ProductCategory.code, ProductCategory.name))
@@ -60,6 +66,12 @@ async def run(
             print(f"指定可能: {', '.join(sorted(names))}")
             return 2
 
+        only: set[str] | None = None
+        if only_path is not None:
+            only, only_problems = read_excluded_skus(only_path)
+            for problem in only_problems:
+                print(f"  ★ 対象ファイル: {problem}")
+            print(f"  この一覧の {len(only)}件だけを出力します")
         excluded, exclude_problems = read_excluded_skus(excluded_path)
         for problem in exclude_problems:
             print(f"  ★ 除外ファイル: {problem}")
@@ -79,7 +91,9 @@ async def run(
 
         written = 0
         for label, codes in groups:
-            rows = await sheet_rows(session, category_codes=codes or None, excluded=excluded)
+            rows = await sheet_rows(
+                session, category_codes=codes or None, excluded=excluded, only=only
+            )
             if not rows:
                 print(f"  {label:<12} 対象SKUがありません")
                 continue
@@ -90,7 +104,7 @@ async def run(
             )
             path = out_dir / f"stocktake_{label}.csv"
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(UTF8_BOM + body, encoding="utf-8")
+            write_csv(path, body)
             print(f"  {label:<12} {len(rows):>4}件  -> {path}")
             written += len(rows)
 
@@ -118,6 +132,11 @@ def main() -> None:
         default=str(DEFAULT_EXCLUDED),
         help="sku_code that must not be printed (counted under a finer master)",
     )
+    p.add_argument(
+        "--only",
+        default=None,
+        help="print ONLY these sku_code (same one-column format as --excluded)",
+    )
     args = p.parse_args()
     configure_logging("INFO")
     codes = [c.strip().upper() for c in args.categories.split(",") if c.strip()]
@@ -128,6 +147,7 @@ def main() -> None:
                 out_dir=Path(args.out_dir),
                 split=not args.combined,
                 excluded_path=Path(args.excluded),
+                only_path=Path(args.only) if args.only else None,
             )
         )
     )

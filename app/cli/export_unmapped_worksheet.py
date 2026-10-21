@@ -37,7 +37,7 @@ from pathlib import Path
 from sqlalchemy import Numeric, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body, write_csv
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ChannelSkuMapping, MappingAlert, Order, OrderItem
@@ -181,7 +181,7 @@ def write_worksheet(rows: list[WorksheetRow], out: Path) -> None:
     # UTF-8 + BOM: Excel decides a CSV's encoding by the BOM alone and mangles
     # Japanese without it, whatever we intended. See app/ui/csv_export.py.
     body = csv_body(HEADER, [row.as_csv() for row in rows])
-    out.write_text(UTF8_BOM + body, encoding="utf-8", newline="")
+    write_csv(out, body)
 
 
 def run(

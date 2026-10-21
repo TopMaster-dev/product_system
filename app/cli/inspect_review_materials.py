@@ -45,7 +45,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.cli.verify_analytics_totals import DEFAULT_DAYS, whole_days_before_today
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body
+from app.csv_export import write_csv as write_csv_file
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import (
@@ -202,7 +203,7 @@ def print_channel_days(period: Period, days: list[ChannelDay]) -> None:
 def write_csv(out_dir: Path, period: Period, days: list[ChannelDay]) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"acceptance_channel_days_{period.first_day}_{period.last_day}.csv"
-    path.write_text(UTF8_BOM + csv_body(CSV_HEADER, [d.as_csv() for d in days]), encoding="utf-8")
+    write_csv_file(path, csv_body(CSV_HEADER, [d.as_csv() for d in days]))
     return path
 
 

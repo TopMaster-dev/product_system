@@ -27,7 +27,8 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body
+from app.csv_export import write_csv as write_csv_file
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.services.analytics_audit import (
@@ -184,7 +185,7 @@ def write_csv(out_dir: Path, period: Period, daily: list[DayRow]) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"acceptance_totals_{period.first_day}_{period.last_day}.csv"
     body = csv_body(CSV_HEADER, [row.as_csv() for row in daily])
-    path.write_text(UTF8_BOM + body, encoding="utf-8")
+    write_csv_file(path, body)
     return path
 
 

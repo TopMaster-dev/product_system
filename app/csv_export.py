@@ -30,6 +30,7 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Any
 
 from fastapi.responses import Response
@@ -46,6 +47,22 @@ def csv_body(header: Sequence[str], rows: Iterable[Sequence[Any]]) -> str:
     writer.writerow(header)
     writer.writerows(rows)
     return buf.getvalue()
+
+
+def write_csv(path: Path, body: str) -> Path:
+    """Write a CSV body to disk with the BOM, and WITHOUT mangling the newlines.
+
+    `csv.writer` already ends every record with CRLF. `Path.write_text` without
+    `newline=""` then translates the LF of that pair again, so each line lands as
+    CR CR LF and Excel renders a blank row between every row of data. Measured
+    2026-10-21 on the count sheets: 61 of 61 lines doubled, which would have gone
+    to the client as a 60-item sheet padded with 60 empty rows to fill in around.
+
+    One helper so the `newline=""` cannot be forgotten at the eighth call site.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(UTF8_BOM + body, encoding="utf-8", newline="")
+    return path
 
 
 def csv_response(body: str, *, filename: str) -> Response:
@@ -66,4 +83,4 @@ def csv_response(body: str, *, filename: str) -> Response:
     )
 
 
-__all__ = ["UTF8_BOM", "csv_body", "csv_response"]
+__all__ = ["UTF8_BOM", "csv_body", "csv_response", "write_csv"]

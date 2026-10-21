@@ -32,7 +32,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body, write_csv
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import ChannelSkuMapping, InventorySnapshot, MasterSku
@@ -328,8 +328,7 @@ def write_proposal(
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "rakuten_variant_map_proposal.csv"
     body = csv_body(CSV_HEADER, variant_rows(assignments, on_hand, splits))
-    path.write_text(UTF8_BOM + body, encoding="utf-8")
-    return path
+    return write_csv(path, body)
 
 
 async def run(

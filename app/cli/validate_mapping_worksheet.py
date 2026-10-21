@@ -41,7 +41,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body, write_csv
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import BundleComponent, ChannelSkuMapping, MasterSku
@@ -292,7 +292,7 @@ def write_import_csv(report: Report, path: Path) -> int:
     rows = [[a.code, a.channel, a.channel_sku, ""] for a in report.answers if a.ok]
     path.parent.mkdir(parents=True, exist_ok=True)
     header = ["master_sku_code", "channel", "channel_sku", "channel_product_id"]
-    path.write_text(UTF8_BOM + csv_body(header, rows), encoding="utf-8")
+    write_csv(path, csv_body(header, rows))
     return len(rows)
 
 

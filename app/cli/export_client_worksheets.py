@@ -39,7 +39,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from app.csv_export import UTF8_BOM, csv_body
+from app.csv_export import csv_body, write_csv
 from app.db import async_session_factory
 from app.logging import configure_logging, get_logger
 from app.models import MasterSku, ProductCategory
@@ -121,7 +121,7 @@ def suggest_category(sku_code: str, name: str) -> tuple[str, str]:
 
 def _write(path: Path, body: str) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(UTF8_BOM + body, encoding="utf-8")
+    write_csv(path, body)
     return body.count("\n") - 1  # data rows, excluding the header
 
 
