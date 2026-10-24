@@ -66,6 +66,16 @@ class DiffApplyResult:
 
 _RECONCILE_SOURCE_CHANNEL = "reconcile"
 
+#: What an approved diff says it was, per kind of run. All three kinds share
+#: this one approval path, so a single hardcoded reason labelled physical
+#: counts and Shopify audits alike as 「CROSS MALL reconciliation approved」 —
+#: wrong in the event log and in the 手動調整 history the client reads.
+_REASON_BY_RUN_TYPE = {
+    ReconcileRunTypeEnum.RECONCILE.value: "CROSS MALL突合の承認",
+    ReconcileRunTypeEnum.STOCKTAKE.value: "実地棚卸の承認",
+    ReconcileRunTypeEnum.SHOPIFY_AUDIT.value: "Shopify在庫監査の承認",
+}
+
 
 def of_run_type(
     run_type: ReconcileRunTypeEnum | str = ReconcileRunTypeEnum.RECONCILE,
@@ -275,7 +285,9 @@ class ReconcileService:
             source_channel=_RECONCILE_SOURCE_CHANNEL,
             source_order_id=f"run-{diff.reconcile_run_id}",
             source_line_id=f"diff-{diff.id}",
-            reason="CROSS MALL reconciliation approved",
+            reason=_REASON_BY_RUN_TYPE.get(
+                run.run_type, _REASON_BY_RUN_TYPE[ReconcileRunTypeEnum.RECONCILE.value]
+            ),
             operator=approved_by,
             occurred_at=datetime.now(UTC),
         )

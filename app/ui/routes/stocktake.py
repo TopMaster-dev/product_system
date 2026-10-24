@@ -64,6 +64,11 @@ _FLASH = {
     "finalized": ("ok", "棚卸を確定しました"),
     "cancelled": ("ok", "棚卸を取り消しました"),
     "notfound": ("error", "指定された棚卸が見つかりません"),
+    "pendingdiffs": (
+        "error",
+        "未承認の差分が残っています。すべて承認または見送りにしてから確定してください",
+    ),
+    "cancelfailed": ("error", "承認済みの差分があるため取り消せません"),
 }
 
 
@@ -381,7 +386,17 @@ async def finalize(
     run = await _load_run(session, run_id)
     if run is None:
         return RedirectResponse(url="/admin/stocktake?flash=notfound", status_code=303)
-    await ReconcileService(session).finalize_run(run_id=run_id, approved_by=operator)
+    # `finalize_run` REFUSES while any diff is still pending, so this needs the
+    # same guard the reconcile screen has had since W6. Without it the operator
+    # gets an HTTP 500 — on the one screen the client drives by hand, during the
+    # count the whole Rakuten SKU migration was built for.
+    try:
+        await ReconcileService(session).finalize_run(run_id=run_id, approved_by=operator)
+    except (RuntimeError, ValueError):
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/admin/stocktake/{run_id}?flash=pendingdiffs", status_code=303
+        )
     await session.commit()
     return RedirectResponse(url=f"/admin/stocktake/{run_id}?flash=finalized", status_code=303)
 
@@ -395,7 +410,15 @@ async def cancel(
     run = await _load_run(session, run_id)
     if run is None:
         return RedirectResponse(url="/admin/stocktake?flash=notfound", status_code=303)
-    await ReconcileService(session).cancel_run(run_id=run_id, cancelled_by=operator)
+    # `cancel_run` refuses once anything has been approved, for the same reason:
+    # those stock changes are already written and cancelling cannot unwrite them.
+    try:
+        await ReconcileService(session).cancel_run(run_id=run_id, cancelled_by=operator)
+    except (RuntimeError, ValueError):
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/admin/stocktake/{run_id}?flash=cancelfailed", status_code=303
+        )
     await session.commit()
     return RedirectResponse(url=f"/admin/stocktake/{run_id}?flash=cancelled", status_code=303)
 

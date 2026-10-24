@@ -1469,3 +1469,113 @@ async def test_every_inventory_row_opens_a_panel_with_the_full_name(
     panel = r.text.split(f'<template id="inv-{sku_id}"', 1)[1].split("</template>", 1)[0]
     assert long_name in panel
     assert f"/admin/analytics/sku/{sku_id}" in panel
+
+
+# --- 棚卸の確定・取り消し --------------------------------------------------
+#
+# The stocktake detail screen is one of the few the client drives by hand, and
+# the only one they drive during the physical count. `finalize_run` REFUSES
+# while any diff is still pending and `cancel_run` refuses once anything is
+# approved; the reconcile screen has caught both since W6, this one did not, so
+# either action escaped the route as an HTTP 500. The screen also promised the
+# opposite of what the service does, so an operator had every reason to click
+# 確定 with differences outstanding.
+
+
+async def _stocktake_run_with_diff(engine, *, decision: str, applied_count: int = 0) -> int:
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    async with factory() as session, session.begin():
+        master = MasterSku(sku_code=f"ST-{decision}", name="count me")
+        session.add(master)
+        await session.flush()
+        run = ReconcileRun(
+            source="stocktake",
+            run_type="stocktake",
+            status="pending_approval",
+            triggered_by="pytest",
+            # `cancel_run` guards on this counter, which `approve_diff`
+            # increments — not on any diff's decision column.
+            applied_count=applied_count,
+        )
+        session.add(run)
+        await session.flush()
+        session.add(
+            ReconcileDiff(
+                reconcile_run_id=run.id,
+                master_sku_id=master.id,
+                current_qty=3,
+                target_qty=5,
+                delta=2,
+                decision=decision,
+            )
+        )
+        await session.flush()
+        return int(run.id)
+
+
+async def test_finalising_a_stocktake_with_an_unreviewed_difference_is_refused(
+    admin_client, _test_engine
+) -> None:
+    run_id = await _stocktake_run_with_diff(_test_engine, decision="pending")
+
+    r = await admin_client.post(
+        f"/admin/stocktake/{run_id}/finalize", headers=_auth_header(), follow_redirects=False
+    )
+
+    assert r.status_code == 303
+    assert "flash=pendingdiffs" in r.headers["location"]
+
+
+async def test_the_stocktake_refusal_explains_itself_on_the_screen(
+    admin_client, _test_engine
+) -> None:
+    """A redirect the operator cannot read is only a quieter failure."""
+    run_id = await _stocktake_run_with_diff(_test_engine, decision="pending")
+
+    r = await admin_client.get(
+        f"/admin/stocktake/{run_id}?flash=pendingdiffs", headers=_auth_header()
+    )
+
+    assert r.status_code == 200
+    assert "未承認の差分が残っています" in r.text
+
+
+async def test_the_stocktake_screen_does_not_promise_to_skip_unreviewed_differences(
+    admin_client, _test_engine
+) -> None:
+    """It used to say 確定すると未承認の差分は見送り扱いになります — the opposite of
+    what the service does."""
+    run_id = await _stocktake_run_with_diff(_test_engine, decision="pending")
+
+    r = await admin_client.get(f"/admin/stocktake/{run_id}", headers=_auth_header())
+
+    assert "見送り扱いになります" not in r.text
+    assert "承認または見送りにしてください" in r.text
+
+
+async def test_finalising_a_stocktake_once_everything_is_decided_succeeds(
+    admin_client, _test_engine
+) -> None:
+    run_id = await _stocktake_run_with_diff(_test_engine, decision="skipped")
+
+    r = await admin_client.post(
+        f"/admin/stocktake/{run_id}/finalize", headers=_auth_header(), follow_redirects=False
+    )
+
+    assert r.status_code == 303
+    assert "flash=finalized" in r.headers["location"]
+
+
+async def test_cancelling_a_stocktake_after_an_approval_is_refused(
+    admin_client, _test_engine
+) -> None:
+    """Approved diffs are already written to stock; cancelling cannot unwrite
+    them."""
+    run_id = await _stocktake_run_with_diff(_test_engine, decision="approved", applied_count=1)
+
+    r = await admin_client.post(
+        f"/admin/stocktake/{run_id}/cancel", headers=_auth_header(), follow_redirects=False
+    )
+
+    assert r.status_code == 303
+    assert "flash=cancelfailed" in r.headers["location"]
